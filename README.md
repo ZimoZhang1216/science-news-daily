@@ -168,7 +168,7 @@ macOS/Linux 可以用 cron，例如每天早上 8 点运行：
 
 ## GitHub Actions 自动运行
 
-项目包含 `.github/workflows/daily.yml`，会每天北京时间 08:00 自动运行一次化学、生物和统计学三份日报。由于 GitHub Actions 的 cron 使用 UTC，workflow 中对应的是 `0 0 * * *`。
+项目包含 `.github/workflows/daily.yml`，会每天北京时间 07:30 自动运行一次化学、生物和统计学三份日报。由于 GitHub Actions 的 cron 使用 UTC，workflow 中对应的是 `30 23 * * *`。
 
 配置模型供应商和 API Key：
 
