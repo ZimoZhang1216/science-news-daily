@@ -1,4 +1,4 @@
-name: Daily Chem News
+name: Daily Research News
 
 on:
   schedule:
@@ -11,9 +11,9 @@ permissions:
 
 jobs:
   generate:
-    name: Generate chemistry news daily
+    name: Generate research news daily
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       LLM_PROVIDER: ${{ secrets.LLM_PROVIDER }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -21,6 +21,9 @@ jobs:
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
       DEEPSEEK_MODEL: ${{ secrets.DEEPSEEK_MODEL }}
       REPORT_EMAIL_TO: ${{ secrets.REPORT_EMAIL_TO }}
+      CHEM_REPORT_EMAIL_TO: ${{ secrets.CHEM_REPORT_EMAIL_TO }}
+      BIO_REPORT_EMAIL_TO: ${{ secrets.BIO_REPORT_EMAIL_TO }}
+      STAT_REPORT_EMAIL_TO: ${{ secrets.STAT_REPORT_EMAIL_TO }}
       SMTP_HOST: ${{ secrets.SMTP_HOST }}
       SMTP_PORT: ${{ secrets.SMTP_PORT }}
       SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
@@ -54,16 +57,24 @@ jobs:
         run: |
           mkdir -p ./output
           set +e
-          python main.py --output-dir ./output
-          status=$?
-          echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
+          overall=0
+          for profile in chemistry biology statistics; do
+            echo "::group::Generate ${profile} report"
+            python main.py --profile "${profile}" --output-dir ./output
+            status=$?
+            echo "::endgroup::"
+            if [ "$status" -ne 0 ] && [ "$overall" -eq 0 ]; then
+              overall="$status"
+            fi
+          done
+          echo "exit_code=${overall}" >> "$GITHUB_OUTPUT"
           exit 0
 
       - name: Upload report artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: chem-news-daily-output
+          name: research-news-daily-output
           path: |
             ./output/*.docx
             ./output/*.pdf

@@ -361,6 +361,402 @@ SOURCE_WEIGHTS = {
     "arXiv": 48,
 }
 
+BIOLOGY_FIELD_KEYWORDS: dict[str, list[str]] = {
+    "分子生物学": [
+        "molecular biology",
+        "protein",
+        "RNA",
+        "DNA",
+        "transcription",
+        "translation",
+        "chromatin",
+        "enzyme",
+        "signaling",
+        "structural biology",
+    ],
+    "细胞生物学": [
+        "cell",
+        "organelle",
+        "membrane",
+        "stem cell",
+        "cell cycle",
+        "single-cell",
+        "development",
+        "apoptosis",
+        "differentiation",
+    ],
+    "遗传与基因组": [
+        "genomics",
+        "genome",
+        "genetics",
+        "variant",
+        "GWAS",
+        "epigenomics",
+        "sequencing",
+        "CRISPR",
+        "gene editing",
+    ],
+    "免疫学": [
+        "immunology",
+        "immune",
+        "T cell",
+        "B cell",
+        "antibody",
+        "vaccine",
+        "inflammation",
+        "autoimmune",
+        "tumor immunity",
+    ],
+    "神经科学": [
+        "neuroscience",
+        "neuron",
+        "synapse",
+        "brain",
+        "neural circuit",
+        "neurodegeneration",
+        "cognition",
+        "glia",
+    ],
+    "生物技术": [
+        "biotechnology",
+        "synthetic biology",
+        "protein engineering",
+        "cell therapy",
+        "gene therapy",
+        "screening",
+        "organoid",
+        "spatial transcriptomics",
+    ],
+    "微生物与进化": [
+        "microbiome",
+        "microbial",
+        "bacteria",
+        "virus",
+        "pathogen",
+        "evolution",
+        "ecology",
+        "host-microbe",
+    ],
+    "疾病机制": [
+        "cancer",
+        "disease",
+        "metabolism",
+        "pathogenesis",
+        "therapeutic",
+        "drug target",
+        "biomarker",
+        "clinical",
+    ],
+}
+
+BIOLOGY_TERMS = sorted(
+    {
+        keyword.lower()
+        for keywords in BIOLOGY_FIELD_KEYWORDS.values()
+        for keyword in keywords
+    }
+    | {
+        "biology",
+        "biological",
+        "gene",
+        "protein",
+        "cellular",
+        "organism",
+        "tissue",
+        "molecular",
+        "life science",
+    }
+)
+
+BIOLOGY_ARXIV_QUERY_TERMS = [
+    "cat:q-bio.BM",
+    "cat:q-bio.CB",
+    "cat:q-bio.GN",
+    "cat:q-bio.MN",
+    "cat:q-bio.NC",
+    "cat:q-bio.PE",
+    "cat:q-bio.QM",
+    "cat:q-bio.SC",
+    "cat:q-bio.TO",
+    "single-cell",
+    "genomics",
+    "synthetic biology",
+    "protein design",
+]
+
+BIOLOGY_PUBMED_QUERY_TERMS = [
+    "molecular biology",
+    "cell biology",
+    "genomics",
+    "single-cell",
+    "CRISPR",
+    "immunology",
+    "neuroscience",
+    "synthetic biology",
+    "protein engineering",
+    "microbiome",
+    "cancer biology",
+    "gene therapy",
+]
+
+BIOLOGY_CROSSREF_JOURNALS: list[dict[str, Any]] = [
+    {"source": "Nature", "issns": ["0028-0836", "1476-4687"], "broad": True},
+    {"source": "Science", "issns": ["0036-8075", "1095-9203"], "broad": True},
+    {"source": "Cell", "issns": ["0092-8674", "1097-4172"], "broad": False},
+    {"source": "Nature Biotechnology", "issns": ["1087-0156", "1546-1696"], "broad": False},
+    {"source": "Nature Methods", "issns": ["1548-7091", "1548-7105"], "broad": False},
+    {"source": "Nature Genetics", "issns": ["1061-4036", "1546-1718"], "broad": False},
+    {"source": "Nature Medicine", "issns": ["1078-8956", "1546-170X"], "broad": True},
+    {"source": "Molecular Cell", "issns": ["1097-2765", "1097-4164"], "broad": False},
+    {"source": "Genome Biology", "issns": ["1474-760X"], "broad": False},
+    {"source": "PLOS Biology", "issns": ["1545-7885", "1544-9173"], "broad": False},
+    {"source": "eLife", "issns": ["2050-084X"], "broad": False},
+    {"source": "PNAS", "issns": ["0027-8424", "1091-6490"], "broad": True},
+]
+
+BIOLOGY_RSS_FEEDS: list[dict[str, Any]] = [
+    {"source": "Nature", "url": "https://www.nature.com/nature.rss", "broad": True},
+    {"source": "Nature Biotechnology", "url": "https://www.nature.com/nbt.rss", "broad": False},
+    {"source": "Nature Methods", "url": "https://www.nature.com/nmeth.rss", "broad": False},
+    {"source": "Nature Genetics", "url": "https://www.nature.com/ng.rss", "broad": False},
+    {"source": "Nature Medicine", "url": "https://www.nature.com/nm.rss", "broad": True},
+    {
+        "source": "Science",
+        "url": "https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=science",
+        "broad": True,
+    },
+    {"source": "Cell", "url": "https://www.cell.com/cell/current.rss", "broad": False},
+]
+
+BIOLOGY_SOURCE_WEIGHTS = {
+    "Nature Biotechnology": 72,
+    "Nature Methods": 70,
+    "Nature Genetics": 70,
+    "Nature Medicine": 70,
+    "Nature": 78,
+    "Science": 76,
+    "Molecular Cell": 66,
+    "Cell": 76,
+    "Genome Biology": 64,
+    "PLOS Biology": 62,
+    "eLife": 60,
+    "PNAS": 58,
+    "PubMed": 55,
+    "arXiv": 48,
+}
+
+STATISTICS_FIELD_KEYWORDS: dict[str, list[str]] = {
+    "统计理论": [
+        "asymptotic",
+        "estimator",
+        "estimation",
+        "inference",
+        "hypothesis testing",
+        "confidence interval",
+        "minimax",
+        "efficiency",
+    ],
+    "贝叶斯统计": [
+        "bayesian",
+        "posterior",
+        "prior",
+        "MCMC",
+        "variational inference",
+        "hierarchical model",
+        "probabilistic",
+    ],
+    "因果推断": [
+        "causal inference",
+        "treatment effect",
+        "instrumental variable",
+        "counterfactual",
+        "difference-in-differences",
+        "mediation",
+    ],
+    "高维统计": [
+        "high-dimensional",
+        "sparse",
+        "regularization",
+        "lasso",
+        "graphical model",
+        "multiple testing",
+        "dimension reduction",
+    ],
+    "机器学习统计": [
+        "statistical learning",
+        "machine learning",
+        "deep learning",
+        "generalization",
+        "uncertainty quantification",
+        "prediction",
+        "classification",
+    ],
+    "时间序列与空间统计": [
+        "time series",
+        "spatial statistics",
+        "spatio-temporal",
+        "forecasting",
+        "stochastic process",
+        "state space",
+    ],
+    "生物统计": [
+        "biostatistics",
+        "clinical trial",
+        "survival analysis",
+        "epidemiology",
+        "competing risks",
+        "longitudinal data",
+        "statistical genetics",
+    ],
+    "计算统计": [
+        "computational statistics",
+        "simulation",
+        "bootstrap",
+        "Monte Carlo",
+        "sampling",
+        "optimization",
+        "algorithm",
+    ],
+}
+
+STATISTICS_TERMS = sorted(
+    {
+        keyword.lower()
+        for keywords in STATISTICS_FIELD_KEYWORDS.values()
+        for keyword in keywords
+    }
+    | {
+        "statistics",
+        "statistical",
+        "probability",
+        "model",
+        "data analysis",
+        "regression",
+        "distribution",
+        "uncertainty",
+    }
+)
+
+STATISTICS_ARXIV_QUERY_TERMS = [
+    "cat:stat.AP",
+    "cat:stat.CO",
+    "cat:stat.ME",
+    "cat:stat.ML",
+    "cat:stat.OT",
+    "cat:stat.TH",
+    "cat:math.ST",
+    "causal inference",
+    "bayesian statistics",
+    "high-dimensional statistics",
+    "time series",
+]
+
+STATISTICS_PUBMED_QUERY_TERMS = [
+    "biostatistics",
+    "survival analysis",
+    "clinical trial statistics",
+    "causal inference",
+    "statistical genetics",
+    "longitudinal data analysis",
+]
+
+STATISTICS_CROSSREF_JOURNALS: list[dict[str, Any]] = [
+    {"source": "Annals of Statistics", "issns": ["0090-5364", "2168-8966"], "broad": False},
+    {"source": "Biometrika", "issns": ["0006-3444", "1464-3510"], "broad": False},
+    {"source": "Journal of the American Statistical Association", "issns": ["0162-1459", "1537-274X"], "broad": False},
+    {"source": "JRSS Series B", "issns": ["1369-7412", "1467-9868"], "broad": False},
+    {"source": "Statistical Science", "issns": ["0883-4237", "2168-8745"], "broad": False},
+    {"source": "Bayesian Analysis", "issns": ["1936-0975"], "broad": False},
+    {"source": "Bernoulli", "issns": ["1350-7265", "1573-9759"], "broad": False},
+    {"source": "Annals of Applied Statistics", "issns": ["1932-6157", "1941-7330"], "broad": False},
+    {"source": "Journal of Machine Learning Research", "issns": ["1532-4435"], "broad": False},
+]
+
+STATISTICS_RSS_FEEDS: list[dict[str, Any]] = [
+    {
+        "source": "arXiv stat",
+        "url": "https://rss.arxiv.org/rss/stat",
+        "broad": False,
+    },
+]
+
+STATISTICS_SOURCE_WEIGHTS = {
+    "Annals of Statistics": 76,
+    "Biometrika": 74,
+    "Journal of the American Statistical Association": 74,
+    "JRSS Series B": 72,
+    "Statistical Science": 68,
+    "Bayesian Analysis": 66,
+    "Bernoulli": 64,
+    "Annals of Applied Statistics": 62,
+    "Journal of Machine Learning Research": 60,
+    "PubMed": 50,
+    "arXiv": 52,
+}
+
+REPORT_PROFILES: dict[str, dict[str, Any]] = {
+    "chemistry": {
+        "key": "chemistry",
+        "title": "化学科研资讯日报",
+        "failure_title": "化学科研资讯日报运行失败报告",
+        "output_prefix": "chem_news",
+        "header_label": "CHEM NEWS DAILY",
+        "meta_fields": "有机、物化、材料、化学生物、催化、能源、计算、分析",
+        "field_keywords": FIELD_KEYWORDS,
+        "relevance_terms": CHEMISTRY_TERMS,
+        "arxiv_query_terms": ARXIV_QUERY_TERMS,
+        "pubmed_query_terms": PUBMED_QUERY_TERMS,
+        "crossref_journals": CROSSREF_JOURNALS,
+        "rss_feeds": RSS_FEEDS,
+        "source_weights": SOURCE_WEIGHTS,
+        "default_field": "综合化学",
+        "ai_role": "化学领域科研编辑",
+        "ai_task": "生成化学科研资讯日报摘要",
+        "email_env": "CHEM_REPORT_EMAIL_TO",
+        "default_email_to": DEFAULT_REPORT_EMAIL_TO,
+    },
+    "biology": {
+        "key": "biology",
+        "title": "生物科研资讯日报",
+        "failure_title": "生物科研资讯日报运行失败报告",
+        "output_prefix": "bio_news",
+        "header_label": "BIO NEWS DAILY",
+        "meta_fields": "分子、细胞、基因组、免疫、神经、生物技术、微生物、疾病机制",
+        "field_keywords": BIOLOGY_FIELD_KEYWORDS,
+        "relevance_terms": BIOLOGY_TERMS,
+        "arxiv_query_terms": BIOLOGY_ARXIV_QUERY_TERMS,
+        "pubmed_query_terms": BIOLOGY_PUBMED_QUERY_TERMS,
+        "crossref_journals": BIOLOGY_CROSSREF_JOURNALS,
+        "rss_feeds": BIOLOGY_RSS_FEEDS,
+        "source_weights": BIOLOGY_SOURCE_WEIGHTS,
+        "default_field": "综合生物学",
+        "ai_role": "生物学领域科研编辑",
+        "ai_task": "生成生物科研资讯日报摘要",
+        "email_env": "BIO_REPORT_EMAIL_TO",
+        "default_email_to": "",
+    },
+    "statistics": {
+        "key": "statistics",
+        "title": "统计学科研资讯日报",
+        "failure_title": "统计学科研资讯日报运行失败报告",
+        "output_prefix": "stat_news",
+        "header_label": "STAT NEWS DAILY",
+        "meta_fields": "理论、贝叶斯、因果、高维、机器学习、时空、生统、计算统计",
+        "field_keywords": STATISTICS_FIELD_KEYWORDS,
+        "relevance_terms": STATISTICS_TERMS,
+        "arxiv_query_terms": STATISTICS_ARXIV_QUERY_TERMS,
+        "pubmed_query_terms": STATISTICS_PUBMED_QUERY_TERMS,
+        "crossref_journals": STATISTICS_CROSSREF_JOURNALS,
+        "rss_feeds": STATISTICS_RSS_FEEDS,
+        "source_weights": STATISTICS_SOURCE_WEIGHTS,
+        "default_field": "综合统计学",
+        "ai_role": "统计学领域科研编辑",
+        "ai_task": "生成统计学科研资讯日报摘要",
+        "email_env": "STAT_REPORT_EMAIL_TO",
+        "default_email_to": "",
+    },
+}
+
 
 @dataclass
 class NewsItem:
@@ -476,10 +872,19 @@ def build_session() -> requests.Session:
     return session
 
 
-def classify_field(title: str, abstract: str) -> str:
+def resolve_profile(profile_key: str) -> dict[str, Any]:
+    key = (profile_key or "chemistry").strip().lower()
+    profile = REPORT_PROFILES.get(key)
+    if profile is None:
+        supported = ", ".join(sorted(REPORT_PROFILES))
+        raise SystemExit(f"--profile must be one of: {supported}")
+    return profile
+
+
+def classify_field(title: str, abstract: str, profile: dict[str, Any]) -> str:
     haystack = f"{title} {abstract}".lower()
     scores: dict[str, int] = {}
-    for field_name, keywords in FIELD_KEYWORDS.items():
+    for field_name, keywords in profile["field_keywords"].items():
         score = 0
         for keyword in keywords:
             if keyword.lower() in haystack:
@@ -487,13 +892,13 @@ def classify_field(title: str, abstract: str) -> str:
         if score:
             scores[field_name] = score
     if not scores:
-        return "综合化学"
+        return profile["default_field"]
     return max(scores.items(), key=lambda item: item[1])[0]
 
 
-def is_chemistry_relevant(item: NewsItem) -> bool:
+def is_profile_relevant(item: NewsItem, profile: dict[str, Any]) -> bool:
     haystack = f"{item.title} {item.abstract}".lower()
-    return any(term in haystack for term in CHEMISTRY_TERMS)
+    return any(term in haystack for term in profile["relevance_terms"])
 
 
 def text_from_xml(element: ET.Element | None) -> str:
@@ -502,13 +907,25 @@ def text_from_xml(element: ET.Element | None) -> str:
     return clean_text("".join(element.itertext()))
 
 
-def fetch_arxiv(session: requests.Session, since: datetime, until: datetime, max_items: int) -> list[NewsItem]:
+def arxiv_query_fragment(term: str) -> str:
+    term = term.strip()
+    if term.startswith("cat:"):
+        return term
+    if " " in term:
+        return f'all:"{term}"'
+    return f"all:{term}"
+
+
+def fetch_arxiv(
+    session: requests.Session,
+    since: datetime,
+    until: datetime,
+    max_items: int,
+    profile: dict[str, Any],
+) -> list[NewsItem]:
     search_terms = []
-    for term in ARXIV_QUERY_TERMS:
-        if " " in term:
-            search_terms.append(f'all:"{term}"')
-        else:
-            search_terms.append(f"all:{term}")
+    for term in profile["arxiv_query_terms"]:
+        search_terms.append(arxiv_query_fragment(term))
     params = {
         "search_query": " OR ".join(search_terms),
         "start": 0,
@@ -540,8 +957,8 @@ def fetch_arxiv(session: requests.Session, since: datetime, until: datetime, max
             abstract=abstract,
             authors=[author for author in authors if author],
         )
-        item.field_name = classify_field(item.title, item.abstract)
-        if is_chemistry_relevant(item):
+        item.field_name = classify_field(item.title, item.abstract, profile)
+        if is_profile_relevant(item, profile):
             items.append(item)
     return items
 
@@ -576,10 +993,19 @@ def parse_pubmed_date(article: ET.Element) -> datetime | None:
     return parse_datetime(raw)
 
 
-def fetch_pubmed(session: requests.Session, since: datetime, until: datetime, max_items: int) -> list[NewsItem]:
+def fetch_pubmed(
+    session: requests.Session,
+    since: datetime,
+    until: datetime,
+    max_items: int,
+    profile: dict[str, Any],
+) -> list[NewsItem]:
+    query_terms = profile["pubmed_query_terms"]
+    if not query_terms:
+        return []
     from_date = since.strftime("%Y/%m/%d")
     to_date = until.strftime("%Y/%m/%d")
-    term_query = " OR ".join(f'"{term}"[Title/Abstract]' for term in PUBMED_QUERY_TERMS)
+    term_query = " OR ".join(f'"{term}"[Title/Abstract]' for term in query_terms)
     query = f"({term_query}) AND ({from_date}[PDAT] : {to_date}[PDAT])"
     search_response = session.get(
         "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
@@ -644,8 +1070,8 @@ def fetch_pubmed(session: requests.Session, since: datetime, until: datetime, ma
             doi=doi,
             authors=authors,
         )
-        item.field_name = classify_field(item.title, item.abstract)
-        if is_chemistry_relevant(item):
+        item.field_name = classify_field(item.title, item.abstract, profile)
+        if is_profile_relevant(item, profile):
             items.append(item)
     return items
 
@@ -671,6 +1097,7 @@ def fetch_crossref_journal(
     since: datetime,
     until: datetime,
     rows_per_issn: int,
+    profile: dict[str, Any],
 ) -> list[NewsItem]:
     items: list[NewsItem] = []
     seen: set[str] = set()
@@ -719,8 +1146,8 @@ def fetch_crossref_journal(
                 doi=doi,
                 authors=author_names,
             )
-            item.field_name = classify_field(item.title, item.abstract)
-            if not journal.get("broad") or is_chemistry_relevant(item):
+            item.field_name = classify_field(item.title, item.abstract, profile)
+            if not journal.get("broad") or is_profile_relevant(item, profile):
                 items.append(item)
                 if doi:
                     seen.add(doi.lower())
@@ -729,14 +1156,15 @@ def fetch_crossref_journal(
 
 
 def fetch_crossref(
-    session: requests.Session, since: datetime, until: datetime, max_items: int
+    session: requests.Session, since: datetime, until: datetime, max_items: int, profile: dict[str, Any]
 ) -> tuple[list[NewsItem], list[SourceStatus]]:
     items: list[NewsItem] = []
     statuses: list[SourceStatus] = []
-    rows_per_issn = max(5, min(20, max_items // max(len(CROSSREF_JOURNALS), 1) + 2))
-    for journal in CROSSREF_JOURNALS:
+    journals = profile["crossref_journals"]
+    rows_per_issn = max(5, min(20, max_items // max(len(journals), 1) + 2))
+    for journal in journals:
         try:
-            journal_items = fetch_crossref_journal(session, journal, since, until, rows_per_issn)
+            journal_items = fetch_crossref_journal(session, journal, since, until, rows_per_issn, profile)
             LOGGER.info("%s via Crossref: %d items", journal["source"], len(journal_items))
             items.extend(journal_items)
             statuses.append(
@@ -759,12 +1187,13 @@ def fetch_crossref(
 
 
 def fetch_rss(
-    session: requests.Session, since: datetime, until: datetime, max_items: int
+    session: requests.Session, since: datetime, until: datetime, max_items: int, profile: dict[str, Any]
 ) -> tuple[list[NewsItem], list[SourceStatus]]:
     items: list[NewsItem] = []
     statuses: list[SourceStatus] = []
-    per_feed = max(10, min(40, max_items // max(len(RSS_FEEDS), 1) + 5))
-    for feed_config in RSS_FEEDS:
+    feeds = profile["rss_feeds"]
+    per_feed = max(10, min(40, max_items // max(len(feeds), 1) + 5))
+    for feed_config in feeds:
         try:
             response = session.get(feed_config["url"], timeout=30)
             response.raise_for_status()
@@ -790,8 +1219,8 @@ def fetch_rss(
                     link=link,
                     abstract=abstract or "RSS 未提供摘要；请通过链接查看详情。",
                 )
-                item.field_name = classify_field(item.title, item.abstract)
-                if not feed_config.get("broad") or is_chemistry_relevant(item):
+                item.field_name = classify_field(item.title, item.abstract, profile)
+                if not feed_config.get("broad") or is_profile_relevant(item, profile):
                     items.append(item)
                     count += 1
             LOGGER.info("%s RSS: %d items", feed_config["source"], count)
@@ -833,14 +1262,14 @@ def dedupe_items(items: list[NewsItem]) -> list[NewsItem]:
     return list(unique.values())
 
 
-def rank_item(item: NewsItem, now: datetime) -> float:
+def rank_item(item: NewsItem, now: datetime, profile: dict[str, Any]) -> float:
     source_weight = 45
-    for source_prefix, weight in SOURCE_WEIGHTS.items():
+    for source_prefix, weight in profile["source_weights"].items():
         if item.source.startswith(source_prefix) or source_prefix in item.source:
             source_weight = weight
             break
     haystack = f"{item.title} {item.abstract}".lower()
-    keyword_hits = sum(1 for term in CHEMISTRY_TERMS if term in haystack)
+    keyword_hits = sum(1 for term in profile["relevance_terms"] if term in haystack)
     learning_bonus = sum(weight for term, weight in LEARNING_VALUE_TERMS.items() if term in haystack)
     abstract_bonus = min(len(item.abstract) / 450, 6)
     title_bonus = 4 if any(term in item.title.lower() for term in LEARNING_VALUE_TERMS) else 0
@@ -860,11 +1289,11 @@ def rank_item(item: NewsItem, now: datetime) -> float:
     )
 
 
-def prepare_items(items: list[NewsItem], max_items: int, now: datetime) -> list[NewsItem]:
+def prepare_items(items: list[NewsItem], max_items: int, now: datetime, profile: dict[str, Any]) -> list[NewsItem]:
     unique = dedupe_items(items)
     for item in unique:
-        item.field_name = classify_field(item.title, item.abstract)
-        item.score = rank_item(item, now)
+        item.field_name = classify_field(item.title, item.abstract, profile)
+        item.score = rank_item(item, now, profile)
     ranked = sorted(
         unique,
         key=lambda item: (
@@ -952,7 +1381,12 @@ def resolve_llm_config(model_override: str = "") -> LLMConfig | None:
     )
 
 
-def generate_ai_summaries(items: list[NewsItem], model: str, max_ai_items: int) -> dict[str, Any]:
+def generate_ai_summaries(
+    items: list[NewsItem],
+    model: str,
+    max_ai_items: int,
+    profile: dict[str, Any],
+) -> dict[str, Any]:
     if not items:
         return {"top_ids": [], "field_summaries": []}
     if OpenAI is None:
@@ -982,15 +1416,17 @@ def generate_ai_summaries(items: list[NewsItem], model: str, max_ai_items: int) 
         for item in items[:max_ai_items]
     ]
     instructions = (
-        "你是化学领域科研编辑。请基于输入论文/资讯元数据生成中文日报素材。"
+        f"你是{profile['ai_role']}。请基于输入论文/资讯元数据生成中文日报素材。"
         "要求准确、克制，不夸大结论；如果摘要不足，要说明信息有限。"
         "只输出 JSON，不要输出 Markdown。"
     )
     prompt = {
-        "task": "生成化学科研资讯日报摘要",
+        "task": profile["ai_task"],
         "schema": {
             "top_ids": ["N001"],
-            "field_summaries": [{"field": "有机化学", "summary": "80字以内中文概述"}],
+            "field_summaries": [
+                {"field": next(iter(profile["field_keywords"])), "summary": "80字以内中文概述"}
+            ],
             "items": [
                 {
                     "id": "N001",
@@ -1204,12 +1640,12 @@ def add_label_value(document: Document, label: str, value: str, link: str = "") 
         paragraph.add_run(value)
 
 
-def add_masthead(document: Document, report_date: date, item_count: int) -> None:
+def add_masthead(document: Document, report_date: date, item_count: int, profile: dict[str, Any]) -> None:
     section = document.sections[0]
     header = section.header.paragraphs[0]
     header.text = ""
     header.paragraph_format.space_after = Pt(0)
-    run = header.add_run("CHEM NEWS DAILY")
+    run = header.add_run(profile["header_label"])
     set_run_font(run, size=8.5, color=RGBColor(107, 114, 128), bold=True)
     paragraph_border_bottom(header, color="E5E7EB", size="4")
 
@@ -1229,14 +1665,14 @@ def add_masthead(document: Document, report_date: date, item_count: int) -> None
     title.style = document.styles["Title"]
     title.paragraph_format.space_before = Pt(0)
     title.paragraph_format.space_after = Pt(7)
-    run = title.add_run("化学科研资讯日报")
+    run = title.add_run(profile["title"])
     set_run_font(run, size=22, color=RGBColor(17, 24, 39), bold=True)
 
     meta = document.add_paragraph()
     meta.paragraph_format.space_before = Pt(2)
     meta.paragraph_format.space_after = Pt(11)
     meta.paragraph_format.line_spacing = 1.2
-    run = meta.add_run(f"{report_date.isoformat()}  /  精选 {item_count} 篇  /  有机、物化、材料、化学生物、催化、能源、计算、分析")
+    run = meta.add_run(f"{report_date.isoformat()}  /  精选 {item_count} 篇  /  {profile['meta_fields']}")
     set_run_font(run, size=9.2, color=RGBColor(75, 85, 99))
     paragraph_border_bottom(meta, color="CBD5E1", size="10")
 
@@ -1372,6 +1808,7 @@ def create_document(
     report_payload: dict[str, Any],
     report_date: date,
     output_dir: Path,
+    profile: dict[str, Any],
     diagnostics: Any | None = None,
     source_statuses: list[SourceStatus] | None = None,
 ) -> Path:
@@ -1379,7 +1816,7 @@ def create_document(
     document = Document()
     set_document_fonts(document)
 
-    add_masthead(document, report_date, len(items))
+    add_masthead(document, report_date, len(items), profile)
     add_source_note(document, len(items))
     add_run_diagnostics_section(document, diagnostics, source_statuses)
 
@@ -1403,7 +1840,7 @@ def create_document(
     for item in items:
         grouped.setdefault(item.field_name, []).append(item)
 
-    ordered_fields = list(FIELD_KEYWORDS.keys()) + ["综合化学"]
+    ordered_fields = list(profile["field_keywords"].keys()) + [profile["default_field"]]
     for field_name in ordered_fields:
         group_items = grouped.get(field_name, [])
         if not group_items:
@@ -1421,7 +1858,7 @@ def create_document(
         for item in group_items:
             add_item_block(document, item)
 
-    output_path = output_dir / f"chem_news_{report_date.isoformat()}.docx"
+    output_path = output_dir / f"{profile['output_prefix']}_{report_date.isoformat()}.docx"
     document.save(output_path)
     return output_path
 
@@ -1460,6 +1897,7 @@ def source_failure_recommendations(
 def create_failure_report(
     report_date: date,
     output_dir: Path,
+    profile: dict[str, Any],
     diagnostics: Any | None,
     source_statuses: list[SourceStatus],
     reason: str,
@@ -1470,7 +1908,7 @@ def create_failure_report(
     document = Document()
     set_document_fonts(document)
 
-    title = document.add_heading("化学科研资讯日报运行失败报告", level=0)
+    title = document.add_heading(profile["failure_title"], level=0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     title.runs[0].font.color.rgb = RGBColor(192, 0, 0)
 
@@ -1502,7 +1940,10 @@ def create_failure_report(
     for recommendation in source_failure_recommendations(diagnostics, source_statuses, True):
         document.add_paragraph(recommendation, style=document.styles["List Bullet"])
 
-    output_path = output_dir / "运行失败报告.docx"
+    failure_filename = "运行失败报告.docx"
+    if profile["key"] != "chemistry":
+        failure_filename = f"{profile['output_prefix']}_运行失败报告.docx"
+    output_path = output_dir / failure_filename
     document.save(output_path)
     return output_path
 
@@ -1648,7 +2089,12 @@ def convert_docx_to_pdf(docx_path: Path) -> Path | None:
     return pdf_path
 
 
-def send_report_email(attachment_path: Path, report_date: date, is_failure: bool = False) -> bool:
+def send_report_email(
+    attachment_path: Path,
+    report_date: date,
+    profile: dict[str, Any],
+    is_failure: bool = False,
+) -> bool:
     if not env_flag("EMAIL_ENABLED", True):
         LOGGER.info("Email sending is disabled by EMAIL_ENABLED.")
         return False
@@ -1660,7 +2106,9 @@ def send_report_email(attachment_path: Path, report_date: date, is_failure: bool
     smtp_security = os.getenv("SMTP_SECURITY", "").strip().lower() or "ssl"
     smtp_port_raw = os.getenv("SMTP_PORT", "").strip()
     smtp_port = int(smtp_port_raw) if smtp_port_raw else (587 if smtp_security in {"starttls", "tls"} else 465)
-    recipients = parse_email_recipients(os.getenv("REPORT_EMAIL_TO", DEFAULT_REPORT_EMAIL_TO))
+    fallback_recipient_value = os.getenv("REPORT_EMAIL_TO", "").strip() if profile["key"] == "chemistry" else ""
+    recipient_value = os.getenv(profile["email_env"], "").strip() or fallback_recipient_value or profile["default_email_to"]
+    recipients = parse_email_recipients(recipient_value)
 
     missing = [
         name
@@ -1669,7 +2117,7 @@ def send_report_email(attachment_path: Path, report_date: date, is_failure: bool
             "SMTP_USERNAME": smtp_username,
             "SMTP_PASSWORD": smtp_password,
             "SMTP_FROM or SMTP_USERNAME": smtp_from,
-            "REPORT_EMAIL_TO": ",".join(recipients),
+            profile["email_env"] if profile["key"] != "chemistry" else "CHEM_REPORT_EMAIL_TO or REPORT_EMAIL_TO": ",".join(recipients),
         }.items()
         if not value
     ]
@@ -1693,7 +2141,7 @@ def send_report_email(attachment_path: Path, report_date: date, is_failure: bool
         LOGGER.warning("Email not sent; only DOCX-to-PDF or PDF attachments are supported: %s", attachment_path)
         return False
 
-    subject_prefix = "化学科研资讯日报运行失败" if is_failure else "化学科研资讯日报"
+    subject_prefix = f"{profile['title']}运行失败" if is_failure else profile["title"]
     message = EmailMessage()
     message["Subject"] = f"{subject_prefix} - {report_date.isoformat()}"
     message["From"] = smtp_from
@@ -1732,11 +2180,16 @@ def send_report_email(attachment_path: Path, report_date: date, is_failure: bool
     return True
 
 
-def collect_items(args: argparse.Namespace, since: datetime, until: datetime) -> tuple[list[NewsItem], list[SourceStatus]]:
+def collect_items(
+    args: argparse.Namespace,
+    since: datetime,
+    until: datetime,
+    profile: dict[str, Any],
+) -> tuple[list[NewsItem], list[SourceStatus]]:
     session = build_session()
     fetchers: list[tuple[str, Callable[[], list[NewsItem]]]] = [
-        ("arXiv", lambda: fetch_arxiv(session, since, until, args.source_limit)),
-        ("PubMed", lambda: fetch_pubmed(session, since, until, args.source_limit)),
+        ("arXiv", lambda: fetch_arxiv(session, since, until, args.source_limit, profile)),
+        ("PubMed", lambda: fetch_pubmed(session, since, until, args.source_limit, profile)),
     ]
 
     all_items: list[NewsItem] = []
@@ -1758,7 +2211,7 @@ def collect_items(args: argparse.Namespace, since: datetime, until: datetime) ->
             )
 
     try:
-        crossref_items, crossref_statuses = fetch_crossref(session, since, until, args.source_limit)
+        crossref_items, crossref_statuses = fetch_crossref(session, since, until, args.source_limit, profile)
         LOGGER.info("Crossref returned %d items", len(crossref_items))
         all_items.extend(crossref_items)
         statuses.extend(crossref_statuses)
@@ -1773,7 +2226,7 @@ def collect_items(args: argparse.Namespace, since: datetime, until: datetime) ->
         )
 
     try:
-        rss_items, rss_statuses = fetch_rss(session, since, until, args.source_limit)
+        rss_items, rss_statuses = fetch_rss(session, since, until, args.source_limit, profile)
         LOGGER.info("RSS returned %d items", len(rss_items))
         all_items.extend(rss_items)
         statuses.extend(rss_statuses)
@@ -1790,7 +2243,13 @@ def collect_items(args: argparse.Namespace, since: datetime, until: datetime) ->
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Generate a Chinese chemistry research news daily DOCX.")
+    parser = argparse.ArgumentParser(description="Generate a Chinese research news daily DOCX.")
+    parser.add_argument(
+        "--profile",
+        choices=sorted(REPORT_PROFILES),
+        default=os.getenv("REPORT_PROFILE", "chemistry"),
+        help="Report profile to run: chemistry, biology, or statistics. Default: chemistry.",
+    )
     parser.add_argument(
         "--days",
         type=int,
@@ -1892,6 +2351,7 @@ def main() -> int:
     args = parser.parse_args()
     configure_logging(args.verbose)
     ensure_runtime_dependencies()
+    profile = resolve_profile(args.profile)
 
     if args.days < 1 or args.days > 14:
         raise SystemExit("--days should be between 1 and 14.")
@@ -1909,9 +2369,14 @@ def main() -> int:
     if not diagnostics.network_ok:
         LOGGER.warning("Network is unavailable or degraded: %s", " | ".join(diagnostics.summary_lines()))
 
-    LOGGER.info("Collecting chemistry items from %s to %s", since.isoformat(), now.isoformat())
-    collected, source_statuses = collect_items(args, since, now)
-    prepared = prepare_items(collected, args.max_items, now)
+    LOGGER.info(
+        "Collecting %s items from %s to %s",
+        profile["key"],
+        since.isoformat(),
+        now.isoformat(),
+    )
+    collected, source_statuses = collect_items(args, since, now, profile)
+    prepared = prepare_items(collected, args.max_items, now, profile)
     ensure_item_ids(prepared)
     LOGGER.info("Prepared %d deduplicated items", len(prepared))
 
@@ -1922,6 +2387,7 @@ def main() -> int:
         failure_report = create_failure_report(
             report_date=report_date,
             output_dir=output_dir,
+            profile=profile,
             diagnostics=diagnostics,
             source_statuses=source_statuses,
             reason=reason,
@@ -1929,7 +2395,7 @@ def main() -> int:
             prepared_count=len(prepared),
         )
         LOGGER.error("No reportable items; saved failure report to %s", failure_report)
-        send_report_email(failure_report, report_date, is_failure=True)
+        send_report_email(failure_report, report_date, profile, is_failure=True)
         print(failure_report)
         return 2 if all_sources_failed(source_statuses) else 1
 
@@ -1937,18 +2403,19 @@ def main() -> int:
         apply_fallback_summaries(prepared)
         report_payload = fallback_report_payload(prepared)
     else:
-        report_payload = generate_ai_summaries(prepared, args.model, args.max_ai_items)
+        report_payload = generate_ai_summaries(prepared, args.model, args.max_ai_items, profile)
 
     output_path = create_document(
         prepared,
         report_payload,
         report_date,
         output_dir,
+        profile,
         diagnostics=diagnostics,
         source_statuses=source_statuses,
     )
     LOGGER.info("Saved report to %s", output_path)
-    send_report_email(output_path, report_date)
+    send_report_email(output_path, report_date, profile)
     print(output_path)
     return 0
 
