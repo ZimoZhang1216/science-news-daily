@@ -6,8 +6,8 @@ on:
     - cron: "30 23 * * *"
     # Backup trigger. If GitHub drops the primary schedule, retry at 08:15 Asia/Shanghai.
     - cron: "15 0 * * *"
-    # Temporary five-minute email test. The marker key below prevents repeat sends.
-    - cron: "*/5 * * * *"
+    # Temporary 11:30 Asia/Shanghai run = 03:30 UTC.
+    - cron: "30 3 * * *"
   workflow_dispatch:
 
 permissions:
@@ -72,8 +72,8 @@ jobs:
         id: marker_key
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "*/5 * * * *" ]; then
-            key="daily-research-news-email-test-${{ steps.report_date.outputs.today }}"
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "30 3 * * *" ]; then
+            key="daily-research-news-1130-${{ steps.report_date.outputs.today }}"
           else
             key="daily-research-news-${{ steps.report_date.outputs.today }}"
           fi
