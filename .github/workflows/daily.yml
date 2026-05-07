@@ -1,14 +1,9 @@
 name: Daily Research News
 
 on:
-  schedule:
-    # 07:30 Asia/Shanghai (UTC+8) = 23:30 UTC on the previous day.
-    - cron: "30 23 * * *"
-    # Backup trigger. If GitHub drops the primary schedule, retry at 08:15 Asia/Shanghai.
-    - cron: "15 0 * * *"
-    # Temporary 11:30 Asia/Shanghai run = 03:30 UTC.
-    - cron: "30 3 * * *"
   workflow_dispatch:
+  schedule:
+    - cron: "*/5 * * * *"
 
 permissions:
   contents: read
@@ -41,6 +36,15 @@ jobs:
       SMTP_SECURITY: ${{ secrets.SMTP_SECURITY }}
 
     steps:
+      - name: Print trigger info
+        run: |
+          echo "event_name=${{ github.event_name }}"
+          echo "event_schedule=${{ github.event.schedule }}"
+          echo "ref=${{ github.ref }}"
+          echo "sha=${{ github.sha }}"
+          echo "utc_now=$(date -u)"
+          echo "local_now=$(date)"
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -72,11 +76,7 @@ jobs:
         id: marker_key
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "30 3 * * *" ]; then
-            key="daily-research-news-1130-${{ steps.report_date.outputs.today }}"
-          else
-            key="daily-research-news-${{ steps.report_date.outputs.today }}"
-          fi
+          key="daily-research-news-${{ steps.report_date.outputs.today }}"
           echo "key=${key}" >> "$GITHUB_OUTPUT"
           echo "Marker key: ${key}"
 
