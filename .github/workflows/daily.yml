@@ -6,9 +6,6 @@ on:
     - cron: "30 23 * * *"
     # Backup trigger. If GitHub drops the primary schedule, retry at 08:15 Asia/Shanghai.
     - cron: "15 0 * * *"
-    # Temporary schedule trigger test. Remove after confirming GitHub schedule triggers automatically.
-    # The daily marker below prevents repeated report emails after the first successful scheduled run.
-    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:

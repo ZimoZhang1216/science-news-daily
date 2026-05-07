@@ -1,0 +1,21 @@
+name: Schedule Smoke Test
+
+on:
+  schedule:
+    # Temporary five-minute trigger used only to verify GitHub scheduled workflows.
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Verify scheduled trigger
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print trigger context
+        run: |
+          date -u
+          echo "event_name=${{ github.event_name }}"
+          echo "run_id=${{ github.run_id }}"
