@@ -52,6 +52,32 @@ jobs:
           echo "utc_now=$(date -u)"
           echo "local_now=$(date)"
 
+      - name: Check email configuration
+        shell: bash
+        run: |
+          missing=()
+          for name in SMTP_HOST SMTP_USERNAME SMTP_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ -z "${SMTP_FROM:-$SMTP_USERNAME}" ]; then
+            missing+=("SMTP_FROM_or_SMTP_USERNAME")
+          fi
+          if [ -z "${CHEM_REPORT_EMAIL_TO:-$REPORT_EMAIL_TO}" ]; then
+            missing+=("CHEM_REPORT_EMAIL_TO_or_REPORT_EMAIL_TO")
+          fi
+          for name in BIO_REPORT_EMAIL_TO STAT_REPORT_EMAIL_TO; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -eq 0 ]; then
+            echo "email_config=ready"
+          else
+            echo "email_config_missing=${missing[*]}"
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
