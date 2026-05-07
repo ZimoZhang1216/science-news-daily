@@ -174,12 +174,12 @@ macOS/Linux 可以用 cron，例如每天早上 8 点运行：
 - `repository_dispatch`：由外部定时器调用 GitHub API 触发，推荐在 GitHub `schedule` 不稳定时使用。
 - `schedule`：GitHub 自带 cron 触发，作为备份保留。
 
-GitHub Actions 的 cron 使用 UTC。当前保留两个 GitHub schedule 备份：
+GitHub Actions 的 cron 使用 UTC。当前外部定时器 `repository_dispatch` 作为主触发，GitHub `schedule` 只保留一个备用触发：
 
-- 北京时间 07:30，对应 `30 23 * * *`。
-- 北京时间 08:15，对应 `15 0 * * *`。
+- 北京时间 07:30：由 cron-job.org 调用 `repository_dispatch`。
+- 北京时间 08:15：GitHub `schedule` 备用触发，对应 `15 0 * * *`。
 
-workflow 使用当天日期 marker 防止重复发送：如果同一天已经成功生成日报，后续 `schedule` 或 `repository_dispatch` 触发会自动跳过；手动 `workflow_dispatch` 不受 marker 限制。
+workflow 使用当天日期 marker 防止 GitHub 备用 `schedule` 重复发送：`repository_dispatch` 和手动 `workflow_dispatch` 会完整执行并发送邮件；如果当天已经由外部定时器成功执行，后续 GitHub `schedule` 备用触发会自动跳过。
 
 配置模型供应商和 API Key：
 

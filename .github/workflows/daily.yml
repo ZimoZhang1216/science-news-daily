@@ -6,9 +6,8 @@ on:
     types:
       - daily-research-news
   schedule:
-    # 07:30 Asia/Shanghai (UTC+8) = 23:30 UTC on the previous day.
-    - cron: "30 23 * * *"
-    # Backup trigger. If GitHub drops the primary schedule, retry at 08:15 Asia/Shanghai.
+    # Backup trigger. cron-job.org repository_dispatch is the primary 07:30 Asia/Shanghai trigger.
+    # If the external trigger fails, retry at 08:15 Asia/Shanghai.
     - cron: "15 0 * * *"
 
 permissions:
@@ -102,13 +101,13 @@ jobs:
           key: ${{ steps.marker_key.outputs.key }}
 
       - name: Skip duplicate scheduled run
-        if: (github.event_name == 'schedule' || github.event_name == 'repository_dispatch') && steps.scheduled_marker.outputs.cache-hit == 'true'
+        if: github.event_name == 'schedule' && steps.scheduled_marker.outputs.cache-hit == 'true'
         run: |
           echo "Daily report for ${{ steps.report_date.outputs.today }} already generated; skipping backup schedule."
 
       - name: Generate report
         id: generate_report
-        if: (github.event_name != 'schedule' && github.event_name != 'repository_dispatch') || steps.scheduled_marker.outputs.cache-hit != 'true'
+        if: github.event_name != 'schedule' || steps.scheduled_marker.outputs.cache-hit != 'true'
         shell: bash
         run: |
           mkdir -p ./output
@@ -141,7 +140,7 @@ jobs:
           key: ${{ steps.marker_key.outputs.key }}
 
       - name: Upload report artifacts
-        if: always() && ((github.event_name != 'schedule' && github.event_name != 'repository_dispatch') || steps.scheduled_marker.outputs.cache-hit != 'true')
+        if: always() && (github.event_name != 'schedule' || steps.scheduled_marker.outputs.cache-hit != 'true')
         uses: actions/upload-artifact@v4
         with:
           name: research-news-daily-output
@@ -152,7 +151,7 @@ jobs:
           retention-days: 30
 
       - name: Fail workflow when report generation failed
-        if: always() && ((github.event_name != 'schedule' && github.event_name != 'repository_dispatch') || steps.scheduled_marker.outputs.cache-hit != 'true') && steps.generate_report.outputs.exit_code != '0'
+        if: always() && (github.event_name != 'schedule' || steps.scheduled_marker.outputs.cache-hit != 'true') && steps.generate_report.outputs.exit_code != '0'
         run: |
           code="${{ steps.generate_report.outputs.exit_code }}"
           if [ -z "$code" ]; then
