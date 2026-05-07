@@ -168,9 +168,18 @@ macOS/Linux 可以用 cron，例如每天早上 8 点运行：
 
 ## GitHub Actions 自动运行
 
-项目包含 `.github/workflows/daily.yml`，会每天北京时间 07:30 自动运行一次化学、生物和统计学三份日报。由于 GitHub Actions 的 cron 使用 UTC，主触发时间对应 `30 23 * * *`。
+项目包含 `.github/workflows/daily.yml`，会运行化学、生物和统计学三份日报。workflow 支持三种触发方式：
 
-GitHub scheduled workflow 偶尔会延迟或漏触发。workflow 额外配置了一个北京时间 08:15 的备份触发 `15 0 * * *`，并使用当天日期 marker 防止重复发送：如果 07:30 已经成功生成日报，08:15 会自动跳过；如果 07:30 没有触发，08:15 会补跑。
+- `workflow_dispatch`：在 GitHub Actions 页面手动运行。
+- `repository_dispatch`：由外部定时器调用 GitHub API 触发，推荐在 GitHub `schedule` 不稳定时使用。
+- `schedule`：GitHub 自带 cron 触发，作为备份保留。
+
+GitHub Actions 的 cron 使用 UTC。当前保留两个 GitHub schedule 备份：
+
+- 北京时间 07:30，对应 `30 23 * * *`。
+- 北京时间 08:15，对应 `15 0 * * *`。
+
+workflow 使用当天日期 marker 防止重复发送：如果同一天已经成功生成日报，后续 `schedule` 或 `repository_dispatch` 触发会自动跳过；手动 `workflow_dispatch` 不受 marker 限制。
 
 配置模型供应商和 API Key：
 
@@ -214,6 +223,56 @@ SMTP_SECURITY: ${{ secrets.SMTP_SECURITY }}
 如果没有配置对应 API Key，workflow 仍会运行，脚本会使用 fallback summaries 生成文档或失败报告。
 
 workflow 会安装 LibreOffice Writer 和 Noto CJK 字体，用于把本地保存的 Word 报告转换为邮件 PDF 附件。
+
+### 外部定时器触发
+
+如果 GitHub `schedule` 长时间没有自动触发，可以使用 cron-job.org、UptimeRobot、服务器 cron、Cloudflare Workers Cron Trigger 等外部定时器，每天北京时间 07:30 调用 GitHub `repository_dispatch` API。
+
+先创建一个 GitHub fine-grained personal access token：
+
+1. GitHub 右上角头像 -> `Settings` -> `Developer settings`。
+2. 进入 `Personal access tokens` -> `Fine-grained tokens`。
+3. 新建 token，Repository access 选择 `ZimoZhang1216/chem-news-daily`。
+4. Repository permissions 至少给 `Contents: Read and write`。
+5. 复制 token；不要提交到仓库。
+
+外部定时器配置：
+
+- Method: `POST`
+- URL: `https://api.github.com/repos/ZimoZhang1216/chem-news-daily/dispatches`
+- Header: `Accept: application/vnd.github+json`
+- Header: `Authorization: Bearer YOUR_GITHUB_TOKEN`
+- Header: `X-GitHub-Api-Version: 2022-11-28`
+- Body:
+
+```json
+{
+  "event_type": "daily-research-news",
+  "client_payload": {}
+}
+```
+
+服务器上也可以用 curl 测试：
+
+```bash
+curl -L -X POST \
+  -H "Accept: application/vnd.github+json" \
+  -H "Authorization: Bearer YOUR_GITHUB_TOKEN" \
+  -H "X-GitHub-Api-Version: 2022-11-28" \
+  https://api.github.com/repos/ZimoZhang1216/chem-news-daily/dispatches \
+  -d '{"event_type":"daily-research-news","client_payload":{}}'
+```
+
+如果想指定报告日期，可传：
+
+```json
+{
+  "event_type": "daily-research-news",
+  "client_payload": {
+    "report_date": "2026-05-07"
+  }
+}
+```
 
 手动运行：
 
