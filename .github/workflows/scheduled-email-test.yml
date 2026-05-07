@@ -2,9 +2,9 @@ name: Scheduled Email Test
 
 on:
   schedule:
-    # Temporary email test for 2026-05-07 10:16 Asia/Shanghai = 02:16 UTC.
+    # Temporary email test for 2026-05-07 10:36 Asia/Shanghai = 02:36 UTC.
     # Remove this workflow after confirming the scheduled email run.
-    - cron: "16 2 * * *"
+    - cron: "36 2 * * *"
   workflow_dispatch:
 
 permissions:
@@ -13,6 +13,7 @@ permissions:
 jobs:
   send:
     name: Generate and email reports
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '36 2 * * *'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
