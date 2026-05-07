@@ -2,18 +2,22 @@ name: Scheduled Email Test
 
 on:
   schedule:
-    # Temporary email test for 2026-05-07 10:36 Asia/Shanghai = 02:36 UTC.
+    # Temporary five-minute email test. The marker below prevents repeat sends.
     # Remove this workflow after confirming the scheduled email run.
-    - cron: "36 2 * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: scheduled-email-test-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   send:
     name: Generate and email reports
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '36 2 * * *'
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '*/5 * * * *'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -62,8 +66,22 @@ jobs:
           echo "today=${report_date}" >> "$GITHUB_OUTPUT"
           echo "Report date: ${report_date}"
 
+      - name: Restore email test marker
+        id: email_marker
+        if: github.event_name == 'schedule'
+        uses: actions/cache/restore@v4
+        with:
+          path: .scheduled-email-test-marker
+          key: scheduled-email-test-${{ steps.report_date.outputs.today }}
+
+      - name: Skip duplicate email test
+        if: github.event_name == 'schedule' && steps.email_marker.outputs.cache-hit == 'true'
+        run: |
+          echo "Scheduled email test already completed for ${{ steps.report_date.outputs.today }}; skipping."
+
       - name: Generate and email reports
         id: generate_report
+        if: github.event_name != 'schedule' || steps.email_marker.outputs.cache-hit != 'true'
         shell: bash
         run: |
           mkdir -p ./output
@@ -82,8 +100,21 @@ jobs:
           echo "exit_code=${overall}" >> "$GITHUB_OUTPUT"
           exit 0
 
+      - name: Write email test marker
+        if: github.event_name == 'schedule' && steps.email_marker.outputs.cache-hit != 'true' && steps.generate_report.outputs.exit_code == '0'
+        run: |
+          mkdir -p .scheduled-email-test-marker
+          echo "${{ github.run_id }}" > ".scheduled-email-test-marker/${{ steps.report_date.outputs.today }}.txt"
+
+      - name: Save email test marker
+        if: github.event_name == 'schedule' && steps.email_marker.outputs.cache-hit != 'true' && steps.generate_report.outputs.exit_code == '0'
+        uses: actions/cache/save@v4
+        with:
+          path: .scheduled-email-test-marker
+          key: scheduled-email-test-${{ steps.report_date.outputs.today }}
+
       - name: Upload report artifacts
-        if: always()
+        if: always() && (github.event_name != 'schedule' || steps.email_marker.outputs.cache-hit != 'true')
         uses: actions/upload-artifact@v4
         with:
           name: scheduled-email-test-output
@@ -94,7 +125,7 @@ jobs:
           retention-days: 7
 
       - name: Fail workflow when report generation failed
-        if: always() && steps.generate_report.outputs.exit_code != '0'
+        if: always() && (github.event_name != 'schedule' || steps.email_marker.outputs.cache-hit != 'true') && steps.generate_report.outputs.exit_code != '0'
         run: |
           code="${{ steps.generate_report.outputs.exit_code }}"
           if [ -z "$code" ]; then
