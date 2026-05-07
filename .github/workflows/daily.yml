@@ -6,6 +6,8 @@ on:
     - cron: "30 23 * * *"
     # Backup trigger. If GitHub drops the primary schedule, retry at 08:15 Asia/Shanghai.
     - cron: "15 0 * * *"
+    # Temporary five-minute email test. The marker key below prevents repeat sends.
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -21,6 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
+      EMAIL_ENABLED: "true"
       LLM_PROVIDER: ${{ secrets.LLM_PROVIDER }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
@@ -65,13 +68,25 @@ jobs:
           echo "today=${report_date}" >> "$GITHUB_OUTPUT"
           echo "Report date: ${report_date}"
 
+      - name: Compute scheduled marker key
+        id: marker_key
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "*/5 * * * *" ]; then
+            key="daily-research-news-email-test-${{ steps.report_date.outputs.today }}"
+          else
+            key="daily-research-news-${{ steps.report_date.outputs.today }}"
+          fi
+          echo "key=${key}" >> "$GITHUB_OUTPUT"
+          echo "Marker key: ${key}"
+
       - name: Restore scheduled run marker
         id: scheduled_marker
         if: github.event_name == 'schedule'
         uses: actions/cache/restore@v4
         with:
           path: .daily-run-marker
-          key: daily-research-news-${{ steps.report_date.outputs.today }}
+          key: ${{ steps.marker_key.outputs.key }}
 
       - name: Skip duplicate scheduled run
         if: github.event_name == 'schedule' && steps.scheduled_marker.outputs.cache-hit == 'true'
@@ -110,7 +125,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .daily-run-marker
-          key: daily-research-news-${{ steps.report_date.outputs.today }}
+          key: ${{ steps.marker_key.outputs.key }}
 
       - name: Upload report artifacts
         if: always() && (github.event_name != 'schedule' || steps.scheduled_marker.outputs.cache-hit != 'true')
