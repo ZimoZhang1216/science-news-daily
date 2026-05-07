@@ -4,10 +4,16 @@ on:
   schedule:
     # 07:30 Asia/Shanghai (UTC+8) = 23:30 UTC on the previous day.
     - cron: "30 23 * * *"
+    # Backup trigger. If GitHub drops the primary schedule, retry at 08:15 Asia/Shanghai.
+    - cron: "15 0 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: daily-research-news-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   generate:
@@ -51,16 +57,39 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Compute report date
+        id: report_date
+        shell: bash
+        run: |
+          report_date="$(TZ=Asia/Shanghai date +%F)"
+          echo "today=${report_date}" >> "$GITHUB_OUTPUT"
+          echo "Report date: ${report_date}"
+
+      - name: Restore scheduled run marker
+        id: scheduled_marker
+        if: github.event_name == 'schedule'
+        uses: actions/cache/restore@v4
+        with:
+          path: .daily-run-marker
+          key: daily-research-news-${{ steps.report_date.outputs.today }}
+
+      - name: Skip duplicate scheduled run
+        if: github.event_name == 'schedule' && steps.scheduled_marker.outputs.cache-hit == 'true'
+        run: |
+          echo "Daily report for ${{ steps.report_date.outputs.today }} already generated; skipping backup schedule."
+
       - name: Generate report
         id: generate_report
+        if: github.event_name != 'schedule' || steps.scheduled_marker.outputs.cache-hit != 'true'
         shell: bash
         run: |
           mkdir -p ./output
           set +e
           overall=0
+          report_date="${{ steps.report_date.outputs.today }}"
           for profile in chemistry biology statistics; do
             echo "::group::Generate ${profile} report"
-            python main.py --profile "${profile}" --output-dir ./output
+            python main.py --profile "${profile}" --report-date "${report_date}" --output-dir ./output
             status=$?
             echo "::endgroup::"
             if [ "$status" -ne 0 ] && [ "$overall" -eq 0 ]; then
@@ -70,8 +99,21 @@ jobs:
           echo "exit_code=${overall}" >> "$GITHUB_OUTPUT"
           exit 0
 
+      - name: Write scheduled run marker
+        if: github.event_name == 'schedule' && steps.scheduled_marker.outputs.cache-hit != 'true' && steps.generate_report.outputs.exit_code == '0'
+        run: |
+          mkdir -p .daily-run-marker
+          echo "${{ github.run_id }}" > ".daily-run-marker/${{ steps.report_date.outputs.today }}.txt"
+
+      - name: Save scheduled run marker
+        if: github.event_name == 'schedule' && steps.scheduled_marker.outputs.cache-hit != 'true' && steps.generate_report.outputs.exit_code == '0'
+        uses: actions/cache/save@v4
+        with:
+          path: .daily-run-marker
+          key: daily-research-news-${{ steps.report_date.outputs.today }}
+
       - name: Upload report artifacts
-        if: always()
+        if: always() && (github.event_name != 'schedule' || steps.scheduled_marker.outputs.cache-hit != 'true')
         uses: actions/upload-artifact@v4
         with:
           name: research-news-daily-output
@@ -82,7 +124,7 @@ jobs:
           retention-days: 30
 
       - name: Fail workflow when report generation failed
-        if: always() && steps.generate_report.outputs.exit_code != '0'
+        if: always() && (github.event_name != 'schedule' || steps.scheduled_marker.outputs.cache-hit != 'true') && steps.generate_report.outputs.exit_code != '0'
         run: |
           code="${{ steps.generate_report.outputs.exit_code }}"
           if [ -z "$code" ]; then

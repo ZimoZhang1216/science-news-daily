@@ -168,7 +168,9 @@ macOS/Linux 可以用 cron，例如每天早上 8 点运行：
 
 ## GitHub Actions 自动运行
 
-项目包含 `.github/workflows/daily.yml`，会每天北京时间 07:30 自动运行一次化学、生物和统计学三份日报。由于 GitHub Actions 的 cron 使用 UTC，workflow 中对应的是 `30 23 * * *`。
+项目包含 `.github/workflows/daily.yml`，会每天北京时间 07:30 自动运行一次化学、生物和统计学三份日报。由于 GitHub Actions 的 cron 使用 UTC，主触发时间对应 `30 23 * * *`。
+
+GitHub scheduled workflow 偶尔会延迟或漏触发。workflow 额外配置了一个北京时间 08:15 的备份触发 `15 0 * * *`，并使用当天日期 marker 防止重复发送：如果 07:30 已经成功生成日报，08:15 会自动跳过；如果 07:30 没有触发，08:15 会补跑。
 
 配置模型供应商和 API Key：
 
