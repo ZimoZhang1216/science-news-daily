@@ -3176,6 +3176,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip SMTP delivery for this run while still generating local DOCX/PDF outputs.",
     )
+    parser.add_argument(
+        "--require-email",
+        action="store_true",
+        default=env_flag("REQUIRE_EMAIL_SUCCESS", False),
+        help="Return a non-zero exit code if SMTP delivery is disabled or fails.",
+    )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging.")
     return parser
 
@@ -3230,6 +3236,8 @@ def main() -> int:
     configure_logging(args.verbose)
     ensure_runtime_dependencies()
     profile = resolve_profile(args.profile)
+    if args.no_email and args.require_email:
+        raise SystemExit("--no-email cannot be used together with --require-email.")
     if args.no_email:
         os.environ["EMAIL_ENABLED"] = "false"
 
@@ -3275,8 +3283,10 @@ def main() -> int:
             prepared_count=len(prepared),
         )
         LOGGER.error("No reportable items; saved failure report to %s", failure_report)
-        send_report_email(failure_report, report_date, profile, is_failure=True)
+        email_sent = send_report_email(failure_report, report_date, profile, is_failure=True)
         print(failure_report)
+        if args.require_email and not email_sent:
+            return 3
         return 2 if all_sources_failed(source_statuses) else 1
 
     if args.no_openai:
@@ -3295,8 +3305,10 @@ def main() -> int:
         source_statuses=source_statuses,
     )
     LOGGER.info("Saved report to %s", output_path)
-    send_report_email(output_path, report_date, profile)
+    email_sent = send_report_email(output_path, report_date, profile)
     print(output_path)
+    if args.require_email and not email_sent:
+        return 3
     return 0
 
 

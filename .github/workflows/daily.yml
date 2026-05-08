@@ -15,11 +15,8 @@ on:
     types:
       - daily-research-news
   schedule:
-    # GitHub cron uses UTC. These are 07:30, 07:37, 07:45, and 08:15 Asia/Shanghai.
-    # Multiple entries reduce GitHub schedule drops; the daily marker prevents duplicate emails.
-    - cron: "30 23 * * *"
-    - cron: "37 23 * * *"
-    - cron: "45 23 * * *"
+    # GitHub cron uses UTC. This is 08:15 Asia/Shanghai as a backup after the
+    # external cron-job.org repository_dispatch trigger at 07:30 Asia/Shanghai.
     - cron: "15 0 * * *"
 
 permissions:
@@ -68,6 +65,7 @@ jobs:
           echo "local_now=$(date)"
 
       - name: Check email configuration
+        id: email_config
         shell: bash
         run: |
           missing=()
@@ -89,9 +87,21 @@ jobs:
           done
           if [ "${#missing[@]}" -eq 0 ]; then
             echo "email_config=ready"
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "missing=" >> "$GITHUB_OUTPUT"
           else
             echo "email_config_missing=${missing[*]}"
+            echo "::warning::Email configuration is incomplete: ${missing[*]}"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "missing=${missing[*]}" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Require email configuration for online triggers
+        if: (github.event_name == 'schedule' || github.event_name == 'repository_dispatch') && steps.email_config.outputs.ready != 'true'
+        run: |
+          echo "Scheduled/repository_dispatch runs must send all report emails."
+          echo "Missing email configuration: ${{ steps.email_config.outputs.missing }}"
+          exit 1
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -132,7 +142,13 @@ jobs:
         id: report_profiles
         shell: bash
         run: |
-          raw_profiles="${{ github.event.client_payload.profiles || inputs.profiles || 'chemistry,biology,statistics' }}"
+          event_name="${{ github.event_name }}"
+          if [ "$event_name" = "schedule" ] || [ "$event_name" = "repository_dispatch" ]; then
+            raw_profiles="chemistry,biology,statistics"
+            echo "Online trigger detected; forcing all report profiles regardless of dispatch payload."
+          else
+            raw_profiles="${{ inputs.profiles || 'chemistry,biology,statistics' }}"
+          fi
           raw_profiles="${raw_profiles//,/ }"
           profiles=()
           for profile in $raw_profiles; do
@@ -193,9 +209,13 @@ jobs:
           overall=0
           report_date="${{ steps.report_date.outputs.today }}"
           profiles="${{ steps.report_profiles.outputs.profiles }}"
+          require_email=()
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            require_email=(--require-email)
+          fi
           for profile in $profiles; do
             echo "::group::Generate ${profile} report"
-            python main.py --profile "${profile}" --report-date "${report_date}" --output-dir ./output
+            python main.py --profile "${profile}" --report-date "${report_date}" --output-dir ./output "${require_email[@]}"
             status=$?
             echo "::endgroup::"
             if [ "$status" -ne 0 ] && [ "$overall" -eq 0 ]; then
@@ -219,7 +239,7 @@ jobs:
           key: ${{ steps.marker_key.outputs.key }}
 
       - name: Upload report artifacts
-        if: always() && ((github.event_name != 'schedule' && github.event_name != 'repository_dispatch') || steps.scheduled_marker.outputs.cache-hit != 'true')
+        if: always() && steps.generate_report.outcome != 'skipped' && ((github.event_name != 'schedule' && github.event_name != 'repository_dispatch') || steps.scheduled_marker.outputs.cache-hit != 'true')
         uses: actions/upload-artifact@v4
         with:
           name: research-news-daily-output
@@ -230,7 +250,7 @@ jobs:
           retention-days: 30
 
       - name: Fail workflow when report generation failed
-        if: always() && ((github.event_name != 'schedule' && github.event_name != 'repository_dispatch') || steps.scheduled_marker.outputs.cache-hit != 'true') && steps.generate_report.outputs.exit_code != '0'
+        if: always() && steps.generate_report.outcome != 'skipped' && ((github.event_name != 'schedule' && github.event_name != 'repository_dispatch') || steps.scheduled_marker.outputs.cache-hit != 'true') && steps.generate_report.outputs.exit_code != '0'
         run: |
           code="${{ steps.generate_report.outputs.exit_code }}"
           if [ -z "$code" ]; then
