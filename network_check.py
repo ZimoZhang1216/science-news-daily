@@ -128,7 +128,7 @@ def run_network_checks(
     logger: logging.Logger | None = None,
 ) -> NetworkDiagnostics:
     session = requests.Session()
-    session.headers.update({"User-Agent": "ChemNewsDaily/1.0 network-check"})
+    session.headers.update({"User-Agent": "ScienceNewsDaily/1.0 network-check"})
     checks: list[EndpointCheck] = []
 
     for host, url in endpoints or DEFAULT_ENDPOINTS:

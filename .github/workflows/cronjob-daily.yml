@@ -9,13 +9,13 @@ on:
         default: ""
   repository_dispatch:
     types:
-      - daily-research-news
+      - science-news-daily
 
 permissions:
   contents: read
 
 concurrency:
-  group: cronjob-daily-research-news-${{ github.ref }}
+  group: cronjob-science-news-daily-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -112,7 +112,7 @@ jobs:
         id: marker_key
         shell: bash
         run: |
-          key="cronjob-daily-research-news-${{ steps.report_date.outputs.today }}"
+          key="cronjob-science-news-daily-${{ steps.report_date.outputs.today }}"
           echo "key=${key}" >> "$GITHUB_OUTPUT"
           echo "Marker key: ${key}"
 
@@ -167,7 +167,7 @@ jobs:
         if: always() && steps.generate_report.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
-          name: cronjob-daily-research-news-output
+          name: cronjob-science-news-daily-output
           path: |
             ./output/*.docx
             ./output/*.pdf
