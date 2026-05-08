@@ -1399,32 +1399,6 @@ def is_low_value_comment(comment: str) -> bool:
     return any(marker in text for marker in low_value_markers)
 
 
-def is_generated_title_acceptable(title: str, item: NewsItem, profile: dict[str, Any]) -> bool:
-    normalized = normalize_chinese_title(title)
-    if not normalized:
-        return False
-    if any(word in normalized for word in BANNED_TITLE_WORDS):
-        return False
-    if is_generic_title(normalized):
-        return False
-    if profile.get("key") == "chemistry" and is_chemistry_marketing_title(normalized):
-        return False
-    if profile.get("key") == "biology" and biology_title_has_unsupported_terms(normalized, item):
-        return False
-    return chinese_char_count(normalized) <= 46
-
-
-def is_generated_comment_acceptable(comment: str) -> bool:
-    normalized = clean_text(comment)
-    if not normalized:
-        return False
-    if "ABSTRACT" in normalized.upper():
-        return False
-    if is_mostly_english_text(normalized):
-        return False
-    return not is_low_value_comment(normalized)
-
-
 def is_chemistry_marketing_title(title: str) -> bool:
     body = title_body(title)
     marketing_markers = (
@@ -2630,15 +2604,23 @@ def generate_ai_summaries(
 
     by_id = {entry.get("id"): entry for entry in parsed.get("items", []) if isinstance(entry, dict)}
     complete_ai_items = True
+    missing_ai_item_ids: list[str] = []
     for item in items:
         generated = by_id.get(item.item_id, {})
         generated_title = generated.get("attractive_title", "") or generated.get("chinese_title", "")
         generated_comment = generated.get("comment", "")
-        if not is_generated_title_acceptable(generated_title, item, profile) or not is_generated_comment_acceptable(generated_comment):
+        if not clean_text(generated_title) or not clean_text(generated_comment):
             complete_ai_items = False
+            missing_ai_item_ids.append(item.item_id)
         item.attractive_title = normalize_attractive_title(generated_title, item, profile)
         item.chinese_title = item.chinese_title or item.attractive_title
         item.comment = normalize_comment(generated_comment, item)
+    if missing_ai_item_ids:
+        LOGGER.warning(
+            "%s summary generation did not return title/comment for item ids: %s",
+            llm_config.provider,
+            ", ".join(missing_ai_item_ids[:10]),
+        )
     apply_fallback_summaries(items, profile)
     top_ids = [
         item_id
