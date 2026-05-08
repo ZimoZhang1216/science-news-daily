@@ -57,7 +57,7 @@ jobs:
         shell: bash
         run: |
           missing=()
-          for name in SMTP_HOST SMTP_USERNAME SMTP_PASSWORD BIO_REPORT_EMAIL_TO STAT_REPORT_EMAIL_TO; do
+          for name in SMTP_HOST SMTP_USERNAME SMTP_PASSWORD; do
             if [ -z "${!name}" ]; then
               missing+=("$name")
             fi
@@ -67,6 +67,12 @@ jobs:
           fi
           if [ -z "${CHEM_REPORT_EMAIL_TO:-$REPORT_EMAIL_TO}" ]; then
             missing+=("CHEM_REPORT_EMAIL_TO_or_REPORT_EMAIL_TO")
+          fi
+          if [ -z "${BIO_REPORT_EMAIL_TO:-$REPORT_EMAIL_TO}" ]; then
+            missing+=("BIO_REPORT_EMAIL_TO_or_REPORT_EMAIL_TO")
+          fi
+          if [ -z "${STAT_REPORT_EMAIL_TO:-$REPORT_EMAIL_TO}" ]; then
+            missing+=("STAT_REPORT_EMAIL_TO_or_REPORT_EMAIL_TO")
           fi
           if [ "${#missing[@]}" -gt 0 ]; then
             echo "::error::Missing cronjob target email configuration: ${missing[*]}"

@@ -3261,9 +3261,17 @@ def send_report_email(
     smtp_security = os.getenv("SMTP_SECURITY", "").strip().lower() or "ssl"
     smtp_port_raw = os.getenv("SMTP_PORT", "").strip()
     smtp_port = int(smtp_port_raw) if smtp_port_raw else (587 if smtp_security in {"starttls", "tls"} else 465)
-    fallback_recipient_value = os.getenv("REPORT_EMAIL_TO", "").strip() if profile["key"] == "chemistry" else ""
-    recipient_value = os.getenv(profile["email_env"], "").strip() or fallback_recipient_value or profile["default_email_to"]
-    recipients = parse_email_recipients(recipient_value)
+    profile_recipient_value = os.getenv(profile["email_env"], "").strip()
+    default_recipient_value = os.getenv("REPORT_EMAIL_TO", "").strip()
+    recipient_options: list[tuple[str, list[str]]] = []
+    for label, value in (
+        (profile["email_env"], profile_recipient_value),
+        ("REPORT_EMAIL_TO", default_recipient_value),
+        ("profile default", profile["default_email_to"]),
+    ):
+        recipients = parse_email_recipients(value)
+        if recipients and all(recipients != existing for _, existing in recipient_options):
+            recipient_options.append((label, recipients))
 
     missing = [
         name
@@ -3272,7 +3280,7 @@ def send_report_email(
             "SMTP_USERNAME": smtp_username,
             "SMTP_PASSWORD": smtp_password,
             "SMTP_FROM or SMTP_USERNAME": smtp_from,
-            profile["email_env"] if profile["key"] != "chemistry" else "CHEM_REPORT_EMAIL_TO or REPORT_EMAIL_TO": ",".join(recipients),
+            f"{profile['email_env']} or REPORT_EMAIL_TO": recipient_options,
         }.items()
         if not value
     ]
@@ -3299,43 +3307,78 @@ def send_report_email(
         LOGGER.warning("Email not sent; only DOCX-to-PDF or PDF attachments are supported: %s", attachment_path)
         return False
 
-    subject_prefix = f"{profile['title']}运行失败" if is_failure else profile["title"]
-    message = EmailMessage()
-    message["Subject"] = f"{subject_prefix} - {report_date.isoformat()}"
-    message["From"] = smtp_from
-    message["To"] = ", ".join(recipients)
-    body_lines = [
-        f"日期：{report_date.isoformat()}",
-        f"PDF附件：{email_attachment_path.name}",
-    ]
-    if local_docx_name:
-        body_lines.append(f"本地DOCX文件：{local_docx_name}")
-    body_lines.extend(["", "本邮件由 science-news-daily 自动发送。"])
-    message.set_content("\n".join(body_lines))
-    message.add_attachment(
-        email_attachment_path.read_bytes(),
-        maintype="application",
-        subtype="pdf",
-        filename=email_attachment_path.name,
-    )
+    attachment_bytes = email_attachment_path.read_bytes()
 
-    try:
-        if smtp_security == "ssl":
-            with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=30) as smtp:
-                smtp.login(smtp_username, smtp_password)
-                smtp.send_message(message)
-        else:
-            with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as smtp:
-                if smtp_security in {"starttls", "tls"}:
-                    smtp.starttls()
-                smtp.login(smtp_username, smtp_password)
-                smtp.send_message(message)
-    except Exception as exc:  # noqa: BLE001 - email failure should not invalidate the report.
-        LOGGER.warning("Email sending failed: %s", exc)
-        return False
+    def build_message(recipients: list[str]) -> EmailMessage:
+        subject_prefix = f"{profile['title']}运行失败" if is_failure else profile["title"]
+        message = EmailMessage()
+        message["Subject"] = f"{subject_prefix} - {report_date.isoformat()}"
+        message["From"] = smtp_from
+        message["To"] = ", ".join(recipients)
+        body_lines = [
+            f"日期：{report_date.isoformat()}",
+            f"PDF附件：{email_attachment_path.name}",
+        ]
+        if local_docx_name:
+            body_lines.append(f"本地DOCX文件：{local_docx_name}")
+        body_lines.extend(["", "本邮件由 science-news-daily 自动发送。"])
+        message.set_content("\n".join(body_lines))
+        message.add_attachment(
+            attachment_bytes,
+            maintype="application",
+            subtype="pdf",
+            filename=email_attachment_path.name,
+        )
+        return message
 
-    LOGGER.info("Sent report email to %s with PDF attachment %s", ", ".join(recipients), email_attachment_path)
-    return True
+    def refused_summary(refused: Any) -> str:
+        if isinstance(refused, dict):
+            codes = sorted({str(value[0]) for value in refused.values() if isinstance(value, tuple) and value})
+            suffix = f" SMTP codes: {', '.join(codes)}" if codes else ""
+            return f"{len(refused)} recipient(s) refused.{suffix}"
+        return "recipients refused"
+
+    last_error: Exception | None = None
+    for option_index, (recipient_label, recipients) in enumerate(recipient_options, start=1):
+        message = build_message(recipients)
+        try:
+            if smtp_security == "ssl":
+                with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=30) as smtp:
+                    smtp.login(smtp_username, smtp_password)
+                    refused = smtp.send_message(message)
+            else:
+                with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as smtp:
+                    if smtp_security in {"starttls", "tls"}:
+                        smtp.starttls()
+                    smtp.login(smtp_username, smtp_password)
+                    refused = smtp.send_message(message)
+        except smtplib.SMTPRecipientsRefused as exc:
+            last_error = exc
+            LOGGER.warning("Email recipients from %s were refused: %s", recipient_label, refused_summary(exc.recipients))
+            if option_index < len(recipient_options):
+                LOGGER.warning("Trying fallback recipients from %s.", recipient_options[option_index][0])
+                continue
+            return False
+        except Exception as exc:  # noqa: BLE001 - email failure should not invalidate the report.
+            last_error = exc
+            LOGGER.warning("Email sending failed via %s: %s", recipient_label, exc)
+            if option_index < len(recipient_options):
+                LOGGER.warning("Trying fallback recipients from %s.", recipient_options[option_index][0])
+                continue
+            return False
+
+        if refused:
+            LOGGER.warning("Email sent with refused recipients via %s: %s", recipient_label, refused_summary(refused))
+            if option_index < len(recipient_options):
+                LOGGER.warning("Trying fallback recipients from %s.", recipient_options[option_index][0])
+                continue
+            return False
+
+        LOGGER.info("Sent report email to %s with PDF attachment %s", ", ".join(recipients), email_attachment_path)
+        return True
+
+    LOGGER.warning("Email sending failed: %s", last_error or "no recipient options")
+    return False
 
 
 def collect_items(

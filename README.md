@@ -102,7 +102,7 @@ EMAIL_ENABLED=true
 - `SMTP_SECURITY=starttls` 通常配 `SMTP_PORT=587`。
 - `SMTP_PASSWORD` 应使用邮箱服务商提供的 SMTP 授权码/app password，不要使用网页登录密码。
 - `CHEM_REPORT_EMAIL_TO`、`BIO_REPORT_EMAIL_TO`、`STAT_REPORT_EMAIL_TO` 分别控制化学、生物、统计学收件人。
-- 化学为了兼容旧配置，会在 `CHEM_REPORT_EMAIL_TO` 为空时使用 `REPORT_EMAIL_TO`；生物和统计学需要单独配置对应收件人。
+- `REPORT_EMAIL_TO` 是通用目标收件人兜底；任一学科的专属收件人为空或被 SMTP 全部拒收时，会尝试回退到 `REPORT_EMAIL_TO`。
 - 邮件附件只发送 PDF；本地输出目录仍保留对应 `.docx`。
 - PDF 转换依赖 LibreOffice。macOS 可安装 LibreOffice；如果命令不在 PATH，可设置 `LIBREOFFICE_PATH=/Applications/LibreOffice.app/Contents/MacOS/soffice`。
 - 默认本地运行时，如果 SMTP 未配置、PDF 转换失败，或日报没有完整 AI 总结，脚本只会记录 `Email not sent`，不会影响 Word 生成。
@@ -181,9 +181,9 @@ macOS/Linux 可以用 cron，例如每天早上 8 点运行：
 
 单科目标收件人 workflow：
 
-- `.github/workflows/target-chemistry.yml`：`Chemistry News - Target Email`，发送到 `CHEM_REPORT_EMAIL_TO`；为空时回落到 `REPORT_EMAIL_TO`。
-- `.github/workflows/target-biology.yml`：`Biology News - Target Email`，发送到 `BIO_REPORT_EMAIL_TO`。
-- `.github/workflows/target-statistics.yml`：`Statistics News - Target Email`，发送到 `STAT_REPORT_EMAIL_TO`。
+- `.github/workflows/target-chemistry.yml`：`Chemistry News - Target Email`，发送到 `CHEM_REPORT_EMAIL_TO`；为空或拒收时回落到 `REPORT_EMAIL_TO`。
+- `.github/workflows/target-biology.yml`：`Biology News - Target Email`，发送到 `BIO_REPORT_EMAIL_TO`；为空或拒收时回落到 `REPORT_EMAIL_TO`。
+- `.github/workflows/target-statistics.yml`：`Statistics News - Target Email`，发送到 `STAT_REPORT_EMAIL_TO`；为空或拒收时回落到 `REPORT_EMAIL_TO`。
 
 单科私人邮箱 workflow：
 
@@ -219,10 +219,10 @@ python main.py --profile <profile> --output-dir ./output --require-email --requi
 - `OPENAI_MODEL`：OpenAI 模型名，未配置时默认 `gpt-5.4-mini`。
 - `DEEPSEEK_MODEL`：DeepSeek 模型名，未配置时默认 `deepseek-v4-flash`。
 - `LLM_PROVIDER`：`openai` 或 `deepseek`，未配置时默认 `openai`。
-- `REPORT_EMAIL_TO`：化学日报兼容旧配置的默认收件人；多个邮箱用英文逗号或分号分隔。
-- `CHEM_REPORT_EMAIL_TO`：化学日报收件人；为空时回落到 `REPORT_EMAIL_TO`。
-- `BIO_REPORT_EMAIL_TO`：生物日报收件人。
-- `STAT_REPORT_EMAIL_TO`：统计学日报收件人。
+- `REPORT_EMAIL_TO`：通用目标收件人兜底；多个邮箱用英文逗号或分号分隔。
+- `CHEM_REPORT_EMAIL_TO`：化学日报目标收件人；为空或 SMTP 全部拒收时回落到 `REPORT_EMAIL_TO`。
+- `BIO_REPORT_EMAIL_TO`：生物日报目标收件人；为空或 SMTP 全部拒收时回落到 `REPORT_EMAIL_TO`。
+- `STAT_REPORT_EMAIL_TO`：统计学日报目标收件人；为空或 SMTP 全部拒收时回落到 `REPORT_EMAIL_TO`。
 - `PERSONAL_REPORT_EMAIL_TO`：私人手动 workflow 专用收件人，供三条 `personal-*` workflow 使用。
 - `SMTP_HOST`、`SMTP_PORT`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`SMTP_FROM`、`SMTP_SECURITY`：用于发送 PDF 附件邮件。
 
