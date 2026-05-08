@@ -189,7 +189,42 @@ CHEMISTRY_TERM_TRANSLATIONS: list[tuple[str, str]] = [
 ]
 
 BIOLOGY_TERM_TRANSLATIONS: list[tuple[str, str]] = [
+    ("esophageal squamous cell carcinoma", "食管鳞状细胞癌"),
+    ("intrahepatic cholangiocarcinoma", "肝内胆管癌"),
+    ("cholangiocarcinoma", "胆管癌"),
+    ("super-enhancer-associated", "超级增强子"),
+    ("super-enhancer-driven", "超级增强子"),
+    ("super-enhancer", "超级增强子"),
+    ("long non-coding rna", "lncRNA"),
+    ("lncrna", "lncRNA"),
+    ("mir205hg", "MIR205HG"),
+    ("glycolysis reprogramming", "糖酵解重编程"),
+    ("glycolysis", "糖酵解"),
+    ("pyroptosis", "细胞焦亡"),
+    ("synthetic lethality", "合成致死"),
+    ("rna-triggered", "RNA触发"),
+    ("cell killing", "细胞杀伤"),
+    ("cas12a2", "Cas12a2"),
+    ("dna shredding", "DNA广泛切割"),
+    ("gene expression", "基因表达"),
+    ("mutation-bearing", "突变细胞"),
+    ("low-barrier hydrogen bond", "低势垒氢键"),
+    ("hydrogen bond", "氢键"),
+    ("radical transfer", "自由基转移"),
+    ("single-cell transcriptome", "单细胞转录组"),
+    ("single-cell transcriptomic", "单细胞转录组"),
+    ("spatial transcriptomic", "空间转录组"),
+    ("spatial transcriptome", "空间转录组"),
+    ("bulk transcriptome", "bulk转录组"),
+    ("transcriptome", "转录组"),
+    ("transcriptional regulation", "转录调控"),
+    ("transcriptional", "转录调控"),
+    ("phosphoproteome", "磷酸化蛋白组"),
+    ("proteome", "蛋白组"),
     ("tumor microenvironment", "肿瘤微环境"),
+    ("tumor progression", "肿瘤进展"),
+    ("cancer progression", "癌症进展"),
+    ("therapeutic applications", "治疗应用"),
     ("immune checkpoint", "免疫检查点"),
     ("t cell", "T细胞"),
     ("macrophage", "巨噬细胞"),
@@ -207,7 +242,6 @@ BIOLOGY_TERM_TRANSLATIONS: list[tuple[str, str]] = [
     ("genome", "基因组"),
     ("crispr", "CRISPR"),
     ("epigen", "表观遗传"),
-    ("transcript", "转录组"),
     ("protein", "蛋白"),
     ("enzyme", "酶"),
     ("receptor", "受体"),
@@ -220,8 +254,55 @@ BIOLOGY_TERM_TRANSLATIONS: list[tuple[str, str]] = [
     ("mitochondria", "线粒体"),
     ("clinical", "临床"),
     ("patient", "患者"),
+    ("cancer", "癌症"),
+    ("tumor", "肿瘤"),
     ("disease", "疾病机制"),
     ("therapy", "治疗线索"),
+]
+
+BIOLOGY_METHOD_TRANSLATIONS: list[tuple[str, str]] = [
+    ("single-cell transcriptome", "单细胞转录组"),
+    ("single-cell transcriptomic", "单细胞转录组"),
+    ("spatial transcriptomic", "空间转录组"),
+    ("spatial transcriptome", "空间转录组"),
+    ("bulk transcriptome", "bulk转录组"),
+    ("transcriptome", "转录组"),
+    ("phosphoproteome", "磷酸化蛋白组"),
+    ("proteome", "蛋白组"),
+    ("genomic mutation", "基因组突变数据"),
+    ("chip-seq", "ChIP-Seq"),
+    ("hichip-seq", "HiChIP-Seq"),
+    ("chip-qpcr", "ChIP-qPCR"),
+    ("dual-luciferase", "双荧光素酶报告实验"),
+    ("rna-seq", "RNA-seq"),
+    ("scrna-seq", "scRNA-seq"),
+    ("reporter assay", "报告基因实验"),
+    ("qpcr", "qPCR"),
+    ("western blot", "Western blot"),
+    ("crispr", "CRISPR筛选"),
+]
+
+BIOLOGY_BROAD_TERMS = {
+    "疾病机制",
+    "治疗线索",
+    "临床",
+    "患者",
+    "发育",
+    "蛋白",
+    "基因组",
+}
+
+BIOLOGY_TITLE_EVIDENCE: list[tuple[str, tuple[str, ...]]] = [
+    ("CRISPR", ("crispr", "cas12", "cas9", "cas13")),
+    ("Cas12a2", ("cas12a2",)),
+    ("病毒", ("virus", "viral", "hiv", "sars", "infect")),
+    ("表观遗传", ("epigen", "chromatin", "histone", "methylation")),
+    ("临床", ("clinical", "patient", "trial", "cohort")),
+    ("转录组", ("transcriptome", "transcriptomic", "rna-seq", "scrna")),
+    ("单细胞", ("single-cell", "single cell", "scrna")),
+    ("空间转录组", ("spatial transcript",)),
+    ("T细胞", ("t cell", "t-cell")),
+    ("肠道菌", ("microbiome", "gut", "bacteria", "microbial")),
 ]
 
 STATISTICS_TERM_TRANSLATIONS: list[tuple[str, str]] = [
@@ -1229,7 +1310,7 @@ def extract_cn_terms(item: NewsItem, profile: dict[str, Any] | None = None, limi
     profile_key = infer_profile_key(item, profile)
     haystack = f"{item.title} {item.abstract}".lower()
     terms: list[str] = []
-    translations = PROFILE_TERM_TRANSLATIONS.get(profile_key, []) + CHEMISTRY_TERM_TRANSLATIONS
+    translations = PROFILE_TERM_TRANSLATIONS.get(profile_key, CHEMISTRY_TERM_TRANSLATIONS)
     for needle, cn_term in translations:
         if needle.lower() in haystack:
             add_unique_term(terms, cn_term, limit)
@@ -1254,6 +1335,8 @@ def extract_cn_terms(item: NewsItem, profile: dict[str, Any] | None = None, limi
     }
     for token in title_tokens:
         if token in token_blacklist or len(token) > 12:
+            continue
+        if profile_key == "biology" and not (token.isupper() or re.search(r"\d", token)):
             continue
         add_unique_term(terms, token, limit)
         if len(terms) >= limit:
@@ -1301,6 +1384,10 @@ def is_low_value_comment(comment: str) -> bool:
         "建议结合原文核对",
         "主要内容为：出版商元数据未提供摘要",
         "主要内容为：RSS 未提供摘要",
+        "题名和摘要能确认本条围绕",
+        "可靠元数据指向",
+        "可核对线索集中在",
+        "从题名和摘要看，工作关注",
     )
     return any(marker in text for marker in low_value_markers)
 
@@ -1328,6 +1415,87 @@ def is_chemistry_marketing_title(title: str) -> bool:
     if "？" in body or "?" in body:
         return True
     return any(marker in body for marker in marketing_markers)
+
+
+def biology_title_has_unsupported_terms(title: str, item: NewsItem) -> bool:
+    body = title_body(title)
+    haystack = f"{item.title} {item.abstract}".lower()
+    for cn_term, evidence_terms in BIOLOGY_TITLE_EVIDENCE:
+        if cn_term in body and not any(evidence in haystack for evidence in evidence_terms):
+            return True
+    return False
+
+
+def extract_terms_from_pairs(text: str, pairs: list[tuple[str, str]], limit: int) -> list[str]:
+    haystack = clean_text(text).lower()
+    terms: list[str] = []
+    for needle, cn_term in pairs:
+        if needle.lower() in haystack:
+            add_unique_term(terms, cn_term, limit)
+        if len(terms) >= limit:
+            break
+    return terms
+
+
+def extract_biology_focus_terms(item: NewsItem, limit: int = 5) -> list[str]:
+    terms = extract_cn_terms(item, REPORT_PROFILES["biology"], limit=limit + 4)
+    specific = [term for term in terms if term not in BIOLOGY_BROAD_TERMS]
+    if specific:
+        terms = specific
+
+    title_tokens = re.findall(r"\b[A-Z][A-Za-z0-9-]{3,}\b|\b[A-Z]{2,}\b", clean_text(item.title))
+    for token in title_tokens:
+        if token in {"RNA", "DNA", "METHODS", "RESULTS", "BACKGROUND"}:
+            continue
+        if re.search(r"\d", token) or token.isupper():
+            add_unique_term(terms, token, limit + 2)
+    return terms[:limit]
+
+
+def extract_biology_method_terms(item: NewsItem, limit: int = 4) -> list[str]:
+    return extract_terms_from_pairs(item.abstract, BIOLOGY_METHOD_TRANSLATIONS, limit)
+
+
+def format_cn_terms(terms: list[str], fallback: str) -> str:
+    if not terms:
+        return fallback
+    if len(terms) == 1:
+        return terms[0]
+    return "、".join(terms)
+
+
+def fallback_biology_comment(item: NewsItem, variant_offset: int = 0) -> str:
+    abstract = clean_text(item.abstract)
+    abstract = re.sub(r"^(abstract|summary)\s*[:：]?\s*", "", abstract, flags=re.IGNORECASE)
+    abstract = re.sub(
+        r"\b(background|objective|purpose|methods?|results?|conclusions?)\s*[:：]\s*",
+        "",
+        abstract,
+        flags=re.IGNORECASE,
+    )
+    focus_terms = extract_biology_focus_terms(item, limit=5)
+    focus_text = format_cn_terms(focus_terms, field_short_name(item.field_name))
+    method_terms = extract_biology_method_terms(item, limit=4)
+    method_text = format_cn_terms(method_terms, "")
+
+    if abstract and "未提供摘要" not in abstract and "RSS 未提供摘要" not in abstract:
+        method_clause = (
+            f"摘要提到{method_text}等证据来源"
+            if method_text
+            else "摘要提供了研究背景和实验线索"
+        )
+        templates = [
+            "研究聚焦{focus}；{method_clause}。日报只概括题名和摘要中可确认的信息，具体机制和适用边界以原文为准。",
+            "该工作围绕{focus}展开；{method_clause}，后续阅读可重点核对模型、对照实验和结论外推范围。",
+            "题名和摘要指向{focus}相关问题；{method_clause}。这里不扩展未在摘要中出现的临床或应用结论。",
+        ]
+        index = stable_index(item.title + item.source, len(templates), variant_offset)
+        return templates[index].format(focus=focus_text, method_clause=method_clause)
+
+    return (
+        f"出版商元数据未给出充分摘要；题名可确认本条关注{focus_text}。"
+        "建议打开 DOI 或原始链接核对实验体系、模型和结论边界。"
+    )
 
 
 def build_session() -> requests.Session:
@@ -1801,6 +1969,9 @@ def prepare_items(items: list[NewsItem], max_items: int, now: datetime, profile:
 
 
 def fallback_comment(item: NewsItem, variant_offset: int = 0) -> str:
+    if infer_profile_key(item) == "biology":
+        return fallback_biology_comment(item, variant_offset)
+
     abstract = clean_text(item.abstract)
     abstract = re.sub(r"^(abstract|summary)\s*[:：]?\s*", "", abstract, flags=re.IGNORECASE)
     terms = extract_cn_terms(item, limit=3)
@@ -1967,6 +2138,7 @@ def fallback_chinese_title(item: NewsItem, profile: dict[str, Any]) -> str:
         and not any(word in existing_title for word in BANNED_TITLE_WORDS)
         and not is_generic_title(existing_title)
         and not (profile.get("key") == "chemistry" and is_chemistry_marketing_title(existing_title))
+        and not (profile.get("key") == "biology" and biology_title_has_unsupported_terms(existing_title, item))
         and chinese_char_count(existing_title) <= 46
     ):
         return existing_title
@@ -2017,6 +2189,8 @@ def normalize_attractive_title(title: str, item: NewsItem, profile: dict[str, An
     if is_generic_title(normalized):
         return rule_based_chinese_title(item, profile)
     if profile.get("key") == "chemistry" and is_chemistry_marketing_title(normalized):
+        return rule_based_chinese_title(item, profile)
+    if profile.get("key") == "biology" and biology_title_has_unsupported_terms(normalized, item):
         return rule_based_chinese_title(item, profile)
     if chinese_char_count(normalized) > 46:
         return fallback
@@ -2281,6 +2455,21 @@ def generate_ai_summaries(
             "不能编造输入中没有的团队、学校、通讯作者、性能数值或临床结论。",
             "不要把相关性写成因果；不能夸大临床、产业或应用价值。",
         ]
+    comment_rules = [
+        "comment 必须使用中文表达；可以保留必要英文缩写、化学式和物种名。",
+        "不要输出以 ABSTRACT、SUMMARY 开头的英文原文片段。",
+        "同批 comment 不要反复使用同一个句式；必须根据每篇题名和摘要写出不同的研究对象或证据边界。",
+        "摘要不足时直接说明信息有限，并提示查看原文。",
+    ]
+    if profile.get("key") == "biology":
+        comment_rules.extend(
+            [
+                "生物日报 comment 必须点出具体疾病、细胞类型、基因/蛋白/RNA、实验方法或机制对象中的至少两类。",
+                "不要只写“围绕 CRISPR、转录组、发育展开”这类关键词堆砌句。",
+                "CRISPR、表观遗传、临床、病毒等术语只有在英文题名或摘要明确出现时才能写入标题或摘要。",
+                "结构化英文摘要要用中文整合 BACKGROUND/METHODS/RESULTS/CONCLUSION 信息，不要直接翻译或复制英文段落。",
+            ]
+        )
     prompt = {
         "task": profile["ai_task"],
         "schema": {
@@ -2298,12 +2487,7 @@ def generate_ai_summaries(
         },
         "attractive_title_prompt": attractive_title_prompt_text,
         "single_item_prompt_template": single_item_prompt_template,
-        "comment_rules": [
-            "comment 必须使用中文表达；可以保留必要英文缩写、化学式和物种名。",
-            "不要输出以 ABSTRACT、SUMMARY 开头的英文原文片段。",
-            "同批 comment 不要反复使用同一个句式；必须根据每篇题名和摘要写出不同的研究对象或证据边界。",
-            "摘要不足时直接说明信息有限，并提示查看原文。",
-        ],
+        "comment_rules": comment_rules,
         "title_style_rules": title_style_rules,
         "selection_rules": [
             "top_ids 选 5 条最值得关注的条目，兼顾来源权威性、新近性和领域覆盖。",
