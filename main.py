@@ -21,6 +21,7 @@ from email.message import EmailMessage
 from email.utils import getaddresses
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 MISSING_DEPENDENCIES: list[str] = []
 
@@ -130,6 +131,141 @@ ATTRACTIVE_TITLE_PROMPT_TEMPLATE = (
     "领域：{field}\n\n"
     "输出只给一个标题。"
 )
+
+CHEMISTRY_TERM_TRANSLATIONS: list[tuple[str, str]] = [
+    ("click chemistry-enabled", "点击化学"),
+    ("click chemistry", "点击化学"),
+    ("food safety", "食品安全"),
+    ("low-barrier hydrogen bond", "低势垒氢键"),
+    ("hydrogen bond", "氢键"),
+    ("radical transfer", "自由基转移"),
+    ("electron transfer", "电子转移"),
+    ("proton supply", "质子供给"),
+    ("decoupling", "解耦"),
+    ("oxidized-state accumulation", "氧化态累积"),
+    ("water oxidation kinetics", "水氧化动力学"),
+    ("water oxidation", "水氧化"),
+    ("active site", "活性位"),
+    ("photoredox", "光氧化还原"),
+    ("visible-light", "可见光"),
+    ("photoinduced", "光诱导"),
+    ("photochemical", "光化学"),
+    ("electrocatal", "电催化"),
+    ("photocatal", "光催化"),
+    ("catalyst", "催化剂"),
+    ("catalysis", "催化"),
+    ("weakly solvating", "弱溶剂"),
+    ("electrolyte", "电解液"),
+    ("battery", "电池"),
+    ("batteries", "电池"),
+    ("solar cell", "太阳能电池"),
+    ("total synthesis", "全合成"),
+    ("asymmetric synthesis", "不对称合成"),
+    ("cross-coupling", "交叉偶联"),
+    ("cyclization", "环化"),
+    ("metal-organic framework", "MOF"),
+    ("metal organic framework", "MOF"),
+    ("covalent organic framework", "COF"),
+    ("porous", "多孔材料"),
+    ("framework", "框架"),
+    ("polymer", "聚合物"),
+    ("plastic", "塑料"),
+    ("recycling", "回收"),
+    ("fluorescence", "荧光"),
+    ("phosphorescence", "磷光"),
+    ("luminescence", "发光"),
+    ("spectroscopy", "光谱"),
+    ("sensor", "传感"),
+    ("analytical", "分析检测"),
+    ("density functional", "DFT"),
+    ("machine learning", "机器学习"),
+    ("computational", "计算模拟"),
+    ("simulation", "模拟"),
+    ("autoencoder", "自编码器"),
+    ("randomforest", "随机森林"),
+    ("metabolomics", "代谢组学"),
+    ("protein", "蛋白"),
+    ("enzyme", "酶"),
+]
+
+BIOLOGY_TERM_TRANSLATIONS: list[tuple[str, str]] = [
+    ("tumor microenvironment", "肿瘤微环境"),
+    ("immune checkpoint", "免疫检查点"),
+    ("t cell", "T细胞"),
+    ("macrophage", "巨噬细胞"),
+    ("immune", "免疫"),
+    ("immunity", "免疫"),
+    ("neuron", "神经元"),
+    ("synapse", "突触"),
+    ("brain", "大脑"),
+    ("astrocyte", "星形胶质细胞"),
+    ("microbiome", "微生物组"),
+    ("bacteria", "细菌"),
+    ("microbial", "微生物"),
+    ("viral", "病毒"),
+    ("virus", "病毒"),
+    ("genome", "基因组"),
+    ("crispr", "CRISPR"),
+    ("epigen", "表观遗传"),
+    ("transcript", "转录组"),
+    ("protein", "蛋白"),
+    ("enzyme", "酶"),
+    ("receptor", "受体"),
+    ("ligand", "配体"),
+    ("stem cell", "干细胞"),
+    ("organoid", "类器官"),
+    ("development", "发育"),
+    ("embryo", "胚胎"),
+    ("metabolism", "代谢"),
+    ("mitochondria", "线粒体"),
+    ("clinical", "临床"),
+    ("patient", "患者"),
+    ("disease", "疾病机制"),
+    ("therapy", "治疗线索"),
+]
+
+STATISTICS_TERM_TRANSLATIONS: list[tuple[str, str]] = [
+    ("bayesian", "贝叶斯"),
+    ("causal inference", "因果推断"),
+    ("high-dimensional", "高维数据"),
+    ("time series", "时间序列"),
+    ("spatial", "空间统计"),
+    ("survival", "生存分析"),
+    ("random forest", "随机森林"),
+    ("deep learning", "深度学习"),
+    ("machine learning", "机器学习"),
+    ("bootstrap", "Bootstrap"),
+    ("confidence interval", "置信区间"),
+    ("regression", "回归"),
+    ("missing data", "缺失数据"),
+    ("meta-analysis", "Meta分析"),
+]
+
+PROFILE_TERM_TRANSLATIONS = {
+    "chemistry": CHEMISTRY_TERM_TRANSLATIONS,
+    "biology": BIOLOGY_TERM_TRANSLATIONS,
+    "statistics": STATISTICS_TERM_TRANSLATIONS,
+}
+
+GENERIC_TITLE_BODIES = {
+    "不是催化越复杂，而是活性位更关键",
+    "一个弱溶剂策略，让快充电池更耐温",
+    "从碎片到骨架，合成路线有了新搭法",
+    "一个多孔框架，让分子筛选更精准",
+    "不是塑料难回收，而是化学键要会断",
+    "发光的关键，可能藏在分子振动里",
+    "不是只靠试错，而是模型先探路",
+    "一个检测平台，让微量信号看得见",
+    "把化学工具送进细胞，信号读得更准",
+    "不是T细胞太弱，而是微环境还在踩刹车",
+    "一条皮层通路，让声音行为有了专线",
+    "肠道菌的全球流行病，可能藏在基因组里",
+    "一个基因开关，让调控图谱再更新",
+    "蛋白机器的关键，可能藏在隐藏档位",
+    "从单个细胞到类器官，命运轨迹更清楚",
+    "一条代谢暗线，把生命过程串起来",
+    "疾病机制的关键，可能藏在新按钮里",
+}
 
 FIELD_KEYWORDS: dict[str, list[str]] = {
     "有机化学": [
@@ -933,6 +1069,13 @@ def truncate(text: str, limit: int) -> str:
     return text[: limit - 1].rstrip() + "..."
 
 
+def stable_index(value: str, modulo: int, offset: int = 0) -> int:
+    if modulo <= 0:
+        return 0
+    digest = hashlib.sha1(clean_text(value).encode("utf-8")).hexdigest()
+    return (int(digest[:8], 16) + offset) % modulo
+
+
 def normalize_chinese_title(title: str) -> str:
     normalized = clean_text(title)
     normalized = re.sub(r"\s*[:：]\s*", "：", normalized)
@@ -947,6 +1090,218 @@ def normalize_chinese_title(title: str) -> str:
 
 def chinese_char_count(text: str) -> int:
     return sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
+
+
+def normalize_doi(value: str) -> str:
+    doi = clean_text(value)
+    doi = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", doi, flags=re.IGNORECASE)
+    doi = re.sub(r"^doi\s*[:：]\s*", "", doi, flags=re.IGNORECASE)
+    doi = doi.strip().strip(".;,)")
+    return doi.lower()
+
+
+def extract_doi(value: str) -> str:
+    text = clean_text(value)
+    match = re.search(r"10\.\d{4,9}/[-._;()/:A-Z0-9]+", text, flags=re.IGNORECASE)
+    if not match:
+        return ""
+    return normalize_doi(match.group(0))
+
+
+def canonical_url_key(value: str) -> str:
+    url = clean_text(value)
+    if not url:
+        return ""
+    parsed = urlparse(url)
+    scheme = (parsed.scheme or "https").lower()
+    netloc = parsed.netloc.lower()
+    if netloc.startswith("www."):
+        netloc = netloc[4:]
+    path = re.sub(r"/+$", "", parsed.path or "/")
+    if netloc in {"doi.org", "dx.doi.org"}:
+        doi = normalize_doi(path.lstrip("/"))
+        return f"doi:{doi}" if doi else ""
+    ignored_query_keys = {
+        "utm_source",
+        "utm_medium",
+        "utm_campaign",
+        "utm_term",
+        "utm_content",
+        "fbclid",
+        "gclid",
+    }
+    query_pairs = [
+        (key, val)
+        for key, val in parse_qsl(parsed.query, keep_blank_values=True)
+        if key.lower() not in ignored_query_keys
+    ]
+    query = urlencode(sorted(query_pairs), doseq=True)
+    return urlunparse((scheme, netloc, path, "", query, ""))
+
+
+def title_fingerprint(value: str) -> str:
+    text = clean_text(value).lower()
+    text = re.sub(r"^(article|research article|review|abstract)\s*[:：-]\s*", "", text)
+    text = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", text)
+    return text
+
+
+def item_identity_keys(item: NewsItem) -> list[str]:
+    keys: list[str] = []
+    doi = normalize_doi(item.doi) or extract_doi(item.link)
+    if doi:
+        keys.append(f"doi:{doi}")
+    url_key = canonical_url_key(item.link)
+    if url_key:
+        keys.append(url_key if url_key.startswith("doi:") else f"url:{url_key}")
+    title_key = title_fingerprint(item.title)
+    if len(title_key) >= 18:
+        keys.append(f"title:{title_key}")
+    if not keys:
+        keys.append(f"fallback:{stable_index(item.title + item.source + item.link, 10**8)}")
+    return list(dict.fromkeys(keys))
+
+
+def duplicate_quality_score(item: NewsItem) -> float:
+    abstract = clean_text(item.abstract)
+    score = 0.0
+    if normalize_doi(item.doi) or extract_doi(item.link):
+        score += 45
+    if item.link:
+        score += 10
+    if item.published:
+        score += 6
+    if item.authors:
+        score += min(len(item.authors), 5)
+    if abstract and "未提供摘要" not in abstract and "RSS 未提供摘要" not in abstract:
+        score += min(len(abstract) / 8, 55)
+    else:
+        score -= 12
+    source = clean_text(item.source).lower()
+    if "crossref" not in source and not source.startswith("rss"):
+        score += 3
+    return score
+
+
+def infer_profile_key(item: NewsItem, profile: dict[str, Any] | None = None) -> str:
+    if profile and profile.get("key"):
+        return str(profile["key"])
+    field_name = item.field_name
+    if any(token in field_name for token in ("统计", "贝叶斯", "因果", "高维", "生统")):
+        return "statistics"
+    if any(token in field_name for token in ("生物", "分子", "细胞", "免疫", "神经", "基因")):
+        return "biology"
+    return "chemistry"
+
+
+def field_short_name(field_name: str) -> str:
+    field_name = clean_text(field_name)
+    if not field_name:
+        return "研究对象"
+    replacements = {
+        "综合化学": "化学问题",
+        "综合生物学": "生命机制",
+        "综合统计学": "统计问题",
+        "化学生物学": "化学生物",
+        "材料化学": "材料体系",
+        "物理化学": "物化机制",
+        "能源化学": "能源材料",
+        "计算化学": "计算模型",
+        "分析化学": "分析检测",
+        "有机化学": "有机反应",
+    }
+    return replacements.get(field_name, field_name.replace("综合", "") or "研究对象")
+
+
+def add_unique_term(terms: list[str], term: str, limit: int) -> None:
+    term = clean_text(term)
+    if not term or len(term) > 18:
+        return
+    if any(term == existing or (len(term) > 2 and term in existing) or (len(existing) > 2 and existing in term) for existing in terms):
+        return
+    terms.append(term)
+    if len(terms) > limit:
+        del terms[limit:]
+
+
+def extract_cn_terms(item: NewsItem, profile: dict[str, Any] | None = None, limit: int = 3) -> list[str]:
+    profile_key = infer_profile_key(item, profile)
+    haystack = f"{item.title} {item.abstract}".lower()
+    terms: list[str] = []
+    translations = PROFILE_TERM_TRANSLATIONS.get(profile_key, []) + CHEMISTRY_TERM_TRANSLATIONS
+    for needle, cn_term in translations:
+        if needle.lower() in haystack:
+            add_unique_term(terms, cn_term, limit)
+        if len(terms) >= limit:
+            return terms
+
+    title_tokens = re.findall(r"\b[A-Z][A-Za-z0-9-]{2,}\b|\b[A-Z]{2,}\b", clean_text(item.title))
+    token_blacklist = {
+        "The",
+        "This",
+        "With",
+        "From",
+        "Using",
+        "Based",
+        "Study",
+        "Review",
+        "Article",
+        "Journal",
+        "Science",
+        "Nature",
+        "Chemistry",
+    }
+    for token in title_tokens:
+        if token in token_blacklist or len(token) > 12:
+            continue
+        add_unique_term(terms, token, limit)
+        if len(terms) >= limit:
+            return terms
+
+    add_unique_term(terms, field_short_name(item.field_name), limit)
+    return terms
+
+
+def title_body(title: str) -> str:
+    normalized = normalize_chinese_title(title)
+    if "：" in normalized:
+        return normalized.split("：", 1)[1]
+    return normalized
+
+
+def title_body_key(title: str) -> str:
+    body = title_body(title)
+    body = re.sub(r"\s+", "", body)
+    body = re.sub(r"[，。；：！？、,.!?;:]", "", body)
+    return body
+
+
+def is_generic_title(title: str) -> bool:
+    body = title_body(title)
+    return body in GENERIC_TITLE_BODIES or title_body_key(title) in {
+        re.sub(r"[，。；：！？、,.!?;:]", "", body) for body in GENERIC_TITLE_BODIES
+    }
+
+
+def comment_key(comment: str) -> str:
+    text = clean_text(comment)
+    text = re.sub(r"“[^”]{8,}”", "“X”", text)
+    text = re.sub(r"[A-Za-z][A-Za-z0-9 ,;:()/_\\.-]{18,}", "X", text)
+    text = re.sub(r"\d+(?:\.\d+)?", "0", text)
+    text = re.sub(r"\s+", "", text)
+    return text[:120]
+
+
+def is_low_value_comment(comment: str) -> bool:
+    text = clean_text(comment)
+    low_value_markers = (
+        "英文摘要显示其围绕",
+        "建议结合原文核对材料体系",
+        "建议结合原文核对",
+        "主要内容为：出版商元数据未提供摘要",
+        "主要内容为：RSS 未提供摘要",
+    )
+    return any(marker in text for marker in low_value_markers)
 
 
 def build_session() -> requests.Session:
@@ -1342,22 +1697,35 @@ def fetch_rss(
 
 
 def dedupe_items(items: list[NewsItem]) -> list[NewsItem]:
-    unique: dict[str, NewsItem] = {}
+    clusters: list[list[NewsItem]] = []
+    key_to_cluster: dict[str, int] = {}
     for item in items:
-        if item.doi:
-            key = f"doi:{item.doi.lower()}"
-        elif item.link:
-            key = f"url:{item.link.rstrip('/').lower()}"
-        else:
-            normalized_title = re.sub(r"\W+", "", item.title.lower())
-            key = f"title:{normalized_title}"
-        existing = unique.get(key)
-        if existing is None:
-            unique[key] = item
+        keys = item_identity_keys(item)
+        matched_clusters = sorted({key_to_cluster[key] for key in keys if key in key_to_cluster})
+        if not matched_clusters:
+            cluster_index = len(clusters)
+            clusters.append([item])
+            for key in keys:
+                key_to_cluster[key] = cluster_index
             continue
-        if len(item.abstract) > len(existing.abstract):
-            unique[key] = item
-    return list(unique.values())
+
+        target_index = matched_clusters[0]
+        clusters[target_index].append(item)
+        for duplicate_index in reversed(matched_clusters[1:]):
+            clusters[target_index].extend(clusters[duplicate_index])
+            clusters[duplicate_index] = []
+            for key, cluster_index in list(key_to_cluster.items()):
+                if cluster_index == duplicate_index:
+                    key_to_cluster[key] = target_index
+        for key in keys:
+            key_to_cluster[key] = target_index
+
+    unique_items: list[NewsItem] = []
+    for cluster in clusters:
+        if not cluster:
+            continue
+        unique_items.append(max(cluster, key=duplicate_quality_score))
+    return unique_items
 
 
 def rank_item(item: NewsItem, now: datetime, profile: dict[str, Any]) -> float:
@@ -1406,20 +1774,32 @@ def prepare_items(items: list[NewsItem], max_items: int, now: datetime, profile:
     return ranked[:max_items]
 
 
-def fallback_comment(item: NewsItem) -> str:
+def fallback_comment(item: NewsItem, variant_offset: int = 0) -> str:
     abstract = clean_text(item.abstract)
     abstract = re.sub(r"^(abstract|summary)\s*[:：]?\s*", "", abstract, flags=re.IGNORECASE)
+    terms = extract_cn_terms(item, limit=3)
+    term_text = "、".join(terms) if terms else f"{item.field_name}相关问题"
     if abstract and "未提供摘要" not in abstract:
         ascii_chars = sum(1 for char in abstract if ord(char) < 128 and char.isalpha())
         letter_chars = sum(1 for char in abstract if char.isalpha())
         if letter_chars and ascii_chars / letter_chars > 0.72:
-            return (
-                f"该条目聚焦{item.field_name}方向，英文摘要显示其围绕"
-                f"“{truncate(item.title, 62)}”展开；建议结合原文核对材料体系、关键指标和实验条件。"
-            )
+            templates = [
+                "题名和摘要能确认本条围绕{terms}展开；为避免过度解读，具体体系、指标和结论边界以原文为准。",
+                "可靠元数据指向{terms}相关研究；摘要信息有限时，日报只保留可确认对象，不延伸未给出的应用结论。",
+                "从题名和摘要看，工作关注{terms}；后续阅读可重点核对实验条件、模型假设和关键评价指标。",
+                "本条的可核对线索集中在{terms}；判断其重要性时，建议优先查看原文图表、对照和限制说明。",
+            ]
+            index = stable_index(item.title + item.source, len(templates), variant_offset)
+            return templates[index].format(terms=term_text)
         abstract = truncate(abstract, 120)
         return f"该条目聚焦{item.field_name}方向，摘要显示其主要内容为：{abstract}"
-    return f"该条目与{item.field_name}相关；出版商元数据较少，建议打开链接核对摘要和全文。"
+    templates = [
+        "出版商元数据较少，但题名可确认其与{terms}有关；建议打开 DOI 或原始链接核对摘要和全文。",
+        "本条只保留来源、日期和题名中的可靠线索：{terms}；详细方法和结论边界需以原文为准。",
+        "摘要暂缺，日报不扩展未给出的发现；可先从{terms}入手判断是否值得阅读全文。",
+    ]
+    index = stable_index(item.title + item.source, len(templates), variant_offset)
+    return templates[index].format(terms=term_text)
 
 
 def normalize_comment(comment: str, item: NewsItem) -> str:
@@ -1466,12 +1846,15 @@ def source_title_prefix(source: str, profile: dict[str, Any] | None = None) -> s
         "JACS": "JACS",
         "Angewandte Chemie International Edition": "Angew",
         "Angewandte Chemie": "Angew",
+        "Proceedings of the National Academy of Sciences": "PNAS",
+        "PNAS": "PNAS",
         "Nature Chemistry": "Nature Chemistry",
         "Nature": "Nature",
         "Science": "Science",
         "Chemical Science": "Chem. Sci.",
         "ACS Catalysis": "ACS Catalysis",
         "ACS Central Science": "ACS Central Science",
+        "Critical Reviews in Analytical Chemistry": "Crit. Rev. Anal. Chem.",
         "Analytical Chemistry": "Anal. Chem.",
         "The Journal of Organic Chemistry": "JOC",
         "Organic Letters": "Org. Lett.",
@@ -1488,60 +1871,73 @@ def source_title_prefix(source: str, profile: dict[str, Any] | None = None) -> s
     return truncate(re.sub(r"\s+via\s+.*$", "", normalized, flags=re.IGNORECASE), 22)
 
 
-def fallback_chinese_title(item: NewsItem, profile: dict[str, Any]) -> str:
-    existing_title = normalize_chinese_title(item.attractive_title or item.chinese_title)
-    if existing_title and not any(word in existing_title for word in BANNED_TITLE_WORDS) and chinese_char_count(existing_title) <= 46:
-        return existing_title
+def title_terms_pair(item: NewsItem, profile: dict[str, Any]) -> tuple[str, str]:
+    terms = extract_cn_terms(item, profile, limit=3)
+    field_term = field_short_name(item.field_name)
+    first = terms[0] if terms else field_term
+    second = ""
+    for term in terms[1:] + [field_term, "原文证据"]:
+        if term and term != first and term not in first and first not in term:
+            second = term
+            break
+    return first, second or "原文证据"
 
-    title = clean_text(item.title)
-    abstract = clean_text(item.abstract)
-    haystack = f"{title} {abstract}".lower()
+
+def rule_based_chinese_title(item: NewsItem, profile: dict[str, Any], variant_offset: int = 0) -> str:
     prefix = source_title_prefix(item.source, profile)
+    first, second = title_terms_pair(item, profile)
+    seed = f"{item.title} {item.source}"
 
     if profile.get("key") == "biology":
-        biology_patterns = [
-            (("immune", "immunity", "tumor", "cancer", "t cell", "macrophage"), "不是T细胞太弱，而是微环境还在踩刹车"),
-            (("neuron", "brain", "synapse", "neural", "astrocyte"), "一条皮层通路，让声音行为有了专线"),
-            (("microbiome", "bacteria", "microbial", "virus", "viral"), "肠道菌的全球流行病，可能藏在基因组里"),
-            (("gene", "genome", "crispr", "epigen", "transcript"), "一个基因开关，让调控图谱再更新"),
-            (("protein", "enzyme", "receptor", "ligand"), "蛋白机器的关键，可能藏在隐藏档位"),
-            (("stem cell", "organoid", "development", "embryo"), "从单个细胞到类器官，命运轨迹更清楚"),
-            (("metabolism", "mitochondria", "metabolic"), "一条代谢暗线，把生命过程串起来"),
-            (("disease", "therapy", "clinical", "patient"), "疾病机制的关键，可能藏在新按钮里"),
+        templates = [
+            "一个{a}线索，让{b}更清楚",
+            "不是只看{a}，还要追{b}",
+            "{a}的关键，可能藏在{b}里",
+            "从{a}到{b}，生命过程多一条线",
+            "当{a}遇上{b}，机制露出细节",
+            "谁说只看{a}？{b}也有戏",
         ]
-        hook = f"{item.field_name}又露出一个巧妙机关"
-        for needles, label in biology_patterns:
-            if any(needle in haystack for needle in needles):
-                hook = label
-                break
-        return normalize_chinese_title(f"{prefix}：{hook}")
+        template = templates[stable_index(seed, len(templates), variant_offset)]
+        return normalize_chinese_title(f"{prefix}：{template.format(a=first, b=second)}")
 
     if profile.get("key") != "chemistry":
-        return normalize_chinese_title(f"{prefix}：{item.field_name}再添新线索")
+        templates = [
+            "一个{a}线索，让{b}更清楚",
+            "不是只调模型，而是看清{a}",
+            "{a}的关键，可能藏在{b}里",
+            "从{a}到{b}，方法边界更清楚",
+            "谁说只能看均值？{a}也要追",
+        ]
+        template = templates[stable_index(seed, len(templates), variant_offset)]
+        return normalize_chinese_title(f"{prefix}：{template.format(a=first, b=second)}")
 
-    patterns = [
-        (("visible-light", "photochemical", "photoredox", "photoinduced"), "不是金属更贵，而是光把键剪开"),
-        (("catalyst", "catalysis", "photocatal", "electrocatal"), "不是催化越复杂，而是活性位更关键"),
-        (("battery", "batteries", "electrolyte", "solar cell", "photovoltaic"), "一个弱溶剂策略，让快充电池更耐温"),
-        (("total synthesis", "synthesis", "cyclization", "coupling"), "从碎片到骨架，合成路线有了新搭法"),
-        (("metal-organic", "mof", "framework", "porous"), "一个多孔框架，让分子筛选更精准"),
-        (("polymer", "plastic", "recycling"), "不是塑料难回收，而是化学键要会断"),
-        (("fluorescence", "phosphorescence", "luminescence", "emission"), "发光的关键，可能藏在分子振动里"),
-        (("machine learning", "computational", "density functional", "simulation"), "不是只靠试错，而是模型先探路"),
-        (("sensor", "spectroscopy", "analytical"), "一个检测平台，让微量信号看得见"),
-        (("drug", "bio", "enzyme", "protein"), "把化学工具送进细胞，信号读得更准"),
+    templates = [
+        "一个{a}线索，让{b}更清楚",
+        "不是只看{a}，而是盯住{b}",
+        "{a}的关键，可能藏在{b}里",
+        "从{a}到{b}，反应有了新看法",
+        "当{a}遇上{b}，分子故事更完整",
+        "把{a}问题，交给{b}来拆解",
+        "谁说只能看{a}？{b}也能给答案",
     ]
-    hook = f"一个新线索，让{item.field_name}更清楚"
-    for needles, label in patterns:
-        if any(needle in haystack for needle in needles):
-            hook = label
-            break
+    template = templates[stable_index(seed, len(templates), variant_offset)]
+    return normalize_chinese_title(f"{prefix}：{template.format(a=first, b=second)}")
 
-    return normalize_chinese_title(f"{prefix}：{hook}")
+
+def fallback_chinese_title(item: NewsItem, profile: dict[str, Any]) -> str:
+    existing_title = normalize_chinese_title(item.attractive_title or item.chinese_title)
+    if (
+        existing_title
+        and not any(word in existing_title for word in BANNED_TITLE_WORDS)
+        and not is_generic_title(existing_title)
+        and chinese_char_count(existing_title) <= 46
+    ):
+        return existing_title
+    return rule_based_chinese_title(item, profile)
 
 
 def compact_title_source_prefix(title: str, source_alias: str) -> str:
-    parts = [part.strip(" .") for part in normalize_chinese_title(title).split("：") if part.strip(" .")]
+    parts = [part.strip() for part in normalize_chinese_title(title).split("：") if part.strip()]
     if len(parts) <= 2:
         return "：".join(parts)
 
@@ -1581,6 +1977,8 @@ def normalize_attractive_title(title: str, item: NewsItem, profile: dict[str, An
 
     normalized = compact_title_source_prefix(normalized, source_alias)
 
+    if is_generic_title(normalized):
+        return rule_based_chinese_title(item, profile)
     if chinese_char_count(normalized) > 46:
         return fallback
     return normalized
@@ -1588,6 +1986,30 @@ def normalize_attractive_title(title: str, item: NewsItem, profile: dict[str, An
 
 def display_title(item: NewsItem) -> str:
     return item.attractive_title or item.chinese_title or item.title
+
+
+def ensure_unique_titles_and_comments(items: list[NewsItem], profile: dict[str, Any]) -> None:
+    seen_titles: set[str] = set()
+    seen_comments: set[str] = set()
+    for item in items:
+        title = normalize_attractive_title(item.attractive_title or item.chinese_title, item, profile)
+        for offset in range(12):
+            key = title_body_key(title)
+            if key and key not in seen_titles and not is_generic_title(title):
+                break
+            title = rule_based_chinese_title(item, profile, offset + 1)
+        item.attractive_title = title
+        item.chinese_title = item.chinese_title or title
+        seen_titles.add(title_body_key(title))
+
+        comment = normalize_comment(item.comment, item)
+        for offset in range(12):
+            key = comment_key(comment)
+            if key and key not in seen_comments and not is_low_value_comment(comment):
+                break
+            comment = fallback_comment(item, offset + 1)
+        item.comment = comment
+        seen_comments.add(comment_key(comment))
 
 
 def apply_fallback_summaries(items: list[NewsItem], profile: dict[str, Any] | None = None) -> None:
@@ -1600,6 +2022,58 @@ def apply_fallback_summaries(items: list[NewsItem], profile: dict[str, Any] | No
         )
         item.chinese_title = item.chinese_title or item.attractive_title
         item.comment = normalize_comment(item.comment, item)
+    ensure_unique_titles_and_comments(items, active_profile)
+
+
+def topic_signature(item: NewsItem, profile: dict[str, Any]) -> str:
+    terms = extract_cn_terms(item, profile, limit=2)
+    if terms:
+        return "terms:" + "|".join(terms)
+    title_key = title_fingerprint(item.title)
+    return f"title:{title_key[:48]}"
+
+
+def diversify_top_ids(items: list[NewsItem], top_ids: list[str], profile: dict[str, Any], desired: int = 5) -> list[str]:
+    by_id = {item.item_id: item for item in items}
+    selected: list[str] = []
+    seen_item_titles: set[str] = set()
+    seen_display_titles: set[str] = set()
+    seen_topics: set[str] = set()
+
+    def try_add(item: NewsItem, strict: bool = True) -> bool:
+        if item.item_id in selected:
+            return False
+        original_key = title_fingerprint(item.title)
+        display_key = title_body_key(display_title(item))
+        topic_key = topic_signature(item, profile)
+        if strict and (original_key in seen_item_titles or display_key in seen_display_titles or topic_key in seen_topics):
+            return False
+        selected.append(item.item_id)
+        if original_key:
+            seen_item_titles.add(original_key)
+        if display_key:
+            seen_display_titles.add(display_key)
+        if topic_key:
+            seen_topics.add(topic_key)
+        return True
+
+    for item_id in top_ids:
+        item = by_id.get(item_id)
+        if item:
+            try_add(item, strict=True)
+        if len(selected) >= desired:
+            return selected[:desired]
+
+    for item in items:
+        try_add(item, strict=True)
+        if len(selected) >= desired:
+            return selected[:desired]
+
+    for item in items:
+        try_add(item, strict=False)
+        if len(selected) >= desired:
+            break
+    return selected[:desired]
 
 
 def chat_response_text(response: Any) -> str:
@@ -1673,16 +2147,16 @@ def generate_ai_summaries(
     if OpenAI is None:
         LOGGER.warning("openai package is not installed; using fallback summaries.")
         apply_fallback_summaries(items, profile)
-        return fallback_report_payload(items)
+        return fallback_report_payload(items, profile)
 
     llm_config = resolve_llm_config(model)
     if llm_config is None:
         apply_fallback_summaries(items, profile)
-        return fallback_report_payload(items)
+        return fallback_report_payload(items, profile)
     if not llm_config.api_key:
         LOGGER.warning("%s is not set; using fallback summaries.", llm_config.api_key_env)
         apply_fallback_summaries(items, profile)
-        return fallback_report_payload(items)
+        return fallback_report_payload(items, profile)
 
     payload = [
         {
@@ -1736,6 +2210,7 @@ def generate_ai_summaries(
         "comment_rules": [
             "comment 必须使用中文表达；可以保留必要英文缩写、化学式和物种名。",
             "不要输出以 ABSTRACT、SUMMARY 开头的英文原文片段。",
+            "同批 comment 不要反复使用同一个句式；必须根据每篇题名和摘要写出不同的研究对象或证据边界。",
             "摘要不足时直接说明信息有限，并提示查看原文。",
         ],
         "title_style_rules": [
@@ -1743,6 +2218,7 @@ def generate_ai_summaries(
             "每个 attractive_title 必须是中文导读标题，不要只直译英文题名。",
             "优先把 source_alias 放在标题开头，例如 JACS、Angew、Nature Chemistry、Science、ACS Catalysis。",
             "句式要有变化，不要连续输出“谁说……”；同批标题中反问句最多约三分之一。",
+            "同批标题不能只替换期刊名前缀；标题主体必须能体现该条目的独有关键词。",
             "允许使用一个短问句或反常识比喻，但必须能从 title 或 abstract 中找到依据。",
             "可以保留专业缩写、化学式和期刊缩写；不要使用“重磅”“震惊”“颠覆”等夸张词。",
             "不能编造输入中没有的团队、学校、通讯作者、性能数值或临床结论。",
@@ -1854,7 +2330,7 @@ def generate_ai_summaries(
     if parsed is None:
         LOGGER.warning("%s summary generation failed; using fallback summaries: %s", llm_config.provider, last_error)
         apply_fallback_summaries(items, profile)
-        return fallback_report_payload(items)
+        return fallback_report_payload(items, profile)
 
     by_id = {entry.get("id"): entry for entry in parsed.get("items", []) if isinstance(entry, dict)}
     for item in items:
@@ -1876,14 +2352,16 @@ def generate_ai_summaries(
                 top_ids.append(item.item_id)
             if len(top_ids) >= 5:
                 break
+    top_ids = diversify_top_ids(items, top_ids, profile, desired=5)
     field_summaries = parsed.get("field_summaries", [])
     if not isinstance(field_summaries, list):
         field_summaries = []
     return {"top_ids": top_ids[:5], "field_summaries": field_summaries}
 
 
-def fallback_report_payload(items: list[NewsItem]) -> dict[str, Any]:
-    top_ids = [item.item_id for item in items[:5]]
+def fallback_report_payload(items: list[NewsItem], profile: dict[str, Any] | None = None) -> dict[str, Any]:
+    active_profile = profile or REPORT_PROFILES["chemistry"]
+    top_ids = diversify_top_ids(items, [item.item_id for item in items[:5]], active_profile, desired=5)
     grouped: dict[str, list[NewsItem]] = {}
     for item in items:
         grouped.setdefault(item.field_name, []).append(item)
@@ -2803,7 +3281,7 @@ def main() -> int:
 
     if args.no_openai:
         apply_fallback_summaries(prepared, profile)
-        report_payload = fallback_report_payload(prepared)
+        report_payload = fallback_report_payload(prepared, profile)
     else:
         report_payload = generate_ai_summaries(prepared, args.model, args.max_ai_items, profile)
 
