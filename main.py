@@ -881,13 +881,14 @@ REPORT_PROFILES: dict[str, dict[str, Any]] = {
         "ai_role": "化学领域科研编辑",
         "ai_task": "生成化学科研资讯日报摘要",
         "title_style": (
-            "中文标题参考 X-mol 化学资讯写法：抓住策略、材料、键、活性位、界面、检测信号等化学对象，"
-            "写出有画面感的导读标题。句式要混合，不要连续使用“谁说”反问句；一组标题里反问只少量出现。"
-            "示例语感：“Angew：一个弱溶剂策略，让快充电池更耐温”、"
-            "“JACS：不是金属更贵，而是光把键剪开”、"
-            "“Nature Chemistry：萘的替身，可能藏在三维小环里”。"
-            "但化学标题仍需偏克制，必须落到材料、反应、催化、检测或机制本身。"
-            "不要使用“重磅”“震惊”“颠覆”等词，不添加输入里没有的团队、作者、性能数值或结论。"
+            "化学标题取消营销号和公众号悬念风格，严谨性优先。标题应突出可从题名或摘要确认的学术亮点，"
+            "包括研究对象、反应/材料/催化体系、方法学创新、机制问题、表征或计算框架。"
+            "优先使用“期刊名：研究对象/方法/机制的学术亮点”结构，例如"
+            "“JACS：铱催化羰基参与的不对称氢芳基化”、"
+            "“Angew：氧化态累积调控水氧化动力学”、"
+            "“Nature Chemistry：DNA条形码适配体库用于化学多样性筛选”。"
+            "不要使用反问句、悬念句、拟人化比喻或“不是……而是……”“一个……让……”等营销句式；"
+            "不添加输入里没有的团队、作者、性能数值、应用承诺或因果结论。"
         ),
         "email_env": "CHEM_REPORT_EMAIL_TO",
         "default_email_to": DEFAULT_REPORT_EMAIL_TO,
@@ -1302,6 +1303,31 @@ def is_low_value_comment(comment: str) -> bool:
         "主要内容为：RSS 未提供摘要",
     )
     return any(marker in text for marker in low_value_markers)
+
+
+def is_chemistry_marketing_title(title: str) -> bool:
+    body = title_body(title)
+    marketing_markers = (
+        "谁说",
+        "有戏",
+        "故事",
+        "解锁",
+        "露出",
+        "藏在",
+        "给答案",
+        "更完整",
+        "更清楚",
+        "换个看法",
+        "遇上",
+        "交给",
+        "替身",
+        "搭起",
+        "让",
+        "不是",
+    )
+    if "？" in body or "?" in body:
+        return True
+    return any(marker in body for marker in marketing_markers)
 
 
 def build_session() -> requests.Session:
@@ -1911,14 +1937,24 @@ def rule_based_chinese_title(item: NewsItem, profile: dict[str, Any], variant_of
         template = templates[stable_index(seed, len(templates), variant_offset)]
         return normalize_chinese_title(f"{prefix}：{template.format(a=first, b=second)}")
 
+    if second == "原文证据":
+        templates_one_term = [
+            "{a}相关体系的近期进展",
+            "{a}研究中的方法学线索",
+            "{a}方向的新近论文",
+            "{a}问题的机制研究",
+        ]
+        template = templates_one_term[stable_index(seed, len(templates_one_term), variant_offset)]
+        return normalize_chinese_title(f"{prefix}：{template.format(a=first)}")
+
     templates = [
-        "一个{a}线索，让{b}更清楚",
-        "不是只看{a}，而是盯住{b}",
-        "{a}的关键，可能藏在{b}里",
-        "从{a}到{b}，反应有了新看法",
-        "当{a}遇上{b}，分子故事更完整",
-        "把{a}问题，交给{b}来拆解",
-        "谁说只能看{a}？{b}也能给答案",
+        "{a}相关{b}机制研究",
+        "{a}体系中的{b}调控",
+        "{a}方法用于{b}分析",
+        "{a}与{b}耦合机制",
+        "{a}介导的{b}过程",
+        "{a}方向的{b}研究进展",
+        "{a}体系的{b}表征线索",
     ]
     template = templates[stable_index(seed, len(templates), variant_offset)]
     return normalize_chinese_title(f"{prefix}：{template.format(a=first, b=second)}")
@@ -1930,6 +1966,7 @@ def fallback_chinese_title(item: NewsItem, profile: dict[str, Any]) -> str:
         existing_title
         and not any(word in existing_title for word in BANNED_TITLE_WORDS)
         and not is_generic_title(existing_title)
+        and not (profile.get("key") == "chemistry" and is_chemistry_marketing_title(existing_title))
         and chinese_char_count(existing_title) <= 46
     ):
         return existing_title
@@ -1978,6 +2015,8 @@ def normalize_attractive_title(title: str, item: NewsItem, profile: dict[str, An
     normalized = compact_title_source_prefix(normalized, source_alias)
 
     if is_generic_title(normalized):
+        return rule_based_chinese_title(item, profile)
+    if profile.get("key") == "chemistry" and is_chemistry_marketing_title(normalized):
         return rule_based_chinese_title(item, profile)
     if chinese_char_count(normalized) > 46:
         return fallback
@@ -2177,6 +2216,71 @@ def generate_ai_summaries(
         f"标题风格要求：{profile.get('title_style', DEFAULT_TITLE_STYLE_GUIDE)}"
         "只输出 JSON，不要输出 Markdown。"
     )
+    if profile.get("key") == "chemistry":
+        title_schema_text = (
+            "学术亮点中文标题，18-36个中文字符左右，必须以来源/期刊名开头；"
+            "标题主体应突出可核对的研究对象、反应/材料/催化体系、方法、机制或表征重点；"
+            "不要使用反问句、悬念句、拟人化比喻、营销号语气或“不是……而是……”“一个……让……”句式"
+        )
+        attractive_title_prompt_text = (
+            "请根据论文信息生成一个严谨的化学学术亮点标题。要求：1. 必须以期刊/来源名开头。"
+            "2. 标题主体聚焦题名或摘要中可确认的研究对象、反应类型、材料体系、催化/能源/分析方法、机制或表征。"
+            "3. 不使用反问、悬念、夸张、拟人化比喻和营销号句式；不使用“谁说”“不是……而是……”“一个……让……”。"
+            "4. 不添加输入中没有的性能数值、应用承诺、团队、作者或因果结论。"
+            "5. 可保留专业缩写、化学式、材料名和期刊缩写。"
+        )
+        single_item_prompt_template = (
+            "请根据以下论文信息生成一个严谨的化学学术亮点标题。\n"
+            "要求：\n"
+            "1. 必须保留期刊/来源名作为标题开头。\n"
+            "2. 标题突出研究对象、方法、材料/反应体系、机制或表征亮点。\n"
+            "3. 不使用“谁说”“不是……而是……”“一个……让……”等营销号句式。\n"
+            "4. 不夸大结论，不制造虚假因果，不加入输入中没有的数值或应用承诺。\n\n"
+            "论文信息：\n"
+            "来源：{source}\n"
+            "英文标题：{title}\n"
+            "摘要：{abstract}\n"
+            "领域：{field}\n\n"
+            "输出只给一个标题。"
+        )
+        title_style_rules = [
+            profile.get("title_style", DEFAULT_TITLE_STYLE_GUIDE),
+            "每个 attractive_title 必须是严谨的化学学术亮点标题，不要写成公众号导读标题。",
+            "优先把 source_alias 放在标题开头，例如 JACS、Angew、Nature Chemistry、Science、ACS Catalysis。",
+            "标题主体必须体现该条目的独有关键词，例如反应类型、催化体系、材料组成、表征方法、机制或计算模型。",
+            "禁止使用“谁说”“不是……而是……”“一个……让……”“藏在……里”“有戏”等悬念式或营销式表达。",
+            "可以保留专业缩写、化学式和期刊缩写；不要使用“重磅”“震惊”“颠覆”等夸张词。",
+            "不能编造输入中没有的团队、学校、通讯作者、性能数值或应用结论。",
+            "不要把相关性写成因果；不能夸大临床、产业或应用价值。",
+        ]
+    else:
+        title_schema_text = (
+            "吸引版中文标题，18-32个中文字符左右，必须以来源/期刊名开头；"
+            "从“来源：一个……，让……”“来源：不是……，而是……”"
+            "“来源：……的关键，可能藏在……”“来源：从……到……”"
+            "“来源：谁说……？……”等结构中自然选择；不要机械重复同一句式"
+        )
+        attractive_title_prompt_text = (
+            "请根据以下论文信息生成一个中文吸引版标题。要求：1. 风格类似中文科技公众号标题，"
+            "有悬念和画面感，但不要机械套模板。2. 不能夸大结论，不能制造虚假因果。"
+            "3. 必须保留期刊/来源名作为标题开头。4. 标题长度控制在18-32个中文字符。"
+            "5. 从多种句式中自然选择：来源：一个……，让……；来源：不是……，而是……；"
+            "来源：……的关键，可能藏在……；来源：从……到……；来源：把……变成……；"
+            "来源：谁说……？……。同批标题不要重复同一句式，“谁说”最多约三分之一。"
+            "6. 不使用震惊、逆天、炸裂、封神等词。"
+        )
+        single_item_prompt_template = ATTRACTIVE_TITLE_PROMPT_TEMPLATE
+        title_style_rules = [
+            profile.get("title_style", DEFAULT_TITLE_STYLE_GUIDE),
+            "每个 attractive_title 必须是中文导读标题，不要只直译英文题名。",
+            "优先把 source_alias 放在标题开头，例如 JACS、Angew、Nature Chemistry、Science、ACS Catalysis。",
+            "句式要有变化，不要连续输出“谁说……”；同批标题中反问句最多约三分之一。",
+            "同批标题不能只替换期刊名前缀；标题主体必须能体现该条目的独有关键词。",
+            "允许使用一个短问句或反常识比喻，但必须能从 title 或 abstract 中找到依据。",
+            "可以保留专业缩写、化学式和期刊缩写；不要使用“重磅”“震惊”“颠覆”等夸张词。",
+            "不能编造输入中没有的团队、学校、通讯作者、性能数值或临床结论。",
+            "不要把相关性写成因果；不能夸大临床、产业或应用价值。",
+        ]
     prompt = {
         "task": profile["ai_task"],
         "schema": {
@@ -2187,43 +2291,20 @@ def generate_ai_summaries(
             "items": [
                 {
                     "id": "N001",
-                    "attractive_title": (
-                        "吸引版中文标题，18-32个中文字符左右，必须以来源/期刊名开头；"
-                        "从“来源：一个……，让……”“来源：不是……，而是……”"
-                        "“来源：……的关键，可能藏在……”“来源：从……到……”"
-                        "“来源：谁说……？……”等结构中自然选择；不要机械重复同一句式"
-                    ),
+                    "attractive_title": title_schema_text,
                     "comment": "60-100字简短中文摘要，说明研究对象、方法或发现边界；不要直接复制英文摘要",
                 }
             ],
         },
-        "attractive_title_prompt": (
-            "请根据以下论文信息生成一个中文吸引版标题。要求：1. 风格类似中文科技公众号标题，"
-            "有悬念和画面感，但不要机械套模板。2. 不能夸大结论，不能制造虚假因果。"
-            "3. 必须保留期刊/来源名作为标题开头。4. 标题长度控制在18-32个中文字符。"
-            "5. 从多种句式中自然选择：来源：一个……，让……；来源：不是……，而是……；"
-            "来源：……的关键，可能藏在……；来源：从……到……；来源：把……变成……；"
-            "来源：谁说……？……。同批标题不要重复同一句式，“谁说”最多约三分之一。"
-            "6. 不使用震惊、逆天、炸裂、封神等词。"
-        ),
-        "single_item_prompt_template": ATTRACTIVE_TITLE_PROMPT_TEMPLATE,
+        "attractive_title_prompt": attractive_title_prompt_text,
+        "single_item_prompt_template": single_item_prompt_template,
         "comment_rules": [
             "comment 必须使用中文表达；可以保留必要英文缩写、化学式和物种名。",
             "不要输出以 ABSTRACT、SUMMARY 开头的英文原文片段。",
             "同批 comment 不要反复使用同一个句式；必须根据每篇题名和摘要写出不同的研究对象或证据边界。",
             "摘要不足时直接说明信息有限，并提示查看原文。",
         ],
-        "title_style_rules": [
-            profile.get("title_style", DEFAULT_TITLE_STYLE_GUIDE),
-            "每个 attractive_title 必须是中文导读标题，不要只直译英文题名。",
-            "优先把 source_alias 放在标题开头，例如 JACS、Angew、Nature Chemistry、Science、ACS Catalysis。",
-            "句式要有变化，不要连续输出“谁说……”；同批标题中反问句最多约三分之一。",
-            "同批标题不能只替换期刊名前缀；标题主体必须能体现该条目的独有关键词。",
-            "允许使用一个短问句或反常识比喻，但必须能从 title 或 abstract 中找到依据。",
-            "可以保留专业缩写、化学式和期刊缩写；不要使用“重磅”“震惊”“颠覆”等夸张词。",
-            "不能编造输入中没有的团队、学校、通讯作者、性能数值或临床结论。",
-            "不要把相关性写成因果；不能夸大临床、产业或应用价值。",
-        ],
+        "title_style_rules": title_style_rules,
         "selection_rules": [
             "top_ids 选 5 条最值得关注的条目，兼顾来源权威性、新近性和领域覆盖。",
             "items 必须覆盖输入中的每一个 id。",
