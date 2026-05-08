@@ -118,7 +118,7 @@ jobs:
         run: |
           mkdir -p ./output
           set +e
-          python main.py --profile chemistry --report-date "${{ steps.report_date.outputs.today }}" --output-dir ./output --require-email
+          python main.py --profile chemistry --report-date "${{ steps.report_date.outputs.today }}" --output-dir ./output --require-email --require-ai
           status=$?
           echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
           exit 0

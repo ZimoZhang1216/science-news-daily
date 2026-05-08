@@ -1376,6 +1376,13 @@ def comment_key(comment: str) -> str:
     return text[:120]
 
 
+def is_mostly_english_text(text: str) -> bool:
+    normalized = clean_text(text)
+    ascii_chars = sum(1 for char in normalized if ord(char) < 128 and char.isalpha())
+    letter_chars = sum(1 for char in normalized if char.isalpha())
+    return bool(letter_chars and ascii_chars / letter_chars > 0.72)
+
+
 def is_low_value_comment(comment: str) -> bool:
     text = clean_text(comment)
     low_value_markers = (
@@ -1390,6 +1397,32 @@ def is_low_value_comment(comment: str) -> bool:
         "从题名和摘要看，工作关注",
     )
     return any(marker in text for marker in low_value_markers)
+
+
+def is_generated_title_acceptable(title: str, item: NewsItem, profile: dict[str, Any]) -> bool:
+    normalized = normalize_chinese_title(title)
+    if not normalized:
+        return False
+    if any(word in normalized for word in BANNED_TITLE_WORDS):
+        return False
+    if is_generic_title(normalized):
+        return False
+    if profile.get("key") == "chemistry" and is_chemistry_marketing_title(normalized):
+        return False
+    if profile.get("key") == "biology" and biology_title_has_unsupported_terms(normalized, item):
+        return False
+    return chinese_char_count(normalized) <= 46
+
+
+def is_generated_comment_acceptable(comment: str) -> bool:
+    normalized = clean_text(comment)
+    if not normalized:
+        return False
+    if "ABSTRACT" in normalized.upper():
+        return False
+    if is_mostly_english_text(normalized):
+        return False
+    return not is_low_value_comment(normalized)
 
 
 def is_chemistry_marketing_title(title: str) -> bool:
@@ -2006,9 +2039,7 @@ def normalize_comment(comment: str, item: NewsItem) -> str:
     without_prefix = re.sub(r"^(abstract|summary)\s*[:：]?\s*", "", normalized, flags=re.IGNORECASE)
     without_prefix = re.sub(r"^[（(]\s*与\s*N\d+\s*相同\s*[）)]\s*", "", without_prefix)
     without_prefix = re.sub(r"^[（(]\s*信息有限\s*[）)]\s*", "信息有限：", without_prefix)
-    ascii_chars = sum(1 for char in without_prefix if ord(char) < 128 and char.isalpha())
-    letter_chars = sum(1 for char in without_prefix if char.isalpha())
-    if "ABSTRACT" in normalized.upper() or (letter_chars and ascii_chars / letter_chars > 0.72):
+    if "ABSTRACT" in normalized.upper() or is_mostly_english_text(without_prefix):
         return fallback_comment(item)
     return without_prefix
 
@@ -2356,7 +2387,7 @@ def generate_ai_summaries(
     profile: dict[str, Any],
 ) -> dict[str, Any]:
     if not items:
-        return {"top_ids": [], "field_summaries": []}
+        return {"top_ids": [], "field_summaries": [], "ai_generated": False}
     if OpenAI is None:
         LOGGER.warning("openai package is not installed; using fallback summaries.")
         apply_fallback_summaries(items, profile)
@@ -2598,12 +2629,16 @@ def generate_ai_summaries(
         return fallback_report_payload(items, profile)
 
     by_id = {entry.get("id"): entry for entry in parsed.get("items", []) if isinstance(entry, dict)}
+    complete_ai_items = True
     for item in items:
         generated = by_id.get(item.item_id, {})
         generated_title = generated.get("attractive_title", "") or generated.get("chinese_title", "")
+        generated_comment = generated.get("comment", "")
+        if not is_generated_title_acceptable(generated_title, item, profile) or not is_generated_comment_acceptable(generated_comment):
+            complete_ai_items = False
         item.attractive_title = normalize_attractive_title(generated_title, item, profile)
         item.chinese_title = item.chinese_title or item.attractive_title
-        item.comment = normalize_comment(generated.get("comment", ""), item)
+        item.comment = normalize_comment(generated_comment, item)
     apply_fallback_summaries(items, profile)
     top_ids = [
         item_id
@@ -2621,7 +2656,13 @@ def generate_ai_summaries(
     field_summaries = parsed.get("field_summaries", [])
     if not isinstance(field_summaries, list):
         field_summaries = []
-    return {"top_ids": top_ids[:5], "field_summaries": field_summaries}
+    return {
+        "top_ids": top_ids[:5],
+        "field_summaries": field_summaries,
+        "ai_generated": complete_ai_items,
+        "ai_provider": llm_config.provider,
+        "ai_model": llm_config.model,
+    }
 
 
 def fallback_report_payload(items: list[NewsItem], profile: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -2638,7 +2679,7 @@ def fallback_report_payload(items: list[NewsItem], profile: dict[str, Any] | Non
         }
         for field_name, group_items in grouped.items()
     ]
-    return {"top_ids": top_ids, "field_summaries": field_summaries}
+    return {"top_ids": top_ids, "field_summaries": field_summaries, "ai_generated": False}
 
 
 def add_hyperlink(paragraph: Any, text: str, url: str) -> None:
@@ -3232,6 +3273,7 @@ def send_report_email(
     report_date: date,
     profile: dict[str, Any],
     is_failure: bool = False,
+    ai_generated: bool = False,
 ) -> bool:
     if not env_flag("EMAIL_ENABLED", True):
         LOGGER.info("Email sending is disabled by EMAIL_ENABLED.")
@@ -3264,6 +3306,9 @@ def send_report_email(
         return False
     if not attachment_path.exists():
         LOGGER.warning("Email not sent; attachment does not exist: %s", attachment_path)
+        return False
+    if not is_failure and not ai_generated:
+        LOGGER.warning("Email not sent; normal report does not have complete AI-generated summaries.")
         return False
 
     email_attachment_path = attachment_path
@@ -3447,6 +3492,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=env_flag("REQUIRE_EMAIL_SUCCESS", False),
         help="Return a non-zero exit code if SMTP delivery is disabled or fails.",
     )
+    parser.add_argument(
+        "--require-ai",
+        action="store_true",
+        default=env_flag("REQUIRE_AI_SUMMARY", False),
+        help="Return a non-zero exit code unless every report item received an AI-generated title and summary.",
+    )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging.")
     return parser
 
@@ -3503,6 +3554,8 @@ def main() -> int:
     profile = resolve_profile(args.profile)
     if args.no_email and args.require_email:
         raise SystemExit("--no-email cannot be used together with --require-email.")
+    if args.no_openai and args.require_ai:
+        raise SystemExit("--no-openai cannot be used together with --require-ai.")
     if args.no_email:
         os.environ["EMAIL_ENABLED"] = "false"
 
@@ -3548,6 +3601,10 @@ def main() -> int:
             prepared_count=len(prepared),
         )
         LOGGER.error("No reportable items; saved failure report to %s", failure_report)
+        if args.require_ai:
+            LOGGER.error("AI summary is required; failure report email will not be sent.")
+            print(failure_report)
+            return 4
         email_sent = send_report_email(failure_report, report_date, profile, is_failure=True)
         print(failure_report)
         if args.require_email and not email_sent:
@@ -3558,7 +3615,21 @@ def main() -> int:
         apply_fallback_summaries(prepared, profile)
         report_payload = fallback_report_payload(prepared, profile)
     else:
+        if args.require_ai and args.max_ai_items < len(prepared):
+            LOGGER.error(
+                "AI summary is required for every emailed item, but --max-ai-items=%d is less than prepared item count=%d.",
+                args.max_ai_items,
+                len(prepared),
+            )
+            return 4
         report_payload = generate_ai_summaries(prepared, args.model, args.max_ai_items, profile)
+
+    if args.require_ai and not report_payload.get("ai_generated"):
+        LOGGER.error(
+            "AI summary is required, but model generation was incomplete or fell back to rule-based summaries. "
+            "Report email will not be sent."
+        )
+        return 4
 
     output_path = create_document(
         prepared,
@@ -3570,7 +3641,7 @@ def main() -> int:
         source_statuses=source_statuses,
     )
     LOGGER.info("Saved report to %s", output_path)
-    email_sent = send_report_email(output_path, report_date, profile)
+    email_sent = send_report_email(output_path, report_date, profile, ai_generated=bool(report_payload.get("ai_generated")))
     print(output_path)
     if args.require_email and not email_sent:
         return 3

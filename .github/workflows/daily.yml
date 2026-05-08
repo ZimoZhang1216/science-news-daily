@@ -209,13 +209,13 @@ jobs:
           overall=0
           report_date="${{ steps.report_date.outputs.today }}"
           profiles="${{ steps.report_profiles.outputs.profiles }}"
-          require_email=()
+          required_flags=(--require-ai)
           if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            require_email=(--require-email)
+            required_flags+=(--require-email)
           fi
           for profile in $profiles; do
             echo "::group::Generate ${profile} report"
-            python main.py --profile "${profile}" --report-date "${report_date}" --output-dir ./output "${require_email[@]}"
+            python main.py --profile "${profile}" --report-date "${report_date}" --output-dir ./output "${required_flags[@]}"
             status=$?
             echo "::endgroup::"
             if [ "$status" -ne 0 ] && [ "$overall" -eq 0 ]; then

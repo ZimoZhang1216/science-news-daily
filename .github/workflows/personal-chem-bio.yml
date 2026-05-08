@@ -121,7 +121,7 @@ jobs:
           report_date="${{ steps.report_date.outputs.today }}"
           for profile in chemistry biology; do
             echo "::group::Generate ${profile} report"
-            python main.py --profile "${profile}" --report-date "${report_date}" --output-dir ./output --require-email
+            python main.py --profile "${profile}" --report-date "${report_date}" --output-dir ./output --require-email --require-ai
             status=$?
             echo "::endgroup::"
             if [ "$status" -ne 0 ] && [ "$overall" -eq 0 ]; then
