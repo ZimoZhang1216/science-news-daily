@@ -21,8 +21,6 @@ on:
     - cron: "37 23 * * *"
     - cron: "45 23 * * *"
     - cron: "15 0 * * *"
-    # One-time chemistry-only test: 2026-05-08 12:30 Asia/Shanghai.
-    - cron: "30 4 8 5 *"
 
 permissions:
   contents: read
@@ -135,9 +133,6 @@ jobs:
         shell: bash
         run: |
           raw_profiles="${{ github.event.client_payload.profiles || inputs.profiles || 'chemistry,biology,statistics' }}"
-          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "30 4 8 5 *" ]; then
-            raw_profiles="chemistry"
-          fi
           raw_profiles="${raw_profiles//,/ }"
           profiles=()
           for profile in $raw_profiles; do
