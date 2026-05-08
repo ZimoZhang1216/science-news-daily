@@ -1,4 +1,4 @@
-name: Manual Chemistry News
+name: Biology News - Personal Email
 
 on:
   workflow_dispatch:
@@ -12,14 +12,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: manual-chemistry-news-${{ github.ref }}
+  group: biology-personal-email-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   generate:
-    name: Generate and email chemistry news
+    name: Generate biology news for personal email
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     env:
       EMAIL_ENABLED: "true"
       LLM_PROVIDER: ${{ secrets.LLM_PROVIDER }}
@@ -27,8 +27,8 @@ jobs:
       OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
       DEEPSEEK_MODEL: ${{ secrets.DEEPSEEK_MODEL }}
-      REPORT_EMAIL_TO: ${{ secrets.REPORT_EMAIL_TO }}
-      CHEM_REPORT_EMAIL_TO: ${{ secrets.CHEM_REPORT_EMAIL_TO }}
+      PERSONAL_REPORT_EMAIL_TO: ${{ secrets.PERSONAL_REPORT_EMAIL_TO }}
+      BIO_REPORT_EMAIL_TO: ${{ secrets.PERSONAL_REPORT_EMAIL_TO }}
       SMTP_HOST: ${{ secrets.SMTP_HOST }}
       SMTP_PORT: ${{ secrets.SMTP_PORT }}
       SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
@@ -46,12 +46,11 @@ jobs:
           echo "utc_now=$(date -u)"
           echo "local_now=$(date)"
 
-      - name: Check chemistry email configuration
-        id: email_config
+      - name: Check personal email configuration
         shell: bash
         run: |
           missing=()
-          for name in SMTP_HOST SMTP_USERNAME SMTP_PASSWORD; do
+          for name in SMTP_HOST SMTP_USERNAME SMTP_PASSWORD PERSONAL_REPORT_EMAIL_TO; do
             if [ -z "${!name}" ]; then
               missing+=("$name")
             fi
@@ -59,26 +58,10 @@ jobs:
           if [ -z "${SMTP_FROM:-$SMTP_USERNAME}" ]; then
             missing+=("SMTP_FROM_or_SMTP_USERNAME")
           fi
-          if [ -z "${CHEM_REPORT_EMAIL_TO:-$REPORT_EMAIL_TO}" ]; then
-            missing+=("CHEM_REPORT_EMAIL_TO_or_REPORT_EMAIL_TO")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing biology personal email configuration: ${missing[*]}"
+            exit 1
           fi
-          if [ "${#missing[@]}" -eq 0 ]; then
-            echo "email_config=ready"
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-            echo "missing=" >> "$GITHUB_OUTPUT"
-          else
-            echo "email_config_missing=${missing[*]}"
-            echo "::warning::Chemistry email configuration is incomplete: ${missing[*]}"
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "missing=${missing[*]}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Require chemistry email configuration
-        if: steps.email_config.outputs.ready != 'true'
-        run: |
-          echo "Manual chemistry workflow must send the chemistry email."
-          echo "Missing email configuration: ${{ steps.email_config.outputs.missing }}"
-          exit 1
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -112,29 +95,29 @@ jobs:
           echo "today=${report_date}" >> "$GITHUB_OUTPUT"
           echo "Report date: ${report_date}"
 
-      - name: Generate and email chemistry report
+      - name: Generate and email biology report
         id: generate_report
         shell: bash
         run: |
           mkdir -p ./output
           set +e
-          python main.py --profile chemistry --report-date "${{ steps.report_date.outputs.today }}" --output-dir ./output --require-email --require-ai
+          python main.py --profile biology --report-date "${{ steps.report_date.outputs.today }}" --output-dir ./output --require-email --require-ai
           status=$?
           echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
           exit 0
 
-      - name: Upload chemistry report artifacts
+      - name: Upload biology artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: manual-chemistry-news-output
+          name: biology-personal-output
           path: |
-            ./output/chem_news_*.docx
-            ./output/chem_news_*.pdf
+            ./output/bio_news_*.docx
+            ./output/bio_news_*.pdf
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Fail workflow when chemistry report failed
+      - name: Fail workflow when biology report failed
         if: always() && steps.generate_report.outputs.exit_code != '0'
         run: |
           code="${{ steps.generate_report.outputs.exit_code }}"

@@ -1,0 +1,128 @@
+name: Statistics News - Personal Email
+
+on:
+  workflow_dispatch:
+    inputs:
+      report_date:
+        description: "Optional report date in YYYY-MM-DD, defaults to Asia/Shanghai today"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: statistics-personal-email-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    name: Generate statistics news for personal email
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      EMAIL_ENABLED: "true"
+      LLM_PROVIDER: ${{ secrets.LLM_PROVIDER }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      DEEPSEEK_MODEL: ${{ secrets.DEEPSEEK_MODEL }}
+      PERSONAL_REPORT_EMAIL_TO: ${{ secrets.PERSONAL_REPORT_EMAIL_TO }}
+      STAT_REPORT_EMAIL_TO: ${{ secrets.PERSONAL_REPORT_EMAIL_TO }}
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      SMTP_FROM: ${{ secrets.SMTP_FROM }}
+      SMTP_SECURITY: ${{ secrets.SMTP_SECURITY }}
+
+    steps:
+      - name: Print trigger info
+        run: |
+          echo "event_name=${{ github.event_name }}"
+          echo "input_report_date=${{ inputs.report_date }}"
+          echo "ref=${{ github.ref }}"
+          echo "sha=${{ github.sha }}"
+          echo "utc_now=$(date -u)"
+          echo "local_now=$(date)"
+
+      - name: Check personal email configuration
+        shell: bash
+        run: |
+          missing=()
+          for name in SMTP_HOST SMTP_USERNAME SMTP_PASSWORD PERSONAL_REPORT_EMAIL_TO; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ -z "${SMTP_FROM:-$SMTP_USERNAME}" ]; then
+            missing+=("SMTP_FROM_or_SMTP_USERNAME")
+          fi
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing statistics personal email configuration: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install LibreOffice for PDF export
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libreoffice-writer fonts-noto-cjk
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compute report date
+        id: report_date
+        shell: bash
+        run: |
+          input_report_date="${{ inputs.report_date }}"
+          if [ -n "$input_report_date" ]; then
+            report_date="$input_report_date"
+          else
+            report_date="$(TZ=Asia/Shanghai date +%F)"
+          fi
+          echo "today=${report_date}" >> "$GITHUB_OUTPUT"
+          echo "Report date: ${report_date}"
+
+      - name: Generate and email statistics report
+        id: generate_report
+        shell: bash
+        run: |
+          mkdir -p ./output
+          set +e
+          python main.py --profile statistics --report-date "${{ steps.report_date.outputs.today }}" --output-dir ./output --require-email --require-ai
+          status=$?
+          echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload statistics artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: statistics-personal-output
+          path: |
+            ./output/stat_news_*.docx
+            ./output/stat_news_*.pdf
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Fail workflow when statistics report failed
+        if: always() && steps.generate_report.outputs.exit_code != '0'
+        run: |
+          code="${{ steps.generate_report.outputs.exit_code }}"
+          if [ -z "$code" ]; then
+            code=1
+          fi
+          echo "main.py exited with code ${code}"
+          exit "$code"

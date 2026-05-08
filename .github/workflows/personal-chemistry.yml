@@ -1,4 +1,4 @@
-name: Personal Chem Bio News
+name: Chemistry News - Personal Email
 
 on:
   workflow_dispatch:
@@ -12,12 +12,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: personal-chem-bio-news-${{ github.ref }}
+  group: chemistry-personal-email-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   generate:
-    name: Generate and email personal chem/bio news
+    name: Generate chemistry news for personal email
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -30,7 +30,6 @@ jobs:
       PERSONAL_REPORT_EMAIL_TO: ${{ secrets.PERSONAL_REPORT_EMAIL_TO }}
       REPORT_EMAIL_TO: ${{ secrets.PERSONAL_REPORT_EMAIL_TO }}
       CHEM_REPORT_EMAIL_TO: ${{ secrets.PERSONAL_REPORT_EMAIL_TO }}
-      BIO_REPORT_EMAIL_TO: ${{ secrets.PERSONAL_REPORT_EMAIL_TO }}
       SMTP_HOST: ${{ secrets.SMTP_HOST }}
       SMTP_PORT: ${{ secrets.SMTP_PORT }}
       SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
@@ -49,7 +48,6 @@ jobs:
           echo "local_now=$(date)"
 
       - name: Check personal email configuration
-        id: email_config
         shell: bash
         run: |
           missing=()
@@ -61,23 +59,10 @@ jobs:
           if [ -z "${SMTP_FROM:-$SMTP_USERNAME}" ]; then
             missing+=("SMTP_FROM_or_SMTP_USERNAME")
           fi
-          if [ "${#missing[@]}" -eq 0 ]; then
-            echo "email_config=ready"
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-            echo "missing=" >> "$GITHUB_OUTPUT"
-          else
-            echo "email_config_missing=${missing[*]}"
-            echo "::warning::Personal email configuration is incomplete: ${missing[*]}"
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "missing=${missing[*]}" >> "$GITHUB_OUTPUT"
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing chemistry personal email configuration: ${missing[*]}"
+            exit 1
           fi
-
-      - name: Require personal email configuration
-        if: steps.email_config.outputs.ready != 'true'
-        run: |
-          echo "Personal chem/bio workflow must send both emails to PERSONAL_REPORT_EMAIL_TO."
-          echo "Missing email configuration: ${{ steps.email_config.outputs.missing }}"
-          exit 1
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -111,40 +96,29 @@ jobs:
           echo "today=${report_date}" >> "$GITHUB_OUTPUT"
           echo "Report date: ${report_date}"
 
-      - name: Generate and email personal chemistry and biology reports
+      - name: Generate and email chemistry report
         id: generate_report
         shell: bash
         run: |
           mkdir -p ./output
           set +e
-          overall=0
-          report_date="${{ steps.report_date.outputs.today }}"
-          for profile in chemistry biology; do
-            echo "::group::Generate ${profile} report"
-            python main.py --profile "${profile}" --report-date "${report_date}" --output-dir ./output --require-email --require-ai
-            status=$?
-            echo "::endgroup::"
-            if [ "$status" -ne 0 ] && [ "$overall" -eq 0 ]; then
-              overall="$status"
-            fi
-          done
-          echo "exit_code=${overall}" >> "$GITHUB_OUTPUT"
+          python main.py --profile chemistry --report-date "${{ steps.report_date.outputs.today }}" --output-dir ./output --require-email --require-ai
+          status=$?
+          echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
           exit 0
 
-      - name: Upload personal report artifacts
+      - name: Upload chemistry artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: personal-chem-bio-news-output
+          name: chemistry-personal-output
           path: |
             ./output/chem_news_*.docx
             ./output/chem_news_*.pdf
-            ./output/bio_news_*.docx
-            ./output/bio_news_*.pdf
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Fail workflow when personal reports failed
+      - name: Fail workflow when chemistry report failed
         if: always() && steps.generate_report.outputs.exit_code != '0'
         run: |
           code="${{ steps.generate_report.outputs.exit_code }}"
