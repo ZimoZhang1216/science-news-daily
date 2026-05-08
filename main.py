@@ -101,29 +101,21 @@ USER_AGENT = (
     "(mailto:please-set-CROSSREF_MAILTO@example.com; Python requests)"
 )
 DEFAULT_TITLE_STYLE_GUIDE = (
-    "中文标题采用 X-mol 式科研导读风格：模仿它的画面感、悬念感和科学克制，而不是机械套模板。"
-    "同一份报告里要混合使用陈述、转折、短问句和线索型标题；“谁说……”只能少量出现，不能连续刷屏。"
-    "可使用“期刊/来源：一个……，让……”“期刊/来源：不是……，而是……”"
-    "“期刊/来源：……的关键，可能藏在……”“期刊/来源：从……到……”"
-    "“期刊/来源：把……变成……”“期刊/来源：当……遇上……”等结构。"
-    "语气可以有趣，但必须科学克制，不能标题党，不能编造输入里没有的团队、数值、功效或结论。"
-    "标题约 18-32 个中文字符；保留必要英文缩写、化学式、基因名和模型名。"
+    "中文标题采用严谨的学术亮点风格，优先突出题名或摘要中可核对的研究对象、方法、机制、模型、"
+    "数据类型、材料/体系或证据边界。必须以期刊/来源名开头；不要使用公众号悬念、反问、拟人化比喻、"
+    "“谁说”“不是……而是……”“一个……让……”等营销句式。"
+    "不添加输入里没有的团队、作者、性能数值、临床/产业承诺或因果结论。"
+    "标题约 18-36 个中文字符；保留必要英文缩写、化学式、基因名、蛋白名和模型名。"
 )
 ATTRACTIVE_TITLE_PROMPT_TEMPLATE = (
-    "请根据以下论文信息生成一个中文吸引版标题。\n"
+    "请根据以下论文信息生成一个严谨的中文学术亮点标题。\n"
     "要求：\n"
-    "1. 风格类似中文科技公众号标题，有悬念和画面感，但不要机械套模板。\n"
-    "2. 不能夸大结论，不能制造虚假因果。\n"
-    "3. 必须保留期刊/来源名作为标题开头。\n"
-    "4. 标题长度控制在 18-32 个中文字符。\n"
-    "5. 从以下句式中自然选择，不要总用同一种；“谁说”只是少量选项：\n"
-    "   - 来源：一个……，让……\n"
-    "   - 来源：不是……，而是……\n"
-    "   - 来源：……的关键，可能藏在……\n"
-    "   - 来源：从……到……\n"
-    "   - 来源：把……变成……\n"
-    "   - 来源：谁说……？……\n"
-    "6. 不使用“震惊”“逆天”“炸裂”“封神”等词。\n\n"
+    "1. 必须保留期刊/来源名作为标题开头。\n"
+    "2. 标题主体突出研究对象、方法、机制、模型、数据类型、材料/体系或证据边界。\n"
+    "3. 标题长度控制在 18-36 个中文字符。\n"
+    "4. 不使用反问、悬念、夸张、拟人化比喻和营销号句式。\n"
+    "5. 不使用“谁说”“不是……而是……”“一个……让……”等表达。\n"
+    "6. 不夸大结论，不制造虚假因果，不加入输入中没有的数值或应用承诺。\n\n"
     "论文信息：\n"
     "来源：{source}\n"
     "英文标题：{title}\n"
@@ -315,7 +307,11 @@ STATISTICS_TERM_TRANSLATIONS: list[tuple[str, str]] = [
     ("random forest", "随机森林"),
     ("deep learning", "深度学习"),
     ("machine learning", "机器学习"),
+    ("expectation-maximization", "EM算法"),
+    ("em algorithm", "EM算法"),
     ("bootstrap", "Bootstrap"),
+    ("prediction", "预测"),
+    ("parameter", "参数"),
     ("confidence interval", "置信区间"),
     ("regression", "回归"),
     ("missing data", "缺失数据"),
@@ -992,13 +988,14 @@ REPORT_PROFILES: dict[str, dict[str, Any]] = {
         "ai_role": "生物学领域科研编辑",
         "ai_task": "生成生物科研资讯日报摘要",
         "title_style": (
-            "生物标题要更明显地参考 X-mol/科研公众号导读风格，像“Nature子刊：谁说拖把必须是布的？几滴水就够了”的语感，"
-            "但不要把所有标题都写成“谁说”。同一份日报里要混合短问句、转折句、线索句和动作句；"
-            "反问标题最多约三分之一。把细胞、基因、蛋白、免疫、微生物、疾病机制等科学对象写得有画面感。"
-            "示例风格：“Nature子刊：一段皮层通路，让小鼠唱出新调”、"
-            "“Science：不是T细胞太弱，而是肿瘤一直踩刹车”、"
-            "“Nature子刊：肠道菌的全球流行病，可能藏在基因组里”。"
-            "每个标题必须仍准确对应输入摘要；不能夸大治疗效果，不能虚构动物、人群、机制或临床结论。"
+            "生物标题与化学日报对齐，采用严谨的学术亮点风格。标题应突出题名或摘要中可核对的"
+            "细胞类型、基因/蛋白/RNA、疾病或表型、实验方法、数据类型、模型系统或机制对象。"
+            "优先使用“期刊名：研究对象/方法/机制的学术亮点”结构，例如"
+            "“Science：短RNA伴侣调控TDP-43聚集构象”、"
+            "“Nature：CRISPR-Cas12a介导RNA触发的细胞杀伤”、"
+            "“Genome Biology：单细胞图谱解析免疫微环境异质性”。"
+            "不要使用反问句、悬念句、拟人化比喻或“不是……而是……”“一个……让……”等营销句式；"
+            "不添加输入里没有的治疗效果、人群结论、临床承诺或因果外推。"
         ),
         "email_env": "BIO_REPORT_EMAIL_TO",
         "default_email_to": "",
@@ -1020,6 +1017,16 @@ REPORT_PROFILES: dict[str, dict[str, Any]] = {
         "default_field": "综合统计学",
         "ai_role": "统计学领域科研编辑",
         "ai_task": "生成统计学科研资讯日报摘要",
+        "title_style": (
+            "统计学标题与化学日报对齐，采用严谨的学术亮点风格。标题应突出题名或摘要中可核对的"
+            "统计问题、模型类别、估计/检验方法、理论性质、算法框架、数据结构或应用边界。"
+            "优先使用“期刊名/来源：问题/方法/理论性质的学术亮点”结构，例如"
+            "“Ann. Stat.：高维模型中的稳健推断界限”、"
+            "“JASA：缺失数据下的因果效应估计”、"
+            "“arXiv：扩散模型评估的非参数检验框架”。"
+            "不要使用反问句、悬念句、拟人化比喻或“不是……而是……”“一个……让……”等营销句式；"
+            "不添加输入里没有的性能数值、应用承诺或理论结论。"
+        ),
         "email_env": "STAT_REPORT_EMAIL_TO",
         "default_email_to": "",
     },
@@ -1399,7 +1406,7 @@ def is_low_value_comment(comment: str) -> bool:
     return any(marker in text for marker in low_value_markers)
 
 
-def is_chemistry_marketing_title(title: str) -> bool:
+def is_marketing_title(title: str) -> bool:
     body = title_body(title)
     marketing_markers = (
         "谁说",
@@ -2089,49 +2096,63 @@ def rule_based_chinese_title(item: NewsItem, profile: dict[str, Any], variant_of
     prefix = source_title_prefix(item.source, profile)
     first, second = title_terms_pair(item, profile)
     seed = f"{item.title} {item.source}"
-
-    if profile.get("key") == "biology":
-        templates = [
-            "一个{a}线索，让{b}更清楚",
-            "不是只看{a}，还要追{b}",
-            "{a}的关键，可能藏在{b}里",
-            "从{a}到{b}，生命过程多一条线",
-            "当{a}遇上{b}，机制露出细节",
-            "谁说只看{a}？{b}也有戏",
-        ]
-        template = templates[stable_index(seed, len(templates), variant_offset)]
-        return normalize_chinese_title(f"{prefix}：{template.format(a=first, b=second)}")
-
-    if profile.get("key") != "chemistry":
-        templates = [
-            "一个{a}线索，让{b}更清楚",
-            "不是只调模型，而是看清{a}",
-            "{a}的关键，可能藏在{b}里",
-            "从{a}到{b}，方法边界更清楚",
-            "谁说只能看均值？{a}也要追",
-        ]
-        template = templates[stable_index(seed, len(templates), variant_offset)]
-        return normalize_chinese_title(f"{prefix}：{template.format(a=first, b=second)}")
+    profile_key = profile.get("key")
 
     if second == "原文证据":
-        templates_one_term = [
-            "{a}相关体系的近期进展",
-            "{a}研究中的方法学线索",
-            "{a}方向的新近论文",
-            "{a}问题的机制研究",
-        ]
+        if profile_key == "biology":
+            templates_one_term = [
+                "{a}相关机制的近期进展",
+                "{a}研究中的方法学线索",
+                "{a}方向的新近论文",
+                "{a}过程的证据边界",
+            ]
+        elif profile_key == "statistics":
+            templates_one_term = [
+                "{a}问题的统计方法进展",
+                "{a}模型的理论线索",
+                "{a}方向的新近论文",
+                "{a}分析的推断框架",
+            ]
+        else:
+            templates_one_term = [
+                "{a}相关体系的近期进展",
+                "{a}研究中的方法学线索",
+                "{a}方向的新近论文",
+                "{a}问题的机制研究",
+            ]
         template = templates_one_term[stable_index(seed, len(templates_one_term), variant_offset)]
         return normalize_chinese_title(f"{prefix}：{template.format(a=first)}")
 
-    templates = [
-        "{a}相关{b}机制研究",
-        "{a}体系中的{b}调控",
-        "{a}方法用于{b}分析",
-        "{a}与{b}耦合机制",
-        "{a}介导的{b}过程",
-        "{a}方向的{b}研究进展",
-        "{a}体系的{b}表征线索",
-    ]
+    if profile_key == "biology":
+        templates = [
+            "{a}相关{b}机制研究",
+            "{a}模型中的{b}证据",
+            "{a}方法用于{b}解析",
+            "{a}与{b}调控关系",
+            "{a}介导的{b}过程",
+            "{a}方向的{b}研究进展",
+            "{a}过程中的{b}表征线索",
+        ]
+    elif profile_key == "statistics":
+        templates = [
+            "{a}模型中的{b}推断",
+            "{a}方法用于{b}分析",
+            "{a}问题的{b}框架",
+            "{a}与{b}统计建模",
+            "{a}方向的{b}理论线索",
+            "{a}算法的{b}评估",
+            "{a}数据中的{b}分析",
+        ]
+    else:
+        templates = [
+            "{a}相关{b}机制研究",
+            "{a}体系中的{b}调控",
+            "{a}方法用于{b}分析",
+            "{a}与{b}耦合机制",
+            "{a}介导的{b}过程",
+            "{a}方向的{b}研究进展",
+            "{a}体系的{b}表征线索",
+        ]
     template = templates[stable_index(seed, len(templates), variant_offset)]
     return normalize_chinese_title(f"{prefix}：{template.format(a=first, b=second)}")
 
@@ -2142,7 +2163,7 @@ def fallback_chinese_title(item: NewsItem, profile: dict[str, Any]) -> str:
         existing_title
         and not any(word in existing_title for word in BANNED_TITLE_WORDS)
         and not is_generic_title(existing_title)
-        and not (profile.get("key") == "chemistry" and is_chemistry_marketing_title(existing_title))
+        and not is_marketing_title(existing_title)
         and not (profile.get("key") == "biology" and biology_title_has_unsupported_terms(existing_title, item))
         and chinese_char_count(existing_title) <= 46
     ):
@@ -2193,7 +2214,7 @@ def normalize_attractive_title(title: str, item: NewsItem, profile: dict[str, An
 
     if is_generic_title(normalized):
         return rule_based_chinese_title(item, profile)
-    if profile.get("key") == "chemistry" and is_chemistry_marketing_title(normalized):
+    if is_marketing_title(normalized):
         return rule_based_chinese_title(item, profile)
     if profile.get("key") == "biology" and biology_title_has_unsupported_terms(normalized, item):
         return rule_based_chinese_title(item, profile)
@@ -2395,71 +2416,43 @@ def generate_ai_summaries(
         f"标题风格要求：{profile.get('title_style', DEFAULT_TITLE_STYLE_GUIDE)}"
         "只输出 JSON，不要输出 Markdown。"
     )
-    if profile.get("key") == "chemistry":
-        title_schema_text = (
-            "学术亮点中文标题，18-36个中文字符左右，必须以来源/期刊名开头；"
-            "标题主体应突出可核对的研究对象、反应/材料/催化体系、方法、机制或表征重点；"
-            "不要使用反问句、悬念句、拟人化比喻、营销号语气或“不是……而是……”“一个……让……”句式"
-        )
-        attractive_title_prompt_text = (
-            "请根据论文信息生成一个严谨的化学学术亮点标题。要求：1. 必须以期刊/来源名开头。"
-            "2. 标题主体聚焦题名或摘要中可确认的研究对象、反应类型、材料体系、催化/能源/分析方法、机制或表征。"
-            "3. 不使用反问、悬念、夸张、拟人化比喻和营销号句式；不使用“谁说”“不是……而是……”“一个……让……”。"
-            "4. 不添加输入中没有的性能数值、应用承诺、团队、作者或因果结论。"
-            "5. 可保留专业缩写、化学式、材料名和期刊缩写。"
-        )
-        single_item_prompt_template = (
-            "请根据以下论文信息生成一个严谨的化学学术亮点标题。\n"
-            "要求：\n"
-            "1. 必须保留期刊/来源名作为标题开头。\n"
-            "2. 标题突出研究对象、方法、材料/反应体系、机制或表征亮点。\n"
-            "3. 不使用“谁说”“不是……而是……”“一个……让……”等营销号句式。\n"
-            "4. 不夸大结论，不制造虚假因果，不加入输入中没有的数值或应用承诺。\n\n"
-            "论文信息：\n"
-            "来源：{source}\n"
-            "英文标题：{title}\n"
-            "摘要：{abstract}\n"
-            "领域：{field}\n\n"
-            "输出只给一个标题。"
-        )
-        title_style_rules = [
-            profile.get("title_style", DEFAULT_TITLE_STYLE_GUIDE),
-            "每个 attractive_title 必须是严谨的化学学术亮点标题，不要写成公众号导读标题。",
-            "优先把 source_alias 放在标题开头，例如 JACS、Angew、Nature Chemistry、Science、ACS Catalysis。",
-            "标题主体必须体现该条目的独有关键词，例如反应类型、催化体系、材料组成、表征方法、机制或计算模型。",
-            "禁止使用“谁说”“不是……而是……”“一个……让……”“藏在……里”“有戏”等悬念式或营销式表达。",
-            "可以保留专业缩写、化学式和期刊缩写；不要使用“重磅”“震惊”“颠覆”等夸张词。",
-            "不能编造输入中没有的团队、学校、通讯作者、性能数值或应用结论。",
-            "不要把相关性写成因果；不能夸大临床、产业或应用价值。",
-        ]
-    else:
-        title_schema_text = (
-            "吸引版中文标题，18-32个中文字符左右，必须以来源/期刊名开头；"
-            "从“来源：一个……，让……”“来源：不是……，而是……”"
-            "“来源：……的关键，可能藏在……”“来源：从……到……”"
-            "“来源：谁说……？……”等结构中自然选择；不要机械重复同一句式"
-        )
-        attractive_title_prompt_text = (
-            "请根据以下论文信息生成一个中文吸引版标题。要求：1. 风格类似中文科技公众号标题，"
-            "有悬念和画面感，但不要机械套模板。2. 不能夸大结论，不能制造虚假因果。"
-            "3. 必须保留期刊/来源名作为标题开头。4. 标题长度控制在18-32个中文字符。"
-            "5. 从多种句式中自然选择：来源：一个……，让……；来源：不是……，而是……；"
-            "来源：……的关键，可能藏在……；来源：从……到……；来源：把……变成……；"
-            "来源：谁说……？……。同批标题不要重复同一句式，“谁说”最多约三分之一。"
-            "6. 不使用震惊、逆天、炸裂、封神等词。"
-        )
-        single_item_prompt_template = ATTRACTIVE_TITLE_PROMPT_TEMPLATE
-        title_style_rules = [
-            profile.get("title_style", DEFAULT_TITLE_STYLE_GUIDE),
-            "每个 attractive_title 必须是中文导读标题，不要只直译英文题名。",
-            "优先把 source_alias 放在标题开头，例如 JACS、Angew、Nature Chemistry、Science、ACS Catalysis。",
-            "句式要有变化，不要连续输出“谁说……”；同批标题中反问句最多约三分之一。",
-            "同批标题不能只替换期刊名前缀；标题主体必须能体现该条目的独有关键词。",
-            "允许使用一个短问句或反常识比喻，但必须能从 title 或 abstract 中找到依据。",
-            "可以保留专业缩写、化学式和期刊缩写；不要使用“重磅”“震惊”“颠覆”等夸张词。",
-            "不能编造输入中没有的团队、学校、通讯作者、性能数值或临床结论。",
-            "不要把相关性写成因果；不能夸大临床、产业或应用价值。",
-        ]
+    discipline_name = profile["title"].replace("科研资讯日报", "")
+    title_schema_text = (
+        "严谨的学术亮点中文标题，18-36个中文字符左右，必须以来源/期刊名开头；"
+        "标题主体应突出可核对的研究对象、方法、机制、模型、数据类型、材料/体系或证据边界；"
+        "不要使用反问句、悬念句、拟人化比喻、营销号语气或“不是……而是……”“一个……让……”句式"
+    )
+    attractive_title_prompt_text = (
+        f"请根据论文信息生成一个严谨的{discipline_name}学术亮点标题。要求：1. 必须以期刊/来源名开头。"
+        "2. 标题主体聚焦题名或摘要中可确认的研究对象、方法、机制、模型、数据类型、材料/体系或证据边界。"
+        "3. 不使用反问、悬念、夸张、拟人化比喻和营销号句式；不使用“谁说”“不是……而是……”“一个……让……”。"
+        "4. 不添加输入中没有的性能数值、应用承诺、团队、作者或因果结论。"
+        "5. 可保留专业缩写、化学式、基因名、蛋白名、模型名和期刊缩写。"
+    )
+    single_item_prompt_template = (
+        f"请根据以下论文信息生成一个严谨的{discipline_name}学术亮点标题。\n"
+        "要求：\n"
+        "1. 必须保留期刊/来源名作为标题开头。\n"
+        "2. 标题突出研究对象、方法、机制、模型、数据类型、材料/体系或证据边界。\n"
+        "3. 不使用“谁说”“不是……而是……”“一个……让……”等营销号句式。\n"
+        "4. 不夸大结论，不制造虚假因果，不加入输入中没有的数值或应用承诺。\n\n"
+        "论文信息：\n"
+        "来源：{source}\n"
+        "英文标题：{title}\n"
+        "摘要：{abstract}\n"
+        "领域：{field}\n\n"
+        "输出只给一个标题。"
+    )
+    title_style_rules = [
+        profile.get("title_style", DEFAULT_TITLE_STYLE_GUIDE),
+        "每个 attractive_title 必须是严谨的学术亮点标题，不要写成公众号导读标题。",
+        "优先把 source_alias 放在标题开头，保留期刊、预印本平台或数据库来源名称。",
+        "标题主体必须体现该条目的独有关键词，例如研究对象、方法、机制、模型、数据类型、材料/体系或证据边界。",
+        "禁止使用“谁说”“不是……而是……”“一个……让……”“藏在……里”“有戏”等悬念式或营销式表达。",
+        "可以保留专业缩写、化学式、基因名、蛋白名、模型名和期刊缩写；不要使用“重磅”“震惊”“颠覆”等夸张词。",
+        "不能编造输入中没有的团队、学校、通讯作者、性能数值、临床结论或应用承诺。",
+        "不要把相关性写成因果；不能夸大临床、产业或应用价值。",
+    ]
     comment_rules = [
         "comment 必须使用中文表达；可以保留必要英文缩写、化学式和物种名。",
         "不要输出以 ABSTRACT、SUMMARY 开头的英文原文片段。",
