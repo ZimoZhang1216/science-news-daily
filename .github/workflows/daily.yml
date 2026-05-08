@@ -2,12 +2,24 @@ name: Daily Research News
 
 on:
   workflow_dispatch:
+    inputs:
+      profiles:
+        description: "Profiles to run: chemistry, biology, statistics, or comma-separated list"
+        required: false
+        default: "chemistry,biology,statistics"
+      report_date:
+        description: "Optional report date in YYYY-MM-DD, defaults to Asia/Shanghai today"
+        required: false
+        default: ""
   repository_dispatch:
     types:
       - daily-research-news
   schedule:
-    # Backup trigger. cron-job.org repository_dispatch is the primary 07:30 Asia/Shanghai trigger.
-    # If the external trigger fails, retry at 08:15 Asia/Shanghai.
+    # GitHub cron uses UTC. These are 07:30, 07:37, 07:45, and 08:15 Asia/Shanghai.
+    # Multiple entries reduce GitHub schedule drops; the daily marker prevents duplicate emails.
+    - cron: "30 23 * * *"
+    - cron: "37 23 * * *"
+    - cron: "45 23 * * *"
     - cron: "15 0 * * *"
 
 permissions:
@@ -47,6 +59,9 @@ jobs:
           echo "event_schedule=${{ github.event.schedule }}"
           echo "event_action=${{ github.event.action }}"
           echo "payload_report_date=${{ github.event.client_payload.report_date }}"
+          echo "payload_profiles=${{ github.event.client_payload.profiles }}"
+          echo "input_report_date=${{ inputs.report_date }}"
+          echo "input_profiles=${{ inputs.profiles }}"
           echo "ref=${{ github.ref }}"
           echo "sha=${{ github.sha }}"
           echo "utc_now=$(date -u)"
@@ -102,13 +117,49 @@ jobs:
         shell: bash
         run: |
           payload_report_date="${{ github.event.client_payload.report_date }}"
+          input_report_date="${{ inputs.report_date }}"
           if [ -n "$payload_report_date" ]; then
             report_date="$payload_report_date"
+          elif [ -n "$input_report_date" ]; then
+            report_date="$input_report_date"
           else
             report_date="$(TZ=Asia/Shanghai date +%F)"
           fi
           echo "today=${report_date}" >> "$GITHUB_OUTPUT"
           echo "Report date: ${report_date}"
+
+      - name: Compute report profiles
+        id: report_profiles
+        shell: bash
+        run: |
+          raw_profiles="${{ github.event.client_payload.profiles || inputs.profiles || 'chemistry,biology,statistics' }}"
+          raw_profiles="${raw_profiles//,/ }"
+          profiles=()
+          for profile in $raw_profiles; do
+            case "$profile" in
+              chemistry|biology|statistics)
+                profiles+=("$profile")
+                ;;
+              "")
+                ;;
+              *)
+                echo "Unsupported profile: $profile" >&2
+                exit 2
+                ;;
+            esac
+          done
+          if [ "${#profiles[@]}" -eq 0 ]; then
+            profiles=(chemistry biology statistics)
+          fi
+          profile_string="${profiles[*]}"
+          is_full_daily="false"
+          if [ "$profile_string" = "chemistry biology statistics" ]; then
+            is_full_daily="true"
+          fi
+          echo "profiles=${profile_string}" >> "$GITHUB_OUTPUT"
+          echo "is_full_daily=${is_full_daily}" >> "$GITHUB_OUTPUT"
+          echo "Profiles: ${profile_string}"
+          echo "Full daily run: ${is_full_daily}"
 
       - name: Compute scheduled marker key
         id: marker_key
@@ -120,27 +171,28 @@ jobs:
 
       - name: Restore scheduled run marker
         id: scheduled_marker
-        if: github.event_name == 'schedule' || github.event_name == 'repository_dispatch'
+        if: (github.event_name == 'schedule' || github.event_name == 'repository_dispatch') && steps.report_profiles.outputs.is_full_daily == 'true'
         uses: actions/cache/restore@v4
         with:
           path: .daily-run-marker
           key: ${{ steps.marker_key.outputs.key }}
 
-      - name: Skip duplicate scheduled run
-        if: github.event_name == 'schedule' && steps.scheduled_marker.outputs.cache-hit == 'true'
+      - name: Skip duplicate scheduled or dispatch run
+        if: (github.event_name == 'schedule' || github.event_name == 'repository_dispatch') && steps.report_profiles.outputs.is_full_daily == 'true' && steps.scheduled_marker.outputs.cache-hit == 'true'
         run: |
-          echo "Daily report for ${{ steps.report_date.outputs.today }} already generated; skipping backup schedule."
+          echo "Daily report for ${{ steps.report_date.outputs.today }} already generated; skipping duplicate scheduled/dispatch run."
 
       - name: Generate report
         id: generate_report
-        if: github.event_name != 'schedule' || steps.scheduled_marker.outputs.cache-hit != 'true'
+        if: (github.event_name != 'schedule' && github.event_name != 'repository_dispatch') || steps.report_profiles.outputs.is_full_daily != 'true' || steps.scheduled_marker.outputs.cache-hit != 'true'
         shell: bash
         run: |
           mkdir -p ./output
           set +e
           overall=0
           report_date="${{ steps.report_date.outputs.today }}"
-          for profile in chemistry biology statistics; do
+          profiles="${{ steps.report_profiles.outputs.profiles }}"
+          for profile in $profiles; do
             echo "::group::Generate ${profile} report"
             python main.py --profile "${profile}" --report-date "${report_date}" --output-dir ./output
             status=$?
@@ -153,20 +205,20 @@ jobs:
           exit 0
 
       - name: Write scheduled run marker
-        if: (github.event_name == 'schedule' || github.event_name == 'repository_dispatch') && steps.scheduled_marker.outputs.cache-hit != 'true' && steps.generate_report.outputs.exit_code == '0'
+        if: (github.event_name == 'schedule' || github.event_name == 'repository_dispatch') && steps.report_profiles.outputs.is_full_daily == 'true' && steps.scheduled_marker.outputs.cache-hit != 'true' && steps.generate_report.outputs.exit_code == '0'
         run: |
           mkdir -p .daily-run-marker
           echo "${{ github.run_id }}" > ".daily-run-marker/${{ steps.report_date.outputs.today }}.txt"
 
       - name: Save scheduled run marker
-        if: (github.event_name == 'schedule' || github.event_name == 'repository_dispatch') && steps.scheduled_marker.outputs.cache-hit != 'true' && steps.generate_report.outputs.exit_code == '0'
+        if: (github.event_name == 'schedule' || github.event_name == 'repository_dispatch') && steps.report_profiles.outputs.is_full_daily == 'true' && steps.scheduled_marker.outputs.cache-hit != 'true' && steps.generate_report.outputs.exit_code == '0'
         uses: actions/cache/save@v4
         with:
           path: .daily-run-marker
           key: ${{ steps.marker_key.outputs.key }}
 
       - name: Upload report artifacts
-        if: always() && (github.event_name != 'schedule' || steps.scheduled_marker.outputs.cache-hit != 'true')
+        if: always() && ((github.event_name != 'schedule' && github.event_name != 'repository_dispatch') || steps.report_profiles.outputs.is_full_daily != 'true' || steps.scheduled_marker.outputs.cache-hit != 'true')
         uses: actions/upload-artifact@v4
         with:
           name: research-news-daily-output
@@ -177,7 +229,7 @@ jobs:
           retention-days: 30
 
       - name: Fail workflow when report generation failed
-        if: always() && (github.event_name != 'schedule' || steps.scheduled_marker.outputs.cache-hit != 'true') && steps.generate_report.outputs.exit_code != '0'
+        if: always() && ((github.event_name != 'schedule' && github.event_name != 'repository_dispatch') || steps.report_profiles.outputs.is_full_daily != 'true' || steps.scheduled_marker.outputs.cache-hit != 'true') && steps.generate_report.outputs.exit_code != '0'
         run: |
           code="${{ steps.generate_report.outputs.exit_code }}"
           if [ -z "$code" ]; then

@@ -94,9 +94,41 @@ DEFAULT_OPENAI_MODEL = "gpt-5.4-mini"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
 DEFAULT_REPORT_EMAIL_TO = "2510248@mail.nankai.edu.cn"
 SUPPORTED_LLM_PROVIDERS = {"openai", "deepseek"}
+BANNED_TITLE_WORDS = {"震惊", "颠覆", "炸裂", "封神", "逆天", "重磅", "神作", "史诗级"}
 USER_AGENT = (
     "ChemNewsDaily/1.0 "
     "(mailto:please-set-CROSSREF_MAILTO@example.com; Python requests)"
+)
+DEFAULT_TITLE_STYLE_GUIDE = (
+    "中文标题采用 X-mol 式科研导读风格：模仿它的画面感、悬念感和科学克制，而不是机械套模板。"
+    "同一份报告里要混合使用陈述、转折、短问句和线索型标题；“谁说……”只能少量出现，不能连续刷屏。"
+    "可使用“期刊/来源：一个……，让……”“期刊/来源：不是……，而是……”"
+    "“期刊/来源：……的关键，可能藏在……”“期刊/来源：从……到……”"
+    "“期刊/来源：把……变成……”“期刊/来源：当……遇上……”等结构。"
+    "语气可以有趣，但必须科学克制，不能标题党，不能编造输入里没有的团队、数值、功效或结论。"
+    "标题约 18-32 个中文字符；保留必要英文缩写、化学式、基因名和模型名。"
+)
+ATTRACTIVE_TITLE_PROMPT_TEMPLATE = (
+    "请根据以下论文信息生成一个中文吸引版标题。\n"
+    "要求：\n"
+    "1. 风格类似中文科技公众号标题，有悬念和画面感，但不要机械套模板。\n"
+    "2. 不能夸大结论，不能制造虚假因果。\n"
+    "3. 必须保留期刊/来源名作为标题开头。\n"
+    "4. 标题长度控制在 18-32 个中文字符。\n"
+    "5. 从以下句式中自然选择，不要总用同一种；“谁说”只是少量选项：\n"
+    "   - 来源：一个……，让……\n"
+    "   - 来源：不是……，而是……\n"
+    "   - 来源：……的关键，可能藏在……\n"
+    "   - 来源：从……到……\n"
+    "   - 来源：把……变成……\n"
+    "   - 来源：谁说……？……\n"
+    "6. 不使用“震惊”“逆天”“炸裂”“封神”等词。\n\n"
+    "论文信息：\n"
+    "来源：{source}\n"
+    "英文标题：{title}\n"
+    "摘要：{abstract}\n"
+    "领域：{field}\n\n"
+    "输出只给一个标题。"
 )
 
 FIELD_KEYWORDS: dict[str, list[str]] = {
@@ -712,6 +744,15 @@ REPORT_PROFILES: dict[str, dict[str, Any]] = {
         "default_field": "综合化学",
         "ai_role": "化学领域科研编辑",
         "ai_task": "生成化学科研资讯日报摘要",
+        "title_style": (
+            "中文标题参考 X-mol 化学资讯写法：抓住策略、材料、键、活性位、界面、检测信号等化学对象，"
+            "写出有画面感的导读标题。句式要混合，不要连续使用“谁说”反问句；一组标题里反问只少量出现。"
+            "示例语感：“Angew：一个弱溶剂策略，让快充电池更耐温”、"
+            "“JACS：不是金属更贵，而是光把键剪开”、"
+            "“Nature Chemistry：萘的替身，可能藏在三维小环里”。"
+            "但化学标题仍需偏克制，必须落到材料、反应、催化、检测或机制本身。"
+            "不要使用“重磅”“震惊”“颠覆”等词，不添加输入里没有的团队、作者、性能数值或结论。"
+        ),
         "email_env": "CHEM_REPORT_EMAIL_TO",
         "default_email_to": DEFAULT_REPORT_EMAIL_TO,
     },
@@ -732,6 +773,15 @@ REPORT_PROFILES: dict[str, dict[str, Any]] = {
         "default_field": "综合生物学",
         "ai_role": "生物学领域科研编辑",
         "ai_task": "生成生物科研资讯日报摘要",
+        "title_style": (
+            "生物标题要更明显地参考 X-mol/科研公众号导读风格，像“Nature子刊：谁说拖把必须是布的？几滴水就够了”的语感，"
+            "但不要把所有标题都写成“谁说”。同一份日报里要混合短问句、转折句、线索句和动作句；"
+            "反问标题最多约三分之一。把细胞、基因、蛋白、免疫、微生物、疾病机制等科学对象写得有画面感。"
+            "示例风格：“Nature子刊：一段皮层通路，让小鼠唱出新调”、"
+            "“Science：不是T细胞太弱，而是肿瘤一直踩刹车”、"
+            "“Nature子刊：肠道菌的全球流行病，可能藏在基因组里”。"
+            "每个标题必须仍准确对应输入摘要；不能夸大治疗效果，不能虚构动物、人群、机制或临床结论。"
+        ),
         "email_env": "BIO_REPORT_EMAIL_TO",
         "default_email_to": "",
     },
@@ -769,6 +819,7 @@ class NewsItem:
     authors: list[str] = field(default_factory=list)
     field_name: str = "综合化学"
     item_id: str = ""
+    attractive_title: str = ""
     chinese_title: str = ""
     comment: str = ""
     score: float = 0.0
@@ -784,7 +835,7 @@ class SourceStatus:
     def summary(self) -> str:
         if self.success:
             return f"成功，获取 {self.item_count} 条"
-        return f"失败：{self.error or '未知错误'}"
+        return f"失败：{summarize_source_error(self.error)}"
 
 
 @dataclass
@@ -802,8 +853,39 @@ def clean_text(value: Any) -> str:
     text = html.unescape(str(value))
     if "<" in text and ">" in text and BeautifulSoup is not None:
         text = BeautifulSoup(text, "html.parser").get_text(" ", strip=True)
+    text = (
+        text.replace("\u00a0", " ")
+        .replace("\u202f", " ")
+        .replace("\u2007", " ")
+        .replace("\u2009", " ")
+        .replace("\u2010", "-")
+        .replace("\u2011", "-")
+        .replace("\u2012", "-")
+        .replace("\u2212", "-")
+        .replace("\ufeff", "")
+    )
     text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+def summarize_source_error(error: str) -> str:
+    text = clean_text(error)
+    if not text:
+        return "未知错误。"
+    lowered = text.lower()
+    if "read timed out" in lowered or "readtimeouterror" in lowered or "timeout" in lowered:
+        return "请求超时，来源响应过慢；其他来源已继续抓取，可稍后重试。"
+    if "name or service not known" in lowered or "failed to resolve" in lowered or "nameresolutionerror" in lowered:
+        return "DNS 解析失败；请检查网络、代理或 DNS 配置。"
+    if "connection refused" in lowered or "connectionerror" in lowered:
+        return "连接失败；可能是来源临时不可用或本地网络波动。"
+    if "429" in lowered or "too many requests" in lowered:
+        return "触发限流；建议降低请求频率或稍后重试。"
+    if "403" in lowered or "forbidden" in lowered:
+        return "访问被拒绝；该来源可能限制了自动化请求。"
+    if "500" in lowered or "502" in lowered or "503" in lowered or "504" in lowered:
+        return "来源服务器返回 5xx 错误；建议稍后重试。"
+    return truncate(text, 180)
 
 
 def parse_datetime(value: Any) -> datetime | None:
@@ -849,6 +931,22 @@ def truncate(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 1].rstrip() + "..."
+
+
+def normalize_chinese_title(title: str) -> str:
+    normalized = clean_text(title)
+    normalized = re.sub(r"\s*[:：]\s*", "：", normalized)
+    normalized = re.sub(r"\s*[—–]\s*", "——", normalized)
+    normalized = re.sub(r"\s+-\s+", "——", normalized)
+    normalized = re.sub(r"—{3,}", "——", normalized)
+    normalized = re.sub(r"\s+([，。；：！？、）】》])", r"\1", normalized)
+    normalized = re.sub(r"([，。；：！？、])\s+", r"\1", normalized)
+    normalized = re.sub(r"([（【《])\s+", r"\1", normalized)
+    return normalized
+
+
+def chinese_char_count(text: str) -> int:
+    return sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
 
 
 def build_session() -> requests.Session:
@@ -1309,16 +1407,199 @@ def prepare_items(items: list[NewsItem], max_items: int, now: datetime, profile:
 
 
 def fallback_comment(item: NewsItem) -> str:
-    abstract = truncate(item.abstract, 120)
+    abstract = clean_text(item.abstract)
+    abstract = re.sub(r"^(abstract|summary)\s*[:：]?\s*", "", abstract, flags=re.IGNORECASE)
     if abstract and "未提供摘要" not in abstract:
+        ascii_chars = sum(1 for char in abstract if ord(char) < 128 and char.isalpha())
+        letter_chars = sum(1 for char in abstract if char.isalpha())
+        if letter_chars and ascii_chars / letter_chars > 0.72:
+            return (
+                f"该条目聚焦{item.field_name}方向，英文摘要显示其围绕"
+                f"“{truncate(item.title, 62)}”展开；建议结合原文核对材料体系、关键指标和实验条件。"
+            )
+        abstract = truncate(abstract, 120)
         return f"该条目聚焦{item.field_name}方向，摘要显示其主要内容为：{abstract}"
     return f"该条目与{item.field_name}相关；出版商元数据较少，建议打开链接核对摘要和全文。"
 
 
-def apply_fallback_summaries(items: list[NewsItem]) -> None:
+def normalize_comment(comment: str, item: NewsItem) -> str:
+    normalized = clean_text(comment)
+    if not normalized:
+        return fallback_comment(item)
+    without_prefix = re.sub(r"^(abstract|summary)\s*[:：]?\s*", "", normalized, flags=re.IGNORECASE)
+    without_prefix = re.sub(r"^[（(]\s*与\s*N\d+\s*相同\s*[）)]\s*", "", without_prefix)
+    without_prefix = re.sub(r"^[（(]\s*信息有限\s*[）)]\s*", "信息有限：", without_prefix)
+    ascii_chars = sum(1 for char in without_prefix if ord(char) < 128 and char.isalpha())
+    letter_chars = sum(1 for char in without_prefix if char.isalpha())
+    if "ABSTRACT" in normalized.upper() or (letter_chars and ascii_chars / letter_chars > 0.72):
+        return fallback_comment(item)
+    return without_prefix
+
+
+def source_title_prefix(source: str, profile: dict[str, Any] | None = None) -> str:
+    normalized = clean_text(source)
+    if not normalized:
+        return "科研快讯"
+    pubmed_match = re.match(r"^PubMed\s*[:：]\s*(.+)$", normalized, flags=re.IGNORECASE)
+    pubmed_journal = clean_text(pubmed_match.group(1)) if pubmed_match else ""
+    if profile and profile.get("key") == "biology":
+        lowered = (pubmed_journal or normalized).lower()
+        if lowered == "nature":
+            return "Nature"
+        if lowered.startswith("nature "):
+            return "Nature子刊"
+        biology_prefixes = {
+            "Cell": "Cell子刊",
+            "Science": "Science",
+            "Proceedings of the National Academy of Sciences": "PNAS",
+            "PNAS": "PNAS",
+            "The Lancet": "Lancet",
+            "New England Journal of Medicine": "NEJM",
+            "Genome Biology": "Genome Biology",
+            "eLife": "eLife",
+        }
+        for needle, prefix in biology_prefixes.items():
+            if needle.lower() in lowered:
+                return prefix
+    known_prefixes = {
+        "Journal of the American Chemical Society": "JACS",
+        "JACS": "JACS",
+        "Angewandte Chemie International Edition": "Angew",
+        "Angewandte Chemie": "Angew",
+        "Nature Chemistry": "Nature Chemistry",
+        "Nature": "Nature",
+        "Science": "Science",
+        "Chemical Science": "Chem. Sci.",
+        "ACS Catalysis": "ACS Catalysis",
+        "ACS Central Science": "ACS Central Science",
+        "Analytical Chemistry": "Anal. Chem.",
+        "The Journal of Organic Chemistry": "JOC",
+        "Organic Letters": "Org. Lett.",
+        "The Journal of Physical Chemistry Letters": "JPCL",
+    }
+    matching_text = f"{pubmed_journal} {normalized}".strip()
+    for needle, prefix in known_prefixes.items():
+        if needle.lower() in matching_text.lower():
+            return prefix
+    if pubmed_journal:
+        if len(pubmed_journal) <= 24 and "journal" not in pubmed_journal.lower():
+            return truncate(pubmed_journal, 22)
+        return "PubMed"
+    return truncate(re.sub(r"\s+via\s+.*$", "", normalized, flags=re.IGNORECASE), 22)
+
+
+def fallback_chinese_title(item: NewsItem, profile: dict[str, Any]) -> str:
+    existing_title = normalize_chinese_title(item.attractive_title or item.chinese_title)
+    if existing_title and not any(word in existing_title for word in BANNED_TITLE_WORDS) and chinese_char_count(existing_title) <= 46:
+        return existing_title
+
+    title = clean_text(item.title)
+    abstract = clean_text(item.abstract)
+    haystack = f"{title} {abstract}".lower()
+    prefix = source_title_prefix(item.source, profile)
+
+    if profile.get("key") == "biology":
+        biology_patterns = [
+            (("immune", "immunity", "tumor", "cancer", "t cell", "macrophage"), "不是T细胞太弱，而是微环境还在踩刹车"),
+            (("neuron", "brain", "synapse", "neural", "astrocyte"), "一条皮层通路，让声音行为有了专线"),
+            (("microbiome", "bacteria", "microbial", "virus", "viral"), "肠道菌的全球流行病，可能藏在基因组里"),
+            (("gene", "genome", "crispr", "epigen", "transcript"), "一个基因开关，让调控图谱再更新"),
+            (("protein", "enzyme", "receptor", "ligand"), "蛋白机器的关键，可能藏在隐藏档位"),
+            (("stem cell", "organoid", "development", "embryo"), "从单个细胞到类器官，命运轨迹更清楚"),
+            (("metabolism", "mitochondria", "metabolic"), "一条代谢暗线，把生命过程串起来"),
+            (("disease", "therapy", "clinical", "patient"), "疾病机制的关键，可能藏在新按钮里"),
+        ]
+        hook = f"{item.field_name}又露出一个巧妙机关"
+        for needles, label in biology_patterns:
+            if any(needle in haystack for needle in needles):
+                hook = label
+                break
+        return normalize_chinese_title(f"{prefix}：{hook}")
+
+    if profile.get("key") != "chemistry":
+        return normalize_chinese_title(f"{prefix}：{item.field_name}再添新线索")
+
+    patterns = [
+        (("visible-light", "photochemical", "photoredox", "photoinduced"), "不是金属更贵，而是光把键剪开"),
+        (("catalyst", "catalysis", "photocatal", "electrocatal"), "不是催化越复杂，而是活性位更关键"),
+        (("battery", "batteries", "electrolyte", "solar cell", "photovoltaic"), "一个弱溶剂策略，让快充电池更耐温"),
+        (("total synthesis", "synthesis", "cyclization", "coupling"), "从碎片到骨架，合成路线有了新搭法"),
+        (("metal-organic", "mof", "framework", "porous"), "一个多孔框架，让分子筛选更精准"),
+        (("polymer", "plastic", "recycling"), "不是塑料难回收，而是化学键要会断"),
+        (("fluorescence", "phosphorescence", "luminescence", "emission"), "发光的关键，可能藏在分子振动里"),
+        (("machine learning", "computational", "density functional", "simulation"), "不是只靠试错，而是模型先探路"),
+        (("sensor", "spectroscopy", "analytical"), "一个检测平台，让微量信号看得见"),
+        (("drug", "bio", "enzyme", "protein"), "把化学工具送进细胞，信号读得更准"),
+    ]
+    hook = f"一个新线索，让{item.field_name}更清楚"
+    for needles, label in patterns:
+        if any(needle in haystack for needle in needles):
+            hook = label
+            break
+
+    return normalize_chinese_title(f"{prefix}：{hook}")
+
+
+def compact_title_source_prefix(title: str, source_alias: str) -> str:
+    parts = [part.strip(" .") for part in normalize_chinese_title(title).split("：") if part.strip(" .")]
+    if len(parts) <= 2:
+        return "：".join(parts)
+
+    def is_source_like(part: str) -> bool:
+        lowered = part.lower()
+        letters = sum(1 for char in part if char.isalpha())
+        non_space = sum(1 for char in part if not char.isspace())
+        mostly_latin = bool(non_space) and letters / non_space > 0.55
+        return (
+            source_alias.lower() in lowered
+            or lowered.startswith("pubmed")
+            or lowered in {"nature", "science", "cell", "jacs", "angew"}
+            or ("journal" in lowered and len(part) <= 34)
+            or (mostly_latin and chinese_char_count(part) == 0 and len(part) <= 28)
+        )
+
+    body_index = 1
+    while body_index < len(parts) - 1 and is_source_like(parts[body_index]):
+        body_index += 1
+    if body_index > 1:
+        return normalize_chinese_title(f"{source_alias}：{'：'.join(parts[body_index:])}")
+    return "：".join(parts)
+
+
+def normalize_attractive_title(title: str, item: NewsItem, profile: dict[str, Any]) -> str:
+    normalized = normalize_chinese_title(title)
+    fallback = fallback_chinese_title(item, profile)
+    source_alias = source_title_prefix(item.source, profile)
+    if not normalized:
+        return fallback
+    if any(word in normalized for word in BANNED_TITLE_WORDS):
+        return fallback
+
+    source_part = normalized.split("：", 1)[0]
+    if source_alias not in source_part and source_alias not in normalized[: max(len(source_alias) + 3, 12)]:
+        normalized = normalize_chinese_title(f"{source_alias}：{normalized}")
+
+    normalized = compact_title_source_prefix(normalized, source_alias)
+
+    if chinese_char_count(normalized) > 46:
+        return fallback
+    return normalized
+
+
+def display_title(item: NewsItem) -> str:
+    return item.attractive_title or item.chinese_title or item.title
+
+
+def apply_fallback_summaries(items: list[NewsItem], profile: dict[str, Any] | None = None) -> None:
+    active_profile = profile or REPORT_PROFILES["chemistry"]
     for item in items:
-        item.chinese_title = item.chinese_title or item.title
-        item.comment = item.comment or fallback_comment(item)
+        item.attractive_title = normalize_attractive_title(
+            item.attractive_title or item.chinese_title,
+            item,
+            active_profile,
+        )
+        item.chinese_title = item.chinese_title or item.attractive_title
+        item.comment = normalize_comment(item.comment, item)
 
 
 def chat_response_text(response: Any) -> str:
@@ -1391,16 +1672,16 @@ def generate_ai_summaries(
         return {"top_ids": [], "field_summaries": []}
     if OpenAI is None:
         LOGGER.warning("openai package is not installed; using fallback summaries.")
-        apply_fallback_summaries(items)
+        apply_fallback_summaries(items, profile)
         return fallback_report_payload(items)
 
     llm_config = resolve_llm_config(model)
     if llm_config is None:
-        apply_fallback_summaries(items)
+        apply_fallback_summaries(items, profile)
         return fallback_report_payload(items)
     if not llm_config.api_key:
         LOGGER.warning("%s is not set; using fallback summaries.", llm_config.api_key_env)
-        apply_fallback_summaries(items)
+        apply_fallback_summaries(items, profile)
         return fallback_report_payload(items)
 
     payload = [
@@ -1410,6 +1691,7 @@ def generate_ai_summaries(
             "source": item.source,
             "published": format_date(item.published),
             "title": item.title,
+            "source_alias": source_title_prefix(item.source, profile),
             "abstract": truncate(item.abstract, 900),
             "link": item.link,
         }
@@ -1418,6 +1700,7 @@ def generate_ai_summaries(
     instructions = (
         f"你是{profile['ai_role']}。请基于输入论文/资讯元数据生成中文日报素材。"
         "要求准确、克制，不夸大结论；如果摘要不足，要说明信息有限。"
+        f"标题风格要求：{profile.get('title_style', DEFAULT_TITLE_STYLE_GUIDE)}"
         "只输出 JSON，不要输出 Markdown。"
     )
     prompt = {
@@ -1430,15 +1713,50 @@ def generate_ai_summaries(
             "items": [
                 {
                     "id": "N001",
-                    "chinese_title": "中文标题，尽量准确翻译英文题名",
-                    "comment": "80-120字中文简评，说明研究对象、方法或潜在意义",
+                    "attractive_title": (
+                        "吸引版中文标题，18-32个中文字符左右，必须以来源/期刊名开头；"
+                        "从“来源：一个……，让……”“来源：不是……，而是……”"
+                        "“来源：……的关键，可能藏在……”“来源：从……到……”"
+                        "“来源：谁说……？……”等结构中自然选择；不要机械重复同一句式"
+                    ),
+                    "comment": "60-100字简短中文摘要，说明研究对象、方法或发现边界；不要直接复制英文摘要",
                 }
             ],
         },
+        "attractive_title_prompt": (
+            "请根据以下论文信息生成一个中文吸引版标题。要求：1. 风格类似中文科技公众号标题，"
+            "有悬念和画面感，但不要机械套模板。2. 不能夸大结论，不能制造虚假因果。"
+            "3. 必须保留期刊/来源名作为标题开头。4. 标题长度控制在18-32个中文字符。"
+            "5. 从多种句式中自然选择：来源：一个……，让……；来源：不是……，而是……；"
+            "来源：……的关键，可能藏在……；来源：从……到……；来源：把……变成……；"
+            "来源：谁说……？……。同批标题不要重复同一句式，“谁说”最多约三分之一。"
+            "6. 不使用震惊、逆天、炸裂、封神等词。"
+        ),
+        "single_item_prompt_template": ATTRACTIVE_TITLE_PROMPT_TEMPLATE,
+        "comment_rules": [
+            "comment 必须使用中文表达；可以保留必要英文缩写、化学式和物种名。",
+            "不要输出以 ABSTRACT、SUMMARY 开头的英文原文片段。",
+            "摘要不足时直接说明信息有限，并提示查看原文。",
+        ],
+        "title_style_rules": [
+            profile.get("title_style", DEFAULT_TITLE_STYLE_GUIDE),
+            "每个 attractive_title 必须是中文导读标题，不要只直译英文题名。",
+            "优先把 source_alias 放在标题开头，例如 JACS、Angew、Nature Chemistry、Science、ACS Catalysis。",
+            "句式要有变化，不要连续输出“谁说……”；同批标题中反问句最多约三分之一。",
+            "允许使用一个短问句或反常识比喻，但必须能从 title 或 abstract 中找到依据。",
+            "可以保留专业缩写、化学式和期刊缩写；不要使用“重磅”“震惊”“颠覆”等夸张词。",
+            "不能编造输入中没有的团队、学校、通讯作者、性能数值或临床结论。",
+            "不要把相关性写成因果；不能夸大临床、产业或应用价值。",
+        ],
         "selection_rules": [
             "top_ids 选 5 条最值得关注的条目，兼顾来源权威性、新近性和领域覆盖。",
             "items 必须覆盖输入中的每一个 id。",
             "field_summaries 只覆盖输入中实际出现的领域。",
+        ],
+        "strict_json_rules": [
+            "输出必须是一个可被 json.loads 直接解析的 JSON object。",
+            "不要在 JSON 前后添加解释、Markdown 代码块或注释。",
+            "所有字符串里的换行、引号和反斜杠都必须正确转义。",
         ],
         "items": payload,
     }
@@ -1447,29 +1765,105 @@ def generate_ai_summaries(
     if llm_config.base_url:
         client_kwargs["base_url"] = llm_config.base_url
     client = OpenAI(**client_kwargs)
-    try:
-        response = client.chat.completions.create(
-            model=llm_config.model,
-            messages=[
-                {"role": "system", "content": instructions},
-                {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+
+    def request_ai_json(user_prompt_base: dict[str, Any], max_tokens: int, label: str) -> dict[str, Any]:
+        local_last_error: Exception | None = None
+        for attempt in range(2):
+            user_prompt = user_prompt_base
+            if attempt:
+                user_prompt = {
+                    **user_prompt_base,
+                    "retry_instruction": "上一次输出不是合法 JSON。请只返回严格 JSON object，不要省略逗号，不要输出 Markdown。",
+                }
+            request_kwargs = {
+                "model": llm_config.model,
+                "messages": [
+                    {"role": "system", "content": instructions},
+                    {"role": "user", "content": json.dumps(user_prompt, ensure_ascii=False)},
+                ],
+                "temperature": 0.2,
+                "max_tokens": max_tokens,
+                "response_format": {"type": "json_object"},
+            }
+            try:
+                try:
+                    response = client.chat.completions.create(**request_kwargs)
+                except Exception as exc:  # noqa: BLE001 - some compatible providers reject response_format.
+                    local_last_error = exc
+                    request_kwargs.pop("response_format", None)
+                    response = client.chat.completions.create(**request_kwargs)
+                raw_response = chat_response_text(response)
+                return parse_json_object(raw_response)
+            except Exception as exc:  # noqa: BLE001 - AI failure should not block the document.
+                local_last_error = exc
+                LOGGER.warning("%s summary generation %s attempt %d failed: %s", llm_config.provider, label, attempt + 1, exc)
+        raise RuntimeError(str(local_last_error or "unknown AI JSON error"))
+
+    def request_ai_json_in_chunks(chunk_size: int = 10) -> dict[str, Any]:
+        combined_items: list[dict[str, Any]] = []
+        combined_top_ids: list[str] = []
+        field_summary_by_name: dict[str, str] = {}
+        for chunk_index, start in enumerate(range(0, len(payload), chunk_size), start=1):
+            chunk_payload = payload[start : start + chunk_size]
+            chunk_prompt = {
+                **prompt,
+                "items": chunk_payload,
+                "selection_rules": [
+                    "top_ids 从本批条目中选 1-3 条最值得关注的条目。",
+                    "items 必须覆盖本批输入中的每一个 id。",
+                    "field_summaries 只覆盖本批输入中实际出现的领域。",
+                ],
+            }
+            chunk_parsed = request_ai_json(chunk_prompt, 4500, f"chunk {chunk_index}")
+            parsed_items = chunk_parsed.get("items", [])
+            if isinstance(parsed_items, list):
+                combined_items.extend(entry for entry in parsed_items if isinstance(entry, dict))
+            for item_id in chunk_parsed.get("top_ids", []):
+                if isinstance(item_id, str) and item_id not in combined_top_ids:
+                    combined_top_ids.append(item_id)
+            summaries = chunk_parsed.get("field_summaries", [])
+            if isinstance(summaries, list):
+                for summary in summaries:
+                    if not isinstance(summary, dict):
+                        continue
+                    field_name = clean_text(summary.get("field"))
+                    summary_text = clean_text(summary.get("summary"))
+                    if field_name and summary_text and field_name not in field_summary_by_name:
+                        field_summary_by_name[field_name] = summary_text
+        return {
+            "top_ids": combined_top_ids,
+            "field_summaries": [
+                {"field": field_name, "summary": summary}
+                for field_name, summary in field_summary_by_name.items()
             ],
-            temperature=0.2,
-            max_tokens=9000,
-        )
-        raw_response = chat_response_text(response)
-        parsed = parse_json_object(raw_response)
+            "items": combined_items,
+        }
+
+    parsed: dict[str, Any] | None = None
+    last_error: Exception | None = None
+    try:
+        if llm_config.provider == "deepseek" and len(payload) > 18:
+            LOGGER.info("Using chunked %s summary generation for %d items.", llm_config.provider, len(payload))
+            parsed = request_ai_json_in_chunks()
+        else:
+            parsed = request_ai_json(prompt, 9000, "full")
     except Exception as exc:  # noqa: BLE001 - AI failure should not block the document.
+        last_error = exc
         LOGGER.warning("%s summary generation failed: %s", llm_config.provider, exc)
-        apply_fallback_summaries(items)
+
+    if parsed is None:
+        LOGGER.warning("%s summary generation failed; using fallback summaries: %s", llm_config.provider, last_error)
+        apply_fallback_summaries(items, profile)
         return fallback_report_payload(items)
 
     by_id = {entry.get("id"): entry for entry in parsed.get("items", []) if isinstance(entry, dict)}
     for item in items:
         generated = by_id.get(item.item_id, {})
-        item.chinese_title = clean_text(generated.get("chinese_title", "")) or item.title
-        item.comment = clean_text(generated.get("comment", "")) or fallback_comment(item)
-    apply_fallback_summaries(items)
+        generated_title = generated.get("attractive_title", "") or generated.get("chinese_title", "")
+        item.attractive_title = normalize_attractive_title(generated_title, item, profile)
+        item.chinese_title = item.chinese_title or item.attractive_title
+        item.comment = normalize_comment(generated.get("comment", ""), item)
+    apply_fallback_summaries(items, profile)
     top_ids = [
         item_id
         for item_id in parsed.get("top_ids", [])
@@ -1693,7 +2087,7 @@ def add_top_item_block(document: Document, item: NewsItem, index: int) -> None:
     paragraph.paragraph_format.space_after = Pt(1)
     label = paragraph.add_run(f"{index:02d}  ")
     set_run_font(label, size=9.2, color=RGBColor(15, 76, 117), bold=True)
-    title_run = paragraph.add_run(item.chinese_title or item.title)
+    title_run = paragraph.add_run(display_title(item))
     set_run_font(title_run, size=10.2, color=RGBColor(17, 24, 39), bold=True)
 
     meta = document.add_paragraph()
@@ -1715,7 +2109,7 @@ def add_item_block(document: Document, item: NewsItem) -> None:
     heading = document.add_paragraph()
     heading.style = document.styles["Heading 3"]
     heading.paragraph_format.keep_with_next = True
-    heading.add_run(item.chinese_title or item.title)
+    heading.add_run(display_title(item))
 
     meta = document.add_paragraph()
     meta.paragraph_format.space_before = Pt(0)
@@ -1726,7 +2120,7 @@ def add_item_block(document: Document, item: NewsItem) -> None:
     english = document.add_paragraph()
     english.paragraph_format.space_before = Pt(0)
     english.paragraph_format.space_after = Pt(2)
-    label = english.add_run("EN  ")
+    label = english.add_run("英文标题  ")
     set_run_font(label, size=8.2, color=RGBColor(15, 76, 117), bold=True)
     run = english.add_run(item.title)
     set_run_font(run, size=9, color=RGBColor(55, 65, 81), italic=True)
@@ -1737,7 +2131,7 @@ def add_item_block(document: Document, item: NewsItem) -> None:
     comment.paragraph_format.line_spacing = 1.24
     comment.paragraph_format.left_indent = Inches(0.06)
     set_paragraph_shading(comment, fill="F8FAFC")
-    label = comment.add_run("简评  ")
+    label = comment.add_run("中文摘要  ")
     set_run_font(label, size=8.7, color=RGBColor(15, 76, 117), bold=True)
     run = comment.add_run(item.comment or fallback_comment(item))
     set_run_font(run, size=9.2, color=RGBColor(31, 41, 55))
@@ -1748,7 +2142,7 @@ def add_item_block(document: Document, item: NewsItem) -> None:
         paragraph.paragraph_format.space_before = Pt(0)
         paragraph.paragraph_format.space_after = Pt(3)
         paragraph.paragraph_format.line_spacing = 1.22
-        label = paragraph.add_run("摘要  ")
+        label = paragraph.add_run("原文摘要  ")
         set_run_font(label, size=8.7, color=RGBColor(107, 114, 128), bold=True)
         run = paragraph.add_run(abstract)
         set_run_font(run, size=8.8, color=RGBColor(75, 85, 99))
@@ -1798,7 +2192,7 @@ def add_run_diagnostics_section(
         document.add_paragraph("失败来源：")
         for status in failed_statuses:
             document.add_paragraph(
-                f"{status.name}: {status.error or '未知错误'}",
+                f"{status.name}: {summarize_source_error(status.error)}",
                 style=document.styles["List Bullet"],
             )
 
@@ -1818,7 +2212,6 @@ def create_document(
 
     add_masthead(document, report_date, len(items), profile)
     add_source_note(document, len(items))
-    add_run_diagnostics_section(document, diagnostics, source_statuses)
 
     by_id = {item.item_id: item for item in items}
     top_items = [by_id[item_id] for item_id in report_payload.get("top_ids", []) if item_id in by_id]
@@ -1857,6 +2250,8 @@ def create_document(
         set_run_font(run, size=9.2, color=RGBColor(55, 65, 81))
         for item in group_items:
             add_item_block(document, item)
+
+    add_run_diagnostics_section(document, diagnostics, source_statuses)
 
     output_path = output_dir / f"{profile['output_prefix']}_{report_date.isoformat()}.docx"
     document.save(output_path)
@@ -2298,6 +2693,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip model API calls and create the DOCX with deterministic fallback comments.",
     )
+    parser.add_argument(
+        "--no-email",
+        action="store_true",
+        help="Skip SMTP delivery for this run while still generating local DOCX/PDF outputs.",
+    )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging.")
     return parser
 
@@ -2352,6 +2752,8 @@ def main() -> int:
     configure_logging(args.verbose)
     ensure_runtime_dependencies()
     profile = resolve_profile(args.profile)
+    if args.no_email:
+        os.environ["EMAIL_ENABLED"] = "false"
 
     if args.days < 1 or args.days > 14:
         raise SystemExit("--days should be between 1 and 14.")
@@ -2400,7 +2802,7 @@ def main() -> int:
         return 2 if all_sources_failed(source_statuses) else 1
 
     if args.no_openai:
-        apply_fallback_summaries(prepared)
+        apply_fallback_summaries(prepared, profile)
         report_payload = fallback_report_payload(prepared)
     else:
         report_payload = generate_ai_summaries(prepared, args.model, args.max_ai_items, profile)

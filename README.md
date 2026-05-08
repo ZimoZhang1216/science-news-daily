@@ -1,6 +1,6 @@
 # 科研资讯日报自动化项目
 
-这个项目会从 arXiv、PubMed、Crossref 期刊元数据和 RSS 源检索近 24 小时到 3 天内的前沿论文/科研资讯，调用 OpenAI 或 DeepSeek 生成中文标题、简评和分领域摘要，并输出 Word 文档。当前支持化学、生物、统计学三套日报；配置 SMTP 后，本地仍保存 `.docx`，邮件附件会自动转换为 `.pdf`。
+这个项目会从 arXiv、PubMed、Crossref 期刊元数据和 RSS 源检索近 24 小时到 3 天内的前沿论文/科研资讯，调用 OpenAI 或 DeepSeek 生成吸引版中文标题、简短中文摘要和分领域摘要，并输出 Word 文档。当前支持化学、生物、统计学三套日报；配置 SMTP 后，本地仍保存 `.docx`，邮件附件会自动转换为 `.pdf`。
 
 默认输出：
 
@@ -68,7 +68,7 @@ export CHEM_NEWS_MAX_AI_ITEMS="30"
 
 `NCBI_EMAIL` 和 `CROSSREF_MAILTO` 不是必需项，但建议填写，便于遵守 PubMed/Crossref 的礼貌访问规范。
 
-如果对应供应商的 API Key 存在，脚本会调用模型 API 生成中文标题、今日重点、分领域摘要和简评。如果没有配置 API Key，脚本会自动使用本地 fallback summaries，不会因为缺少 Key 直接崩溃。
+如果对应供应商的 API Key 存在，脚本会调用模型 API 生成吸引版中文标题、今日重点、分领域摘要和简短中文摘要。如果没有配置 API Key，脚本会自动使用本地规则模板生成标题和 fallback summaries，不会因为缺少 Key 直接崩溃。
 
 默认日报会根据来源重要性、研究新近性、摘要信息量和学习价值关键词压缩到 30 篇。学习价值关键词包括 review、perspective、mechanism、benchmark、platform、general method、design principle 等。
 
@@ -132,6 +132,13 @@ python main.py --days 1
 
 ```bash
 python main.py --no-openai --verbose
+```
+
+只生成本地文档、不发送邮件：
+
+```bash
+python main.py --profile chemistry --output-dir ./output --no-email
+python main.py --profile biology --output-dir ./output --no-email
 ```
 
 指定输出目录：
@@ -298,10 +305,10 @@ Word 文档包含：
 - 日期
 - 今日重点 5 条
 - 分领域摘要
-- 每条资讯的中文标题、原始英文标题、来源、发布日期、链接、摘要、简评
+- 每条资讯的吸引版中文标题、原始英文标题、来源、发布日期、DOI/链接、简短中文摘要和原文摘要
 
 ## 常见问题
 
 如果 Word 中某些出版商条目显示“出版商元数据未提供摘要”，说明 Crossref 没有返回该论文摘要。脚本仍会保留标题、来源、发布日期、DOI/链接，并在简评中说明信息有限。
 
-如果模型 API 调用失败，脚本会自动退回到本地规则生成简评，保证 `.docx` 仍然生成。
+如果模型 API 调用失败，脚本会自动退回到本地规则模板生成吸引版标题和简短中文摘要，保证 `.docx` 仍然生成。
