@@ -2538,6 +2538,43 @@ def generate_ai_summaries(
                 LOGGER.warning("%s summary generation %s attempt %d failed: %s", llm_config.provider, label, attempt + 1, exc)
         raise RuntimeError(str(local_last_error or "unknown AI JSON error"))
 
+    payload_by_id = {entry["id"]: entry for entry in payload}
+
+    def ai_item_has_required_fields(entry: dict[str, Any] | None) -> bool:
+        if not isinstance(entry, dict):
+            return False
+        generated_title = entry.get("attractive_title", "") or entry.get("chinese_title", "")
+        return bool(clean_text(generated_title)) and bool(clean_text(entry.get("comment", "")))
+
+    def parsed_items_by_id(parsed_obj: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        parsed_items = parsed_obj.get("items", [])
+        if not isinstance(parsed_items, list):
+            return {}
+        by_item_id: dict[str, dict[str, Any]] = {}
+        for entry in parsed_items:
+            if not isinstance(entry, dict):
+                continue
+            item_id = clean_text(entry.get("id"))
+            if item_id:
+                by_item_id[item_id] = entry
+        return by_item_id
+
+    def missing_payload_item_ids(parsed_obj: dict[str, Any]) -> list[str]:
+        by_item_id = parsed_items_by_id(parsed_obj)
+        return [
+            entry["id"]
+            for entry in payload
+            if not ai_item_has_required_fields(by_item_id.get(entry["id"]))
+        ]
+
+    def merge_ai_items(parsed_obj: dict[str, Any], new_items: list[dict[str, Any]]) -> dict[str, Any]:
+        merged_by_id = parsed_items_by_id(parsed_obj)
+        for entry in new_items:
+            item_id = clean_text(entry.get("id"))
+            if item_id:
+                merged_by_id[item_id] = entry
+        return {**parsed_obj, "items": list(merged_by_id.values())}
+
     def request_ai_json_in_chunks(chunk_size: int = 10) -> dict[str, Any]:
         combined_items: list[dict[str, Any]] = []
         combined_top_ids: list[str] = []
@@ -2578,12 +2615,71 @@ def generate_ai_summaries(
             "items": combined_items,
         }
 
+    def repair_missing_ai_items(parsed_obj: dict[str, Any], chunk_size: int = 4) -> dict[str, Any]:
+        missing_ids = missing_payload_item_ids(parsed_obj)
+        if not missing_ids:
+            return parsed_obj
+
+        LOGGER.warning(
+            "%s summary generation omitted title/comment for %d item(s); requesting targeted repair: %s",
+            llm_config.provider,
+            len(missing_ids),
+            ", ".join(missing_ids[:12]),
+        )
+        repaired_items: list[dict[str, Any]] = []
+        for chunk_index, start in enumerate(range(0, len(missing_ids), chunk_size), start=1):
+            chunk_ids = missing_ids[start : start + chunk_size]
+            chunk_payload = [payload_by_id[item_id] for item_id in chunk_ids if item_id in payload_by_id]
+            repair_prompt = {
+                **prompt,
+                "items": chunk_payload,
+                "repair_instruction": (
+                    "这是补全漏项请求。items 必须覆盖本批输入中的每一个 id；"
+                    "每个 item 都必须给出 attractive_title 和 comment。"
+                    "如果摘要信息有限，也要基于题名和来源写出克制的中文总结，并明确边界。"
+                ),
+                "selection_rules": [
+                    "top_ids 可以为空数组或从本批条目中选 1 条。",
+                    "items 必须覆盖本批输入中的每一个 id，不能省略。",
+                    "field_summaries 可以为空数组。",
+                ],
+            }
+            try:
+                repair_parsed = request_ai_json(repair_prompt, 3000, f"repair {chunk_index}")
+            except Exception as exc:  # noqa: BLE001 - repair failure is handled by final completeness check.
+                LOGGER.warning(
+                    "%s summary repair chunk %d failed for item ids %s: %s",
+                    llm_config.provider,
+                    chunk_index,
+                    ", ".join(chunk_ids),
+                    exc,
+                )
+                continue
+            repair_entries = repair_parsed.get("items", [])
+            if isinstance(repair_entries, list):
+                repaired_items.extend(
+                    entry
+                    for entry in repair_entries
+                    if isinstance(entry, dict) and clean_text(entry.get("id")) in chunk_ids
+                )
+
+        if repaired_items:
+            parsed_obj = merge_ai_items(parsed_obj, repaired_items)
+        remaining_ids = missing_payload_item_ids(parsed_obj)
+        if remaining_ids:
+            LOGGER.warning(
+                "%s summary repair still missing title/comment for item ids: %s",
+                llm_config.provider,
+                ", ".join(remaining_ids[:12]),
+            )
+        return parsed_obj
+
     parsed: dict[str, Any] | None = None
     last_error: Exception | None = None
     try:
         if llm_config.provider == "deepseek" and len(payload) > 18:
             LOGGER.info("Using chunked %s summary generation for %d items.", llm_config.provider, len(payload))
-            parsed = request_ai_json_in_chunks()
+            parsed = request_ai_json_in_chunks(chunk_size=6)
         else:
             parsed = request_ai_json(prompt, 9000, "full")
     except Exception as exc:  # noqa: BLE001 - AI failure should not block the document.
@@ -2594,6 +2690,8 @@ def generate_ai_summaries(
         LOGGER.warning("%s summary generation failed; using fallback summaries: %s", llm_config.provider, last_error)
         apply_fallback_summaries(items, profile)
         return fallback_report_payload(items, profile)
+
+    parsed = repair_missing_ai_items(parsed)
 
     by_id = {entry.get("id"): entry for entry in parsed.get("items", []) if isinstance(entry, dict)}
     complete_ai_items = True
