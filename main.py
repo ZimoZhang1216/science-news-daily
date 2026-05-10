@@ -1256,6 +1256,10 @@ class NewsItem:
     score: float = 0.0
     base_score: float = 0.0
     history_repetition: str = ""
+    formatted_attractive_title: str = ""
+    formatted_title: str = ""
+    formatted_comment: str = ""
+    formatted_abstract: str = ""
 
 
 @dataclass
@@ -2636,6 +2640,10 @@ def display_title(item: NewsItem) -> str:
     return item.attractive_title or item.chinese_title or item.title
 
 
+def formatted_display_title(item: NewsItem) -> str:
+    return item.formatted_attractive_title or apply_rule_scientific_notation(display_title(item))
+
+
 def ensure_unique_titles_and_comments(items: list[NewsItem], profile: dict[str, Any]) -> None:
     seen_titles: set[str] = set()
     seen_comments: set[str] = set()
@@ -3164,6 +3172,272 @@ def fallback_report_payload(items: list[NewsItem], profile: dict[str, Any] | Non
     return {"top_ids": top_ids, "field_summaries": field_summaries, "ai_generated": False}
 
 
+SUPERSCRIPT_TO_ASCII = str.maketrans(
+    {
+        "⁰": "0",
+        "¹": "1",
+        "²": "2",
+        "³": "3",
+        "⁴": "4",
+        "⁵": "5",
+        "⁶": "6",
+        "⁷": "7",
+        "⁸": "8",
+        "⁹": "9",
+        "⁺": "+",
+        "⁻": "-",
+        "ⁿ": "n",
+        "ⁱ": "i",
+    }
+)
+SUBSCRIPT_TO_ASCII = str.maketrans(
+    {
+        "₀": "0",
+        "₁": "1",
+        "₂": "2",
+        "₃": "3",
+        "₄": "4",
+        "₅": "5",
+        "₆": "6",
+        "₇": "7",
+        "₈": "8",
+        "₉": "9",
+        "₊": "+",
+        "₋": "-",
+        "ₙ": "n",
+        "ᵢ": "i",
+    }
+)
+
+
+def replace_unicode_scripts_with_markers(text: str) -> str:
+    superscript_chars = "".join(chr(key) for key in SUPERSCRIPT_TO_ASCII)
+    subscript_chars = "".join(chr(key) for key in SUBSCRIPT_TO_ASCII)
+
+    def replace_sup(match: re.Match[str]) -> str:
+        return "^{" + match.group(0).translate(SUPERSCRIPT_TO_ASCII) + "}"
+
+    def replace_sub(match: re.Match[str]) -> str:
+        return "_{" + match.group(0).translate(SUBSCRIPT_TO_ASCII) + "}"
+
+    text = re.sub(f"[{re.escape(superscript_chars)}]+", replace_sup, text)
+    text = re.sub(f"[{re.escape(subscript_chars)}]+", replace_sub, text)
+    return text
+
+
+def apply_rule_scientific_notation(text: str) -> str:
+    normalized = replace_unicode_scripts_with_markers(clean_text(text))
+    if not normalized:
+        return ""
+    normalized = re.sub(r"\bsp\s*([23])(?=\b|[-/])", r"sp^{\1}", normalized)
+    normalized = re.sub(r"\bSP\s*([23])(?=\b|[-/])", r"SP^{\1}", normalized)
+    normalized = re.sub(
+        r"\bd(0|[1-9]|10)(?=\s*(?:metal|configuration|electron|complex|center|centre|ion|ions|species|金属|构型|电子|配合物))",
+        r"d^{\1}",
+        normalized,
+    )
+    normalized = re.sub(r"(?<![A-Za-z])([Rr])\^([0-9]+(?:\.[0-9]+)?)", r"\1^{\2}", normalized)
+    normalized = re.sub(r"\b([A-Za-z][A-Za-z0-9]*)_([A-Za-z0-9]+)\b", r"\1_{\2}", normalized)
+    normalized = re.sub(r"\b(beta|alpha|gamma|theta|lambda|mu|sigma|tau|phi|psi|omega)_\{?([A-Za-z0-9]+)\}?", r"\1_{\2}", normalized)
+    return normalized
+
+
+def strip_script_markers(text: str) -> str:
+    normalized = replace_unicode_scripts_with_markers(clean_text(text))
+    normalized = re.sub(r"\^\{([^{}]+)\}", r"\1", normalized)
+    normalized = re.sub(r"_\{([^{}]+)\}", r"\1", normalized)
+    normalized = re.sub(r"\^([A-Za-z0-9+\-]+)", r"\1", normalized)
+    normalized = re.sub(r"_([A-Za-z0-9+\-]+)", r"\1", normalized)
+    normalized = normalized.replace("^", "").replace("_", "")
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def notation_candidate_is_safe(original: str, candidate: str) -> bool:
+    if not candidate:
+        return False
+    original_plain = strip_script_markers(original)
+    candidate_plain = strip_script_markers(candidate)
+    if original_plain == candidate_plain:
+        return True
+    compact_original = re.sub(r"\s+", "", original_plain)
+    compact_candidate = re.sub(r"\s+", "", candidate_plain)
+    return bool(compact_original and compact_original == compact_candidate)
+
+
+def set_ai_notation_field(current_value: str, candidate: Any) -> str:
+    candidate_text = clean_text(candidate)
+    if notation_candidate_is_safe(current_value, candidate_text):
+        return candidate_text
+    return apply_rule_scientific_notation(current_value)
+
+
+def initialize_rule_notation(items: list[NewsItem], report_payload: dict[str, Any]) -> None:
+    for item in items:
+        item.formatted_attractive_title = apply_rule_scientific_notation(display_title(item))
+        item.formatted_title = apply_rule_scientific_notation(item.title)
+        item.formatted_comment = apply_rule_scientific_notation(item.comment or fallback_comment(item))
+        item.formatted_abstract = apply_rule_scientific_notation(item.abstract)
+    field_summaries = report_payload.get("field_summaries", [])
+    if isinstance(field_summaries, list):
+        for summary in field_summaries:
+            if isinstance(summary, dict) and summary.get("summary"):
+                summary["summary"] = apply_rule_scientific_notation(summary["summary"])
+
+
+def apply_ai_scientific_notation(
+    items: list[NewsItem],
+    report_payload: dict[str, Any],
+    model: str,
+    profile: dict[str, Any],
+    enabled: bool = True,
+) -> bool:
+    initialize_rule_notation(items, report_payload)
+    if not enabled:
+        return False
+    if not items or OpenAI is None:
+        return False
+    llm_config = resolve_llm_config(model)
+    if llm_config is None or not llm_config.api_key:
+        LOGGER.info("Scientific notation AI pass skipped; model provider or API key is unavailable.")
+        return False
+
+    client_kwargs = {"api_key": llm_config.api_key}
+    if llm_config.base_url:
+        client_kwargs["base_url"] = llm_config.base_url
+    client = OpenAI(**client_kwargs)
+
+    def request_notation_json(prompt: dict[str, Any], max_tokens: int, label: str) -> dict[str, Any]:
+        instructions = (
+            "你是科学排版校对助手。你的唯一任务是判断并标注科学文本中的上下标。"
+            "只能在原文本中插入 ^{...} 或 _{...} 标记，不能翻译、改写、删减或新增任何词。"
+            "如果不确定，保持原样。只输出 JSON。"
+        )
+        local_last_error: Exception | None = None
+        for attempt in range(2):
+            request_prompt = prompt
+            if attempt:
+                request_prompt = {
+                    **prompt,
+                    "retry_instruction": "上一次输出无法解析或未保持原文。请只输出严格 JSON，并保持文本除上下标标记外完全一致。",
+                }
+            request_kwargs = {
+                "model": llm_config.model,
+                "messages": [
+                    {"role": "system", "content": instructions},
+                    {"role": "user", "content": json.dumps(request_prompt, ensure_ascii=False)},
+                ],
+                "temperature": 0,
+                "max_tokens": max_tokens,
+                "response_format": {"type": "json_object"},
+            }
+            try:
+                try:
+                    response = client.chat.completions.create(**request_kwargs)
+                except Exception as exc:  # noqa: BLE001 - compatible providers may reject response_format.
+                    local_last_error = exc
+                    request_kwargs.pop("response_format", None)
+                    response = client.chat.completions.create(**request_kwargs)
+                return parse_json_object(chat_response_text(response))
+            except Exception as exc:  # noqa: BLE001 - notation pass should fall back to deterministic rules.
+                local_last_error = exc
+                LOGGER.warning("%s scientific notation %s attempt %d failed: %s", llm_config.provider, label, attempt + 1, exc)
+        raise RuntimeError(str(local_last_error or "unknown scientific notation error"))
+
+    base_rules = [
+        "化学式计量数字用下标：H2O -> H_{2}O，CO2 -> CO_{2}，Na2SO4 -> Na_{2}SO_{4}。",
+        "离子电荷用上标：Fe3+ -> Fe^{3+}，SO4^2- -> SO_{4}^{2-}，NH4+ -> NH_{4}^{+}。",
+        "同位素质量数用左上标表达：13C -> ^{13}C，15N -> ^{15}N。",
+        "杂化和轨道指数用上标：sp2 -> sp^{2}，sp3 -> sp^{3}，d10 metal -> d^{10} metal。",
+        "数学指数和指标用上/下标：R^2 -> R^{2}，x_i -> x_{i}，a^n -> a^{n}，beta_0 -> beta_{0}。",
+        "不要把 p53、COVID-19、NCT编号、年份、温度、pH 7.4、样本量 n=、页码、百分比、DOI 或 URL 改成上下标。",
+        "除插入 ^{...} 和 _{...} 外，必须保持原字符、词序、标点和语言完全不变。",
+    ]
+
+    any_ai_applied = False
+    chunk_size = 6
+    for chunk_index, start in enumerate(range(0, len(items), chunk_size), start=1):
+        chunk_items = items[start : start + chunk_size]
+        prompt = {
+            "task": "为日报可见文本判断科学上下标，仅插入 ^{...} 和 _{...} 标记。",
+            "rules": base_rules,
+            "schema": {
+                "items": [
+                    {
+                        "id": "N001",
+                        "display_title": "带上下标标记的标题",
+                        "english_title": "带上下标标记的英文标题",
+                        "comment": "带上下标标记的中文摘要",
+                        "abstract": "带上下标标记的原文摘要",
+                    }
+                ]
+            },
+            "items": [
+                {
+                    "id": item.item_id,
+                    "display_title": display_title(item),
+                    "english_title": item.title,
+                    "comment": item.comment or fallback_comment(item),
+                    "abstract": truncate(item.abstract, 520),
+                }
+                for item in chunk_items
+            ],
+        }
+        try:
+            parsed = request_notation_json(prompt, 4500, f"chunk {chunk_index}")
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("%s scientific notation chunk %d failed; using rule-based notation: %s", llm_config.provider, chunk_index, exc)
+            continue
+
+        parsed_items = parsed.get("items", [])
+        if not isinstance(parsed_items, list):
+            continue
+        parsed_by_id = {clean_text(entry.get("id")): entry for entry in parsed_items if isinstance(entry, dict)}
+        for item in chunk_items:
+            entry = parsed_by_id.get(item.item_id)
+            if not entry:
+                continue
+            display_original = display_title(item)
+            item.formatted_attractive_title = set_ai_notation_field(display_original, entry.get("display_title"))
+            item.formatted_title = set_ai_notation_field(item.title, entry.get("english_title"))
+            item.formatted_comment = set_ai_notation_field(item.comment or fallback_comment(item), entry.get("comment"))
+            item.formatted_abstract = set_ai_notation_field(truncate(item.abstract, 520), entry.get("abstract"))
+            any_ai_applied = True
+
+    field_summaries = report_payload.get("field_summaries", [])
+    if isinstance(field_summaries, list) and field_summaries:
+        prompt = {
+            "task": "为分领域摘要判断科学上下标，仅插入 ^{...} 和 _{...} 标记。",
+            "rules": base_rules,
+            "schema": {"field_summaries": [{"index": 0, "summary": "带上下标标记的摘要"}]},
+            "field_summaries": [
+                {"index": index, "summary": summary.get("summary", "")}
+                for index, summary in enumerate(field_summaries)
+                if isinstance(summary, dict) and summary.get("summary")
+            ],
+        }
+        try:
+            parsed = request_notation_json(prompt, 2500, "field summaries")
+            returned_summaries = parsed.get("field_summaries", [])
+            if isinstance(returned_summaries, list):
+                for entry in returned_summaries:
+                    if not isinstance(entry, dict):
+                        continue
+                    try:
+                        index = int(entry.get("index"))
+                    except (TypeError, ValueError):
+                        continue
+                    if not (0 <= index < len(field_summaries)) or not isinstance(field_summaries[index], dict):
+                        continue
+                    original = clean_text(field_summaries[index].get("summary", ""))
+                    field_summaries[index]["summary"] = set_ai_notation_field(original, entry.get("summary"))
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("%s scientific notation field summary pass failed; using rule-based notation: %s", llm_config.provider, exc)
+
+    if any_ai_applied:
+        LOGGER.info("Applied %s scientific notation AI pass for %d items.", llm_config.provider, len(items))
+    return any_ai_applied
+
+
 def add_hyperlink(paragraph: Any, text: str, url: str) -> None:
     if not url:
         paragraph.add_run(text)
@@ -3520,7 +3794,7 @@ def add_top_item_block(document: Document, item: NewsItem, index: int) -> None:
     paragraph.paragraph_format.space_after = Pt(1)
     label = paragraph.add_run(f"{index:02d}  ")
     set_run_font(label, size=9.2, color=RGBColor(15, 76, 117), bold=True)
-    add_rich_text(paragraph, display_title(item), size=10.2, color=RGBColor(17, 24, 39), bold=True)
+    add_rich_text(paragraph, formatted_display_title(item), size=10.2, color=RGBColor(17, 24, 39), bold=True)
 
     meta = document.add_paragraph()
     meta.paragraph_format.space_before = Pt(0)
@@ -3532,7 +3806,12 @@ def add_top_item_block(document: Document, item: NewsItem, index: int) -> None:
     comment.paragraph_format.space_before = Pt(0)
     comment.paragraph_format.space_after = Pt(6)
     comment.paragraph_format.line_spacing = 1.22
-    add_rich_text(comment, truncate(item.comment or fallback_comment(item), 150), size=9, color=RGBColor(55, 65, 81))
+    add_rich_text(
+        comment,
+        truncate(item.formatted_comment or item.comment or fallback_comment(item), 150),
+        size=9,
+        color=RGBColor(55, 65, 81),
+    )
     paragraph_border_bottom(comment, color="EEF2F7", size="4")
 
 
@@ -3540,7 +3819,7 @@ def add_item_block(document: Document, item: NewsItem) -> None:
     heading = document.add_paragraph()
     heading.style = document.styles["Heading 3"]
     heading.paragraph_format.keep_with_next = True
-    add_rich_text(heading, display_title(item))
+    add_rich_text(heading, formatted_display_title(item))
 
     meta = document.add_paragraph()
     meta.paragraph_format.space_before = Pt(0)
@@ -3553,7 +3832,7 @@ def add_item_block(document: Document, item: NewsItem) -> None:
     english.paragraph_format.space_after = Pt(2)
     label = english.add_run("英文标题  ")
     set_run_font(label, size=8.2, color=RGBColor(15, 76, 117), bold=True)
-    add_rich_text(english, item.title, size=9, color=RGBColor(55, 65, 81), italic=True)
+    add_rich_text(english, item.formatted_title or item.title, size=9, color=RGBColor(55, 65, 81), italic=True)
 
     comment = document.add_paragraph()
     comment.paragraph_format.space_before = Pt(1)
@@ -3563,9 +3842,14 @@ def add_item_block(document: Document, item: NewsItem) -> None:
     set_paragraph_shading(comment, fill="F8FAFC")
     label = comment.add_run("中文摘要  ")
     set_run_font(label, size=8.7, color=RGBColor(15, 76, 117), bold=True)
-    add_rich_text(comment, item.comment or fallback_comment(item), size=9.2, color=RGBColor(31, 41, 55))
+    add_rich_text(
+        comment,
+        item.formatted_comment or item.comment or fallback_comment(item),
+        size=9.2,
+        color=RGBColor(31, 41, 55),
+    )
 
-    abstract = truncate(item.abstract, 420)
+    abstract = truncate(item.formatted_abstract or item.abstract, 420)
     if abstract:
         paragraph = document.add_paragraph()
         paragraph.paragraph_format.space_before = Pt(0)
@@ -4353,6 +4637,14 @@ def main() -> int:
             "Report email will not be sent."
         )
         return 4
+
+    report_payload["notation_ai_generated"] = apply_ai_scientific_notation(
+        prepared,
+        report_payload,
+        args.model,
+        profile,
+        enabled=not args.no_openai,
+    )
 
     output_path = create_document(
         prepared,
