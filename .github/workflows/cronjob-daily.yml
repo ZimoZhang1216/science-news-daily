@@ -135,12 +135,21 @@ jobs:
         run: |
           echo "Cronjob daily reports for ${{ steps.report_date.outputs.today }} already completed; skipping duplicate dispatch."
 
+      - name: Restore report history
+        if: github.event_name != 'repository_dispatch' || steps.cronjob_marker.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: .report-history
+          key: report-history-${{ steps.report_date.outputs.today }}-${{ github.run_id }}
+          restore-keys: |
+            report-history-
+
       - name: Generate and email all target reports
         id: generate_report
         if: github.event_name != 'repository_dispatch' || steps.cronjob_marker.outputs.cache-hit != 'true'
         shell: bash
         run: |
-          mkdir -p ./output/logs
+          mkdir -p ./output/logs ./.report-history
           set +e
           overall=0
           report_date="${{ steps.report_date.outputs.today }}"
@@ -191,6 +200,13 @@ jobs:
             --event-name "${{ github.event_name }}" \
             --run-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --overall-exit-code "${{ steps.generate_report.outputs.exit_code }}"
+
+      - name: Save report history
+        if: always() && steps.generate_report.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: .report-history
+          key: report-history-${{ steps.report_date.outputs.today }}-${{ github.run_id }}
 
       - name: Upload target report artifacts
         if: always() && steps.generate_report.outcome == 'success'

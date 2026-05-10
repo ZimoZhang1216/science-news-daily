@@ -63,6 +63,9 @@ export CROSSREF_MAILTO="you@example.com"
 export REPORT_PROFILE="chemistry"  # 可选：chemistry、biology、statistics
 export CHEM_NEWS_DAYS="3"
 export CHEM_NEWS_MAX_ITEMS="30"
+export SCIENCE_NEWS_MIN_ITEMS="15"
+export SCIENCE_NEWS_HISTORY_DAYS="10"
+export SCIENCE_NEWS_HISTORY_DIR=".report-history"
 export CHEM_NEWS_MAX_AI_ITEMS="30"
 ```
 
@@ -70,7 +73,9 @@ export CHEM_NEWS_MAX_AI_ITEMS="30"
 
 如果对应供应商的 API Key 存在，脚本会调用模型 API 生成中文标题、今日重点、分领域摘要和简短中文摘要。如果没有配置 API Key，默认本地运行会自动使用规则模板生成标题和 fallback summaries，不会因为缺少 Key 直接崩溃。所有学科标题都会优先突出研究对象、方法、材料/体系、机制、模型、数据类型或证据边界，避免营销号式反问和悬念表达。
 
-默认日报会根据来源重要性、研究新近性、摘要信息量和学习价值关键词压缩到 30 篇。学习价值关键词包括 review、perspective、mechanism、benchmark、platform、general method、design principle 等。
+默认日报会根据来源重要性、研究新近性、摘要信息量和学习价值关键词优先筛选高质量条目，数量会在 15-30 篇之间动态调整。学习价值关键词包括 review、perspective、mechanism、benchmark、platform、general method、design principle 等。
+
+脚本会在 `.report-history/` 记录各学科已生成日报的 DOI、链接、标题指纹和主题指纹，并默认参考最近 10 天历史降低跨天重复。完全相同的 DOI/链接/标题会优先剔除；主题相近但质量很高的条目会被降权而不是一刀切删除。GitHub Actions 会通过 cache 保存这份历史，因此 cronjob、目标邮箱 workflow 和私人邮箱 workflow 都共用同一套跨天去重逻辑。
 
 ## 邮件发送
 

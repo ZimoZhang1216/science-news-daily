@@ -95,6 +95,14 @@ jobs:
           echo "today=${report_date}" >> "$GITHUB_OUTPUT"
           echo "Report date: ${report_date}"
 
+      - name: Restore report history
+        uses: actions/cache/restore@v4
+        with:
+          path: .report-history
+          key: report-history-${{ steps.report_date.outputs.today }}-${{ github.run_id }}
+          restore-keys: |
+            report-history-
+
       - name: Generate and email statistics report
         id: generate_report
         shell: bash
@@ -105,6 +113,13 @@ jobs:
           status=$?
           echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
           exit 0
+
+      - name: Save report history
+        if: always() && steps.generate_report.outputs.exit_code == '0'
+        uses: actions/cache/save@v4
+        with:
+          path: .report-history
+          key: report-history-${{ steps.report_date.outputs.today }}-${{ github.run_id }}
 
       - name: Upload statistics artifacts
         if: always()

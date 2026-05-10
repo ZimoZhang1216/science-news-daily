@@ -90,7 +90,13 @@ LOGGER = logging.getLogger("science_news_daily")
 
 DEFAULT_OUTPUT_DIR = "./output"
 DEFAULT_MAX_ITEMS = 30
+DEFAULT_MIN_ITEMS = 15
 DEFAULT_MAX_AI_ITEMS = 30
+DEFAULT_HISTORY_DIR = ".report-history"
+DEFAULT_HISTORY_LOOKBACK_DAYS = 10
+HISTORY_EXACT_DUPLICATE_PENALTY = 1000.0
+HISTORY_TOPIC_REPEAT_PENALTY = 18.0
+HISTORY_QUALITY_MARGIN = 22.0
 DEFAULT_OPENAI_MODEL = "gpt-5.4-mini"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
 DEFAULT_REPORT_EMAIL_TO = "2510248@mail.nankai.edu.cn"
@@ -1048,6 +1054,8 @@ class NewsItem:
     chinese_title: str = ""
     comment: str = ""
     score: float = 0.0
+    base_score: float = 0.0
+    history_repetition: str = ""
 
 
 @dataclass
@@ -1936,6 +1944,147 @@ def dedupe_items(items: list[NewsItem]) -> list[NewsItem]:
     return unique_items
 
 
+def history_file_path(history_dir: Path, profile: dict[str, Any]) -> Path:
+    return history_dir / f"{profile['key']}_history.json"
+
+
+def parse_history_date(value: Any) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def load_history_json(history_dir: Path, profile: dict[str, Any]) -> dict[str, Any]:
+    path = history_file_path(history_dir, profile)
+    if not path.exists():
+        return {"version": 1, "profile": profile["key"], "reports": []}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 - bad cache should not block a report.
+        LOGGER.warning("Ignoring unreadable report history %s: %s", path, exc)
+        return {"version": 1, "profile": profile["key"], "reports": []}
+    if not isinstance(raw, dict):
+        return {"version": 1, "profile": profile["key"], "reports": []}
+    reports = raw.get("reports", [])
+    if not isinstance(reports, list):
+        reports = []
+    return {"version": 1, "profile": profile["key"], "reports": reports}
+
+
+def load_report_history(
+    history_dir: Path,
+    profile: dict[str, Any],
+    report_date: date,
+    lookback_days: int,
+) -> dict[str, set[str]]:
+    raw = load_history_json(history_dir, profile)
+    cutoff = report_date - timedelta(days=max(1, lookback_days))
+    identity_keys: set[str] = set()
+    title_keys: set[str] = set()
+    topic_keys: set[str] = set()
+
+    for report in raw.get("reports", []):
+        if not isinstance(report, dict):
+            continue
+        entry_date = parse_history_date(report.get("date"))
+        if entry_date is None or entry_date == report_date or entry_date < cutoff:
+            continue
+        for item in report.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            for key in item.get("identity_keys", []):
+                if isinstance(key, str) and key:
+                    identity_keys.add(key)
+            title_key = clean_text(item.get("title_key"))
+            if title_key:
+                title_keys.add(title_key)
+            topic_key = clean_text(item.get("topic_key"))
+            if topic_key:
+                topic_keys.add(topic_key)
+
+    LOGGER.info(
+        "Loaded report history for %s: %d identity keys, %d title keys, %d topic keys over %d days.",
+        profile["key"],
+        len(identity_keys),
+        len(title_keys),
+        len(topic_keys),
+        lookback_days,
+    )
+    return {"identity_keys": identity_keys, "title_keys": title_keys, "topic_keys": topic_keys}
+
+
+def history_repetition_penalty(
+    item: NewsItem,
+    profile: dict[str, Any],
+    history: dict[str, set[str]] | None,
+) -> tuple[float, str]:
+    if not history:
+        return 0.0, ""
+    keys = set(item_identity_keys(item))
+    title_key = title_fingerprint(item.title)
+    topic_key = topic_signature(item, profile)
+    if keys & history.get("identity_keys", set()):
+        return HISTORY_EXACT_DUPLICATE_PENALTY, "exact"
+    if title_key and title_key in history.get("title_keys", set()):
+        return HISTORY_EXACT_DUPLICATE_PENALTY, "exact"
+    if topic_key and topic_key in history.get("topic_keys", set()):
+        return HISTORY_TOPIC_REPEAT_PENALTY, "topic"
+    return 0.0, ""
+
+
+def history_item_payload(item: NewsItem, profile: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "title": item.title,
+        "source": item.source,
+        "published": format_date(item.published),
+        "doi": normalize_doi(item.doi) or extract_doi(item.link),
+        "link": item.link,
+        "field": item.field_name,
+        "identity_keys": item_identity_keys(item),
+        "title_key": title_fingerprint(item.title),
+        "topic_key": topic_signature(item, profile),
+        "score": round(item.base_score or item.score, 3),
+    }
+
+
+def save_report_history(
+    history_dir: Path,
+    profile: dict[str, Any],
+    report_date: date,
+    items: list[NewsItem],
+    lookback_days: int,
+) -> None:
+    if not items:
+        return
+    history_dir.mkdir(parents=True, exist_ok=True)
+    path = history_file_path(history_dir, profile)
+    raw = load_history_json(history_dir, profile)
+    cutoff = report_date - timedelta(days=max(1, lookback_days))
+    reports: list[dict[str, Any]] = []
+    for report in raw.get("reports", []):
+        if not isinstance(report, dict):
+            continue
+        entry_date = parse_history_date(report.get("date"))
+        if entry_date is None or entry_date < cutoff or entry_date == report_date:
+            continue
+        reports.append(report)
+    reports.append(
+        {
+            "date": report_date.isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "items": [history_item_payload(item, profile) for item in items],
+        }
+    )
+    payload = {"version": 1, "profile": profile["key"], "reports": reports}
+    tmp_path = path.with_suffix(".tmp")
+    tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path.replace(path)
+    LOGGER.info("Saved report history to %s", path)
+
+
 def rank_item(item: NewsItem, now: datetime, profile: dict[str, Any]) -> float:
     source_weight = 45
     for source_prefix, weight in profile["source_weights"].items():
@@ -1963,11 +2112,23 @@ def rank_item(item: NewsItem, now: datetime, profile: dict[str, Any]) -> float:
     )
 
 
-def prepare_items(items: list[NewsItem], max_items: int, now: datetime, profile: dict[str, Any]) -> list[NewsItem]:
+def prepare_items(
+    items: list[NewsItem],
+    max_items: int,
+    now: datetime,
+    profile: dict[str, Any],
+    history: dict[str, set[str]] | None = None,
+    min_items: int = DEFAULT_MIN_ITEMS,
+) -> list[NewsItem]:
     unique = dedupe_items(items)
+    target_min = max(1, min(min_items, max_items, len(unique)))
+    target_max = max(target_min, min(max_items, len(unique)))
     for item in unique:
         item.field_name = classify_field(item.title, item.abstract, profile)
-        item.score = rank_item(item, now, profile)
+        item.base_score = rank_item(item, now, profile)
+        penalty, repetition = history_repetition_penalty(item, profile, history)
+        item.history_repetition = repetition
+        item.score = item.base_score - penalty
     ranked = sorted(
         unique,
         key=lambda item: (
@@ -1977,9 +2138,50 @@ def prepare_items(items: list[NewsItem], max_items: int, now: datetime, profile:
         ),
         reverse=True,
     )
-    for index, item in enumerate(ranked[:max_items], start=1):
+
+    fresh_ranked = [item for item in ranked if item.history_repetition != "exact"]
+    exact_repeats = [item for item in ranked if item.history_repetition == "exact"]
+    selection_pool = fresh_ranked or ranked
+    selected: list[NewsItem] = []
+    if selection_pool:
+        quality_floor = max(item.base_score for item in selection_pool) - HISTORY_QUALITY_MARGIN
+        for item in selection_pool:
+            if len(selected) >= target_max:
+                break
+            if len(selected) < target_min or item.base_score >= quality_floor:
+                selected.append(item)
+        if len(selected) < target_min:
+            selected_ids = {id(item) for item in selected}
+            for item in selection_pool:
+                if id(item) not in selected_ids:
+                    selected.append(item)
+                    selected_ids.add(id(item))
+                if len(selected) >= target_min:
+                    break
+
+    if len(selected) < target_min and exact_repeats:
+        selected_ids = {id(item) for item in selected}
+        for item in exact_repeats:
+            if id(item) in selected_ids:
+                continue
+            selected.append(item)
+            if len(selected) >= target_min:
+                break
+
+    if history:
+        exact_count = sum(1 for item in unique if item.history_repetition == "exact")
+        topic_count = sum(1 for item in unique if item.history_repetition == "topic")
+        LOGGER.info(
+            "History-aware selection kept %d/%d items; suppressed %d exact repeats and down-ranked %d topic repeats.",
+            len(selected),
+            len(unique),
+            max(0, exact_count - sum(1 for item in selected if item.history_repetition == "exact")),
+            topic_count,
+        )
+
+    for index, item in enumerate(selected, start=1):
         item.item_id = f"N{index:03d}"
-    return ranked[:max_items]
+    return selected
 
 
 def fallback_comment(item: NewsItem, variant_offset: int = 0) -> str:
@@ -3562,6 +3764,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Maximum number of deduplicated items written to the report.",
     )
     parser.add_argument(
+        "--min-items",
+        type=int,
+        default=int(os.getenv("SCIENCE_NEWS_MIN_ITEMS", os.getenv("CHEM_NEWS_MIN_ITEMS", str(DEFAULT_MIN_ITEMS)))),
+        help="Minimum number of report items to keep when enough fresh items are available.",
+    )
+    parser.add_argument(
         "--source-limit",
         type=int,
         default=int(os.getenv("CHEM_NEWS_SOURCE_LIMIT", "80")),
@@ -3586,6 +3794,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--output-dir",
         default=os.getenv("CHEM_NEWS_OUTPUT_DIR", DEFAULT_OUTPUT_DIR),
         help=f"Output directory. Default: {DEFAULT_OUTPUT_DIR}",
+    )
+    parser.add_argument(
+        "--history-dir",
+        default=os.getenv("SCIENCE_NEWS_HISTORY_DIR", DEFAULT_HISTORY_DIR),
+        help=f"Directory used to store cross-day deduplication history. Default: {DEFAULT_HISTORY_DIR}",
+    )
+    parser.add_argument(
+        "--history-days",
+        type=int,
+        default=int(os.getenv("SCIENCE_NEWS_HISTORY_DAYS", str(DEFAULT_HISTORY_LOOKBACK_DAYS))),
+        help="How many previous report days are used for cross-day deduplication.",
+    )
+    parser.add_argument(
+        "--no-history-dedup",
+        action="store_true",
+        help="Disable cross-day history deduplication for this run.",
     )
     parser.add_argument(
         "--report-date",
@@ -3679,11 +3903,19 @@ def main() -> int:
         raise SystemExit("--days should be between 1 and 14.")
     if args.max_items < 1:
         raise SystemExit("--max-items must be positive.")
+    if args.min_items < 1:
+        raise SystemExit("--min-items must be positive.")
+    if args.history_days < 1 or args.history_days > 60:
+        raise SystemExit("--history-days should be between 1 and 60.")
 
     now = datetime.now(timezone.utc)
     since = now - timedelta(days=args.days)
     report_date = parse_report_date(args.report_date)
     output_dir = resolve_output_dir(args.output_dir)
+    history_dir = Path(args.history_dir).expanduser()
+    report_history: dict[str, set[str]] | None = None
+    if not args.no_history_dedup:
+        report_history = load_report_history(history_dir, profile, report_date, args.history_days)
 
     from network_check import run_network_checks
 
@@ -3698,9 +3930,16 @@ def main() -> int:
         now.isoformat(),
     )
     collected, source_statuses = collect_items(args, since, now, profile)
-    prepared = prepare_items(collected, args.max_items, now, profile)
+    prepared = prepare_items(
+        collected,
+        args.max_items,
+        now,
+        profile,
+        history=report_history,
+        min_items=args.min_items,
+    )
     ensure_item_ids(prepared)
-    LOGGER.info("Prepared %d deduplicated items", len(prepared))
+    LOGGER.info("Prepared %d history-aware deduplicated items", len(prepared))
 
     if not prepared:
         reason = "抓取和过滤后没有可写入日报的资讯。"
@@ -3757,6 +3996,8 @@ def main() -> int:
         source_statuses=source_statuses,
     )
     LOGGER.info("Saved report to %s", output_path)
+    if not args.no_history_dedup:
+        save_report_history(history_dir, profile, report_date, prepared, args.history_days)
     email_sent = send_report_email(output_path, report_date, profile, ai_generated=bool(report_payload.get("ai_generated")))
     print(output_path)
     if args.require_email and not email_sent:
