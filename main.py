@@ -116,6 +116,7 @@ ELEMENT_SYMBOLS = {
     "Fr", "Ra", "Ac", "Th", "Pa", "U", "Np", "Pu", "Am", "Cm", "Bk", "Cf",
     "Es", "Fm", "Md", "No", "Lr",
 }
+ELEMENT_SYMBOL_PATTERN = "|".join(sorted((re.escape(symbol) for symbol in ELEMENT_SYMBOLS), key=len, reverse=True))
 USER_AGENT = (
     "ScienceNewsDaily/1.0 "
     "(mailto:please-set-CROSSREF_MAILTO@example.com; Python requests)"
@@ -1307,8 +1308,11 @@ def clean_text(value: Any) -> str:
         .replace("\ufeff", "")
     )
     text = re.sub(r"\s+", " ", text)
-    text = re.sub(r"(?<=[A-Za-z0-9)\]])\s+([_^]\{[^{}]+\})", r"\1", text)
-    text = re.sub(r"([_^]\{[^{}]+\})\s+(?=[A-Z0-9(\[])", r"\1", text)
+    text = re.sub(r"(?<=[A-Za-z0-9)\]])\s+(_\{[^{}]+\})", r"\1", text)
+    text = re.sub(r"(?<=[A-Za-z0-9)\]])\s+(\^\{[^{}]*[+\-][^{}]*\})", r"\1", text)
+    text = re.sub(r"(?<=[0-9)\]])\s+(\^\{[^{}]+\})", r"\1", text)
+    text = re.sub(rf"(\^\{{\d{{1,3}}\}})\s+(?=({ELEMENT_SYMBOL_PATTERN})(?![a-z]))", r"\1", text)
+    text = re.sub(r"(_\{[^{}]+\})\s+(?=[A-Z0-9(\[])", r"\1", text)
     return text.strip()
 
 
@@ -3225,10 +3229,44 @@ def replace_unicode_scripts_with_markers(text: str) -> str:
     return text
 
 
+def prefixed_element_notation_exception(text: str, start: int, number: str, symbol: str, end: int) -> bool:
+    """Avoid treating common biology assay names as isotope notation."""
+    del start
+    tail = text[end : end + 48].lstrip()
+    if symbol == "S" and number in {"5", "12", "16", "18", "23", "28"}:
+        if re.match(r"(?i)(?:rRNA|ribosomal|RNA)\b", tail):
+            return True
+    if symbol == "C" and number in {"3", "4", "5"}:
+        if re.match(r"(?i)[-\s]*(?:seq|chromatin|assay|method)\b", text[end : end + 48]):
+            return True
+    return False
+
+
 def apply_rule_scientific_notation(text: str) -> str:
     normalized = replace_unicode_scripts_with_markers(clean_text(text))
     if not normalized:
         return ""
+
+    def normalize_caret_isotope(match: re.Match[str]) -> str:
+        number = match.group(1)
+        symbol = match.group(2)
+        if prefixed_element_notation_exception(normalized, match.start() + 1, number, symbol, match.end()):
+            return f"{number}{symbol}"
+        return f"^{{{number}}}{symbol}"
+
+    def normalize_plain_isotope(match: re.Match[str]) -> str:
+        number = match.group(1)
+        symbol = match.group(2)
+        if prefixed_element_notation_exception(normalized, match.start(), number, symbol, match.end()):
+            return match.group(0)
+        return f"^{{{number}}}{symbol}"
+
+    normalized = re.sub(rf"\^(\d{{1,3}})({ELEMENT_SYMBOL_PATTERN})(?![a-z])", normalize_caret_isotope, normalized)
+    normalized = re.sub(
+        rf"(?<![A-Za-z0-9_^{{}}])(\d{{1,3}})({ELEMENT_SYMBOL_PATTERN})(?![a-z])",
+        normalize_plain_isotope,
+        normalized,
+    )
     normalized = re.sub(r"\bsp\s*([23])(?=\b|[-/])", r"sp^{\1}", normalized)
     normalized = re.sub(r"\bSP\s*([23])(?=\b|[-/])", r"SP^{\1}", normalized)
     normalized = re.sub(
@@ -3267,7 +3305,7 @@ def notation_candidate_is_safe(original: str, candidate: str) -> bool:
 def set_ai_notation_field(current_value: str, candidate: Any) -> str:
     candidate_text = clean_text(candidate)
     if notation_candidate_is_safe(current_value, candidate_text):
-        return candidate_text
+        return apply_rule_scientific_notation(candidate_text)
     return apply_rule_scientific_notation(current_value)
 
 
@@ -3346,10 +3384,10 @@ def apply_ai_scientific_notation(
     base_rules = [
         "化学式计量数字用下标：H2O -> H_{2}O，CO2 -> CO_{2}，Na2SO4 -> Na_{2}SO_{4}。",
         "离子电荷用上标：Fe3+ -> Fe^{3+}，SO4^2- -> SO_{4}^{2-}，NH4+ -> NH_{4}^{+}。",
-        "同位素质量数用左上标表达：13C -> ^{13}C，15N -> ^{15}N。",
+        "同位素质量数用左上标表达：18O -> ^{18}O，13C -> ^{13}C，15N -> ^{15}N，H2^18O -> H_{2}^{18}O。",
         "杂化和轨道指数用上标：sp2 -> sp^{2}，sp3 -> sp^{3}，d10 metal -> d^{10} metal。",
         "数学指数和指标用上/下标：R^2 -> R^{2}，x_i -> x_{i}，a^n -> a^{n}，beta_0 -> beta_{0}。",
-        "不要把 p53、COVID-19、NCT编号、年份、温度、pH 7.4、样本量 n=、页码、百分比、DOI 或 URL 改成上下标。",
+        "不要把 p53、COVID-19、16S/18S/23S rRNA、3C/4C/5C/Hi-C、NCT编号、年份、温度、pH 7.4、样本量 n=、页码、百分比、DOI 或 URL 改成上下标。",
         "除插入 ^{...} 和 _{...} 外，必须保持原字符、词序、标点和语言完全不变。",
     ]
 
@@ -3487,10 +3525,14 @@ def set_run_font(
         run.italic = italic
 
 
+def is_ascii_alnum(value: str) -> bool:
+    return bool(value) and value.isascii() and value.isalnum()
+
+
 def is_token_boundary(text: str, index: int) -> bool:
     if index <= 0 or index >= len(text):
         return True
-    return not text[index].isalnum()
+    return not is_ascii_alnum(text[index])
 
 
 def add_text_segment(segments: list[tuple[str, str]], value: str, script: str = "normal") -> None:
@@ -3515,6 +3557,20 @@ def parse_script_marker(text: str, index: int) -> tuple[tuple[str, str], int] | 
         value = text[index + 2 : end].strip()
         return ((value, script), end + 1) if value else None
 
+    if marker == "^":
+        isotope_match = re.match(rf"(\d{{1,3}})({ELEMENT_SYMBOL_PATTERN})(?![a-z])", text[index + 1 :])
+        if isotope_match:
+            value = isotope_match.group(1)
+            symbol = isotope_match.group(2)
+            end = index + 1 + len(value) + len(symbol)
+            if prefixed_element_notation_exception(text, index + 1, value, symbol, end):
+                return (value + symbol, "normal"), end
+            return (value, script), index + 1 + len(value)
+        exponent_match = re.match(r"\d+(?:[+\-])?|[A-Za-z]", text[index + 1 :])
+        if exponent_match:
+            value = exponent_match.group(0)
+            return (value, script), index + 1 + len(value)
+
     match = re.match(r"[A-Za-z0-9+\-]+", text[index + 1 :])
     if not match:
         return None
@@ -3525,7 +3581,7 @@ def parse_script_marker(text: str, index: int) -> tuple[tuple[str, str], int] | 
 
 
 def parse_formula_at(text: str, index: int) -> tuple[list[tuple[str, str]], int] | None:
-    if index > 0 and text[index - 1].isalnum():
+    if index > 0 and is_ascii_alnum(text[index - 1]):
         return None
 
     i = index
@@ -3538,6 +3594,15 @@ def parse_formula_at(text: str, index: int) -> tuple[list[tuple[str, str]], int]
     if i < len(text) and text[i].isdigit():
         digit_match = re.match(r"\d{1,3}(?=[A-Z])", text[i:])
         if not digit_match:
+            return None
+        isotope_match = re.match(rf"(\d{{1,3}})({ELEMENT_SYMBOL_PATTERN})(?![a-z])", text[i:])
+        if isotope_match and prefixed_element_notation_exception(
+            text,
+            i,
+            isotope_match.group(1),
+            isotope_match.group(2),
+            i + len(isotope_match.group(1)) + len(isotope_match.group(2)),
+        ):
             return None
         add_text_segment(segments, digit_match.group(0), "superscript")
         has_digit = True
@@ -3590,7 +3655,7 @@ def parse_formula_at(text: str, index: int) -> tuple[list[tuple[str, str]], int]
             i += 1
             continue
 
-        if char in "+-" and segments and (i + 1 == len(text) or not text[i + 1].isalnum()):
+        if char in "+-" and segments and (i + 1 == len(text) or not is_ascii_alnum(text[i + 1])):
             if element_count == 1 and last_element_digit_index is not None:
                 value, script = segments[last_element_digit_index]
                 if script == "subscript":
@@ -3604,12 +3669,13 @@ def parse_formula_at(text: str, index: int) -> tuple[list[tuple[str, str]], int]
 
     if element_count == 0 or not (has_digit or has_charge):
         return None
-    if i < len(text) and text[i].isalnum():
+    if i < len(text) and is_ascii_alnum(text[i]):
         return None
     return segments, i
 
 
 def rich_text_segments(text: str) -> list[tuple[str, str]]:
+    text = replace_unicode_scripts_with_markers(clean_text(text))
     segments: list[tuple[str, str]] = []
     index = 0
     while index < len(text):
