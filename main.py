@@ -1310,9 +1310,10 @@ def clean_text(value: Any) -> str:
     text = re.sub(r"\s+", " ", text)
     text = re.sub(r"(?<=[A-Za-z0-9)\]])\s+(_\{[^{}]+\})", r"\1", text)
     text = re.sub(r"(?<=[A-Za-z0-9)\]])\s+(\^\{[^{}]*[+\-][^{}]*\})", r"\1", text)
+    text = re.sub(r"(?<=\})\s+(\^\{[^{}]*[+\-][^{}]*\})", r"\1", text)
     text = re.sub(r"(?<=[0-9)\]])\s+(\^\{[^{}]+\})", r"\1", text)
     text = re.sub(rf"(\^\{{\d{{1,3}}\}})\s+(?=({ELEMENT_SYMBOL_PATTERN})(?![a-z]))", r"\1", text)
-    text = re.sub(r"(_\{[^{}]+\})\s+(?=[A-Z0-9(\[])", r"\1", text)
+    text = re.sub(r"(_\{[^{}]+\})\s+(?=[A-Z](?![a-z])|[0-9(\[])", r"\1", text)
     return text.strip()
 
 
@@ -2755,18 +2756,26 @@ def chat_response_text(response: Any) -> str:
     return str(content or "")
 
 
+def normalize_parsed_json(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, list):
+        return {"items": value}
+    raise ValueError(f"Expected JSON object, got {type(value).__name__}")
+
+
 def parse_json_object(raw: str) -> dict[str, Any]:
     text = raw.strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
     try:
-        return json.loads(text)
+        return normalize_parsed_json(json.loads(text))
     except json.JSONDecodeError:
         match = re.search(r"\{.*\}", text, flags=re.DOTALL)
         if not match:
             raise
-        return json.loads(match.group(0))
+        return normalize_parsed_json(json.loads(match.group(0)))
 
 
 def resolve_llm_config(model_override: str = "") -> LLMConfig | None:
@@ -3425,6 +3434,14 @@ def apply_ai_scientific_notation(
         except Exception as exc:  # noqa: BLE001
             LOGGER.warning("%s scientific notation chunk %d failed; using rule-based notation: %s", llm_config.provider, chunk_index, exc)
             continue
+        if not isinstance(parsed, dict):
+            LOGGER.warning(
+                "%s scientific notation chunk %d returned %s; using rule-based notation for this chunk.",
+                llm_config.provider,
+                chunk_index,
+                type(parsed).__name__,
+            )
+            continue
 
         parsed_items = parsed.get("items", [])
         if not isinstance(parsed_items, list):
@@ -3455,6 +3472,13 @@ def apply_ai_scientific_notation(
         }
         try:
             parsed = request_notation_json(prompt, 2500, "field summaries")
+            if not isinstance(parsed, dict):
+                LOGGER.warning(
+                    "%s scientific notation field summary pass returned %s; using rule-based notation.",
+                    llm_config.provider,
+                    type(parsed).__name__,
+                )
+                return any_ai_applied
             returned_summaries = parsed.get("field_summaries", [])
             if isinstance(returned_summaries, list):
                 for entry in returned_summaries:
