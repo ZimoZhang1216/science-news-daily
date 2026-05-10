@@ -102,6 +102,20 @@ DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
 DEFAULT_REPORT_EMAIL_TO = "2510248@mail.nankai.edu.cn"
 SUPPORTED_LLM_PROVIDERS = {"openai", "deepseek"}
 BANNED_TITLE_WORDS = {"震惊", "颠覆", "炸裂", "封神", "逆天", "重磅", "神作", "史诗级"}
+ELEMENT_SYMBOLS = {
+    "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne",
+    "Na", "Mg", "Al", "Si", "P", "S", "Cl", "Ar",
+    "K", "Ca", "Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn",
+    "Ga", "Ge", "As", "Se", "Br", "Kr",
+    "Rb", "Sr", "Y", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd",
+    "In", "Sn", "Sb", "Te", "I", "Xe",
+    "Cs", "Ba", "La", "Ce", "Pr", "Nd", "Pm", "Sm", "Eu", "Gd", "Tb", "Dy",
+    "Ho", "Er", "Tm", "Yb", "Lu",
+    "Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au", "Hg",
+    "Tl", "Pb", "Bi", "Po", "At", "Rn",
+    "Fr", "Ra", "Ac", "Th", "Pa", "U", "Np", "Pu", "Am", "Cm", "Bk", "Cf",
+    "Es", "Fm", "Md", "No", "Lr",
+}
 USER_AGENT = (
     "ScienceNewsDaily/1.0 "
     "(mailto:please-set-CROSSREF_MAILTO@example.com; Python requests)"
@@ -1271,7 +1285,12 @@ def clean_text(value: Any) -> str:
         return ""
     text = html.unescape(str(value))
     if "<" in text and ">" in text and BeautifulSoup is not None:
-        text = BeautifulSoup(text, "html.parser").get_text(" ", strip=True)
+        soup = BeautifulSoup(text, "html.parser")
+        for tag in soup.find_all("sub"):
+            tag.replace_with(f"_{{{tag.get_text('', strip=True)}}}")
+        for tag in soup.find_all("sup"):
+            tag.replace_with(f"^{{{tag.get_text('', strip=True)}}}")
+        text = soup.get_text(" ", strip=True)
     text = (
         text.replace("\u00a0", " ")
         .replace("\u202f", " ")
@@ -1284,6 +1303,8 @@ def clean_text(value: Any) -> str:
         .replace("\ufeff", "")
     )
     text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"(?<=[A-Za-z0-9)\]])\s+([_^]\{[^{}]+\})", r"\1", text)
+    text = re.sub(r"([_^]\{[^{}]+\})\s+(?=[A-Z0-9(\[])", r"\1", text)
     return text.strip()
 
 
@@ -3192,6 +3213,173 @@ def set_run_font(
         run.italic = italic
 
 
+def is_token_boundary(text: str, index: int) -> bool:
+    if index <= 0 or index >= len(text):
+        return True
+    return not text[index].isalnum()
+
+
+def add_text_segment(segments: list[tuple[str, str]], value: str, script: str = "normal") -> None:
+    if not value:
+        return
+    if segments and segments[-1][1] == script:
+        previous_value, _ = segments[-1]
+        segments[-1] = (previous_value + value, script)
+    else:
+        segments.append((value, script))
+
+
+def parse_script_marker(text: str, index: int) -> tuple[tuple[str, str], int] | None:
+    marker = text[index]
+    if marker not in {"^", "_"} or index + 1 >= len(text):
+        return None
+    script = "superscript" if marker == "^" else "subscript"
+    if text[index + 1] == "{":
+        end = text.find("}", index + 2)
+        if end == -1:
+            return None
+        value = text[index + 2 : end].strip()
+        return ((value, script), end + 1) if value else None
+
+    match = re.match(r"[A-Za-z0-9+\-]+", text[index + 1 :])
+    if not match:
+        return None
+    value = match.group(0)
+    if len(value) > 8:
+        value = value[0]
+    return (value, script), index + 1 + len(value)
+
+
+def parse_formula_at(text: str, index: int) -> tuple[list[tuple[str, str]], int] | None:
+    if index > 0 and text[index - 1].isalnum():
+        return None
+
+    i = index
+    segments: list[tuple[str, str]] = []
+    element_count = 0
+    has_digit = False
+    has_charge = False
+    last_element_digit_index: int | None = None
+
+    if i < len(text) and text[i].isdigit():
+        digit_match = re.match(r"\d{1,3}(?=[A-Z])", text[i:])
+        if not digit_match:
+            return None
+        add_text_segment(segments, digit_match.group(0), "superscript")
+        has_digit = True
+        i += len(digit_match.group(0))
+
+    while i < len(text):
+        char = text[i]
+        if char.isupper():
+            symbol = char
+            if i + 1 < len(text) and text[i + 1].islower():
+                candidate = text[i : i + 2]
+                if candidate in ELEMENT_SYMBOLS:
+                    symbol = candidate
+                    i += 2
+                elif char in ELEMENT_SYMBOLS:
+                    i += 1
+                else:
+                    break
+            elif symbol in ELEMENT_SYMBOLS:
+                i += 1
+            else:
+                break
+            add_text_segment(segments, symbol)
+            element_count += 1
+            digit_match = re.match(r"\d+", text[i:])
+            if digit_match:
+                last_element_digit_index = len(segments)
+                add_text_segment(segments, digit_match.group(0), "subscript")
+                has_digit = True
+                i += len(digit_match.group(0))
+            continue
+
+        if char in ")]}" and segments:
+            add_text_segment(segments, char)
+            i += 1
+            digit_match = re.match(r"\d+", text[i:])
+            if digit_match:
+                add_text_segment(segments, digit_match.group(0), "subscript")
+                has_digit = True
+                i += len(digit_match.group(0))
+            continue
+
+        if char in "([{" and i + 1 < len(text):
+            add_text_segment(segments, char)
+            i += 1
+            continue
+
+        if char in {"·", "•"} and i + 1 < len(text) and text[i + 1].isupper():
+            add_text_segment(segments, char)
+            i += 1
+            continue
+
+        if char in "+-" and segments and (i + 1 == len(text) or not text[i + 1].isalnum()):
+            if element_count == 1 and last_element_digit_index is not None:
+                value, script = segments[last_element_digit_index]
+                if script == "subscript":
+                    segments[last_element_digit_index] = (value, "superscript")
+            add_text_segment(segments, char, "superscript")
+            has_charge = True
+            i += 1
+            break
+
+        break
+
+    if element_count == 0 or not (has_digit or has_charge):
+        return None
+    if i < len(text) and text[i].isalnum():
+        return None
+    return segments, i
+
+
+def rich_text_segments(text: str) -> list[tuple[str, str]]:
+    segments: list[tuple[str, str]] = []
+    index = 0
+    while index < len(text):
+        marker = parse_script_marker(text, index)
+        if marker is not None:
+            segment, index = marker
+            add_text_segment(segments, segment[0], segment[1])
+            continue
+
+        formula = parse_formula_at(text, index)
+        if formula is not None:
+            formula_segments, index = formula
+            for value, script in formula_segments:
+                add_text_segment(segments, value, script)
+            continue
+
+        add_text_segment(segments, text[index])
+        index += 1
+    return segments
+
+
+def add_rich_text(
+    paragraph: Any,
+    text: str,
+    *,
+    size: float | None = None,
+    color: Any | None = None,
+    bold: bool | None = None,
+    italic: bool | None = None,
+    name: str = "Arial",
+    east_asia: str = "Microsoft YaHei",
+) -> list[Any]:
+    runs: list[Any] = []
+    for value, script in rich_text_segments(clean_text(text)):
+        run = paragraph.add_run(value)
+        set_run_font(run, name=name, east_asia=east_asia, size=size, color=color, bold=bold, italic=italic)
+        if script == "subscript":
+            run.font.subscript = True
+        elif script == "superscript":
+            run.font.superscript = True
+        runs.append(run)
+    return runs
+
+
 def paragraph_border_bottom(paragraph: Any, color: str = "D9E2EC", size: str = "8") -> None:
     properties = paragraph._p.get_or_add_pPr()  # noqa: SLF001
     borders = properties.find(qn("w:pBdr"))
@@ -3276,7 +3464,7 @@ def add_label_value(document: Document, label: str, value: str, link: str = "") 
     if link:
         add_hyperlink(paragraph, value, link)
     else:
-        paragraph.add_run(value)
+        add_rich_text(paragraph, value)
 
 
 def add_masthead(document: Document, report_date: date, item_count: int, profile: dict[str, Any]) -> None:
@@ -3332,8 +3520,7 @@ def add_top_item_block(document: Document, item: NewsItem, index: int) -> None:
     paragraph.paragraph_format.space_after = Pt(1)
     label = paragraph.add_run(f"{index:02d}  ")
     set_run_font(label, size=9.2, color=RGBColor(15, 76, 117), bold=True)
-    title_run = paragraph.add_run(display_title(item))
-    set_run_font(title_run, size=10.2, color=RGBColor(17, 24, 39), bold=True)
+    add_rich_text(paragraph, display_title(item), size=10.2, color=RGBColor(17, 24, 39), bold=True)
 
     meta = document.add_paragraph()
     meta.paragraph_format.space_before = Pt(0)
@@ -3345,8 +3532,7 @@ def add_top_item_block(document: Document, item: NewsItem, index: int) -> None:
     comment.paragraph_format.space_before = Pt(0)
     comment.paragraph_format.space_after = Pt(6)
     comment.paragraph_format.line_spacing = 1.22
-    run = comment.add_run(truncate(item.comment or fallback_comment(item), 150))
-    set_run_font(run, size=9, color=RGBColor(55, 65, 81))
+    add_rich_text(comment, truncate(item.comment or fallback_comment(item), 150), size=9, color=RGBColor(55, 65, 81))
     paragraph_border_bottom(comment, color="EEF2F7", size="4")
 
 
@@ -3354,7 +3540,7 @@ def add_item_block(document: Document, item: NewsItem) -> None:
     heading = document.add_paragraph()
     heading.style = document.styles["Heading 3"]
     heading.paragraph_format.keep_with_next = True
-    heading.add_run(display_title(item))
+    add_rich_text(heading, display_title(item))
 
     meta = document.add_paragraph()
     meta.paragraph_format.space_before = Pt(0)
@@ -3367,8 +3553,7 @@ def add_item_block(document: Document, item: NewsItem) -> None:
     english.paragraph_format.space_after = Pt(2)
     label = english.add_run("英文标题  ")
     set_run_font(label, size=8.2, color=RGBColor(15, 76, 117), bold=True)
-    run = english.add_run(item.title)
-    set_run_font(run, size=9, color=RGBColor(55, 65, 81), italic=True)
+    add_rich_text(english, item.title, size=9, color=RGBColor(55, 65, 81), italic=True)
 
     comment = document.add_paragraph()
     comment.paragraph_format.space_before = Pt(1)
@@ -3378,8 +3563,7 @@ def add_item_block(document: Document, item: NewsItem) -> None:
     set_paragraph_shading(comment, fill="F8FAFC")
     label = comment.add_run("中文摘要  ")
     set_run_font(label, size=8.7, color=RGBColor(15, 76, 117), bold=True)
-    run = comment.add_run(item.comment or fallback_comment(item))
-    set_run_font(run, size=9.2, color=RGBColor(31, 41, 55))
+    add_rich_text(comment, item.comment or fallback_comment(item), size=9.2, color=RGBColor(31, 41, 55))
 
     abstract = truncate(item.abstract, 420)
     if abstract:
@@ -3389,8 +3573,7 @@ def add_item_block(document: Document, item: NewsItem) -> None:
         paragraph.paragraph_format.line_spacing = 1.22
         label = paragraph.add_run("原文摘要  ")
         set_run_font(label, size=8.7, color=RGBColor(107, 114, 128), bold=True)
-        run = paragraph.add_run(abstract)
-        set_run_font(run, size=8.8, color=RGBColor(75, 85, 99))
+        add_rich_text(paragraph, abstract, size=8.8, color=RGBColor(75, 85, 99))
 
     links = document.add_paragraph()
     links.paragraph_format.space_before = Pt(0)
@@ -3491,8 +3674,7 @@ def create_document(
         summary_paragraph = document.add_paragraph()
         summary_paragraph.paragraph_format.space_after = Pt(6)
         summary_paragraph.paragraph_format.line_spacing = 1.25
-        run = summary_paragraph.add_run(summary)
-        set_run_font(run, size=9.2, color=RGBColor(55, 65, 81))
+        add_rich_text(summary_paragraph, summary, size=9.2, color=RGBColor(55, 65, 81))
         for item in group_items:
             add_item_block(document, item)
 
