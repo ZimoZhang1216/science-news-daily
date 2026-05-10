@@ -326,6 +326,7 @@ STATISTICS_TERM_TRANSLATIONS: list[tuple[str, str]] = [
 
 PROFILE_TERM_TRANSLATIONS = {
     "chemistry": CHEMISTRY_TERM_TRANSLATIONS,
+    "organic_chemistry": CHEMISTRY_TERM_TRANSLATIONS,
     "biology": BIOLOGY_TERM_TRANSLATIONS,
     "statistics": STATISTICS_TERM_TRANSLATIONS,
 }
@@ -516,6 +517,113 @@ PUBMED_QUERY_TERMS = [
     "chemical proteomics",
 ]
 
+ORGANIC_FIELD_KEYWORDS: dict[str, list[str]] = {
+    "合成方法学": [
+        "organic synthesis",
+        "synthetic methodology",
+        "methodology",
+        "C-H activation",
+        "cross-coupling",
+        "functionalization",
+        "annulation",
+        "cyclization",
+        "dearomatization",
+        "late-stage",
+    ],
+    "不对称合成": [
+        "asymmetric",
+        "enantioselective",
+        "stereoselective",
+        "chiral",
+        "enantioenriched",
+        "stereocontrol",
+        "organocatalysis",
+    ],
+    "光氧化还原与自由基": [
+        "photoredox",
+        "radical",
+        "photoinduced",
+        "visible-light",
+        "energy transfer",
+        "single-electron transfer",
+    ],
+    "金属有机与催化": [
+        "organometallic",
+        "transition-metal",
+        "palladium",
+        "nickel",
+        "copper",
+        "rhodium",
+        "iridium",
+        "homogeneous catalysis",
+        "cross-coupling",
+    ],
+    "天然产物与药物化学": [
+        "natural product",
+        "total synthesis",
+        "medicinal chemistry",
+        "drug discovery",
+        "bioactive",
+        "alkaloid",
+        "terpenoid",
+        "macrocycle",
+    ],
+    "物理有机与机理": [
+        "physical organic",
+        "mechanism",
+        "mechanistic",
+        "kinetics",
+        "intermediate",
+        "selectivity",
+        "reaction mechanism",
+        "reaction pathway",
+    ],
+    "有机材料与功能分子": [
+        "organic material",
+        "organic semiconductor",
+        "conjugated",
+        "fluorescent",
+        "OLED",
+        "polymer",
+        "supramolecular",
+        "molecular switch",
+    ],
+}
+
+ORGANIC_CHEMISTRY_TERMS = sorted(
+    {
+        keyword.lower()
+        for keywords in ORGANIC_FIELD_KEYWORDS.values()
+        for keyword in keywords
+    }
+    | {
+        "organic chemistry",
+        "organic reaction",
+        "synthesis",
+        "synthetic",
+        "substrate",
+        "reagent",
+    }
+)
+
+ORGANIC_ARXIV_QUERY_TERMS = [
+    "organic chemistry",
+    "organic synthesis",
+    "photoredox",
+    "asymmetric synthesis",
+    "cross-coupling",
+    "organocatalysis",
+    "reaction mechanism",
+]
+
+ORGANIC_PUBMED_QUERY_TERMS = [
+    "organic synthesis",
+    "medicinal chemistry",
+    "natural product synthesis",
+    "bioactive compound",
+    "drug discovery",
+]
+
 CROSSREF_JOURNALS: list[dict[str, Any]] = [
     {"source": "JACS", "issns": ["0002-7863", "1520-5126"], "broad": False},
     {
@@ -569,6 +677,24 @@ CROSSREF_JOURNALS: list[dict[str, Any]] = [
     },
 ]
 
+ORGANIC_CROSSREF_JOURNALS: list[dict[str, Any]] = [
+    {"source": "Organic Letters", "issns": ["1523-7060", "1523-7052"], "broad": False},
+    {
+        "source": "The Journal of Organic Chemistry",
+        "issns": ["0022-3263", "1520-6904"],
+        "broad": False,
+    },
+    {"source": "JACS", "issns": ["0002-7863", "1520-5126"], "broad": True},
+    {
+        "source": "Angewandte Chemie",
+        "issns": ["1433-7851", "1521-3773"],
+        "broad": True,
+    },
+    {"source": "Nature Chemistry", "issns": ["1755-4330", "1755-4349"], "broad": True},
+    {"source": "Chemical Science", "issns": ["2041-6520", "2041-6539"], "broad": True},
+    {"source": "ACS Catalysis", "issns": ["2155-5435"], "broad": True},
+]
+
 RSS_FEEDS: list[dict[str, Any]] = [
     {
         "source": "C&EN (ACS)",
@@ -597,6 +723,24 @@ RSS_FEEDS: list[dict[str, Any]] = [
     },
 ]
 
+ORGANIC_RSS_FEEDS: list[dict[str, Any]] = [
+    {
+        "source": "Nature Chemistry",
+        "url": "https://www.nature.com/nchem.rss",
+        "broad": True,
+    },
+    {
+        "source": "Chemistry World Research (RSC)",
+        "url": "https://www.chemistryworld.com/410.rss",
+        "broad": True,
+    },
+    {
+        "source": "Chemistry World News (RSC)",
+        "url": "https://www.chemistryworld.com/409.rss",
+        "broad": True,
+    },
+]
+
 SOURCE_WEIGHTS = {
     "Nature Chemistry": 80,
     "JACS": 78,
@@ -609,6 +753,18 @@ SOURCE_WEIGHTS = {
     "ACS Energy Letters": 64,
     "Energy & Environmental Science": 64,
     "PubMed": 55,
+    "arXiv": 48,
+}
+
+ORGANIC_SOURCE_WEIGHTS = {
+    "Organic Letters": 74,
+    "The Journal of Organic Chemistry": 72,
+    "JACS": 78,
+    "Angewandte Chemie": 76,
+    "Nature Chemistry": 80,
+    "Chemical Science": 68,
+    "ACS Catalysis": 64,
+    "PubMed": 52,
     "arXiv": 48,
 }
 
@@ -975,6 +1131,36 @@ REPORT_PROFILES: dict[str, dict[str, Any]] = {
         ),
         "email_env": "CHEM_REPORT_EMAIL_TO",
         "default_email_to": DEFAULT_REPORT_EMAIL_TO,
+    },
+    "organic_chemistry": {
+        "key": "organic_chemistry",
+        "title": "有机化学科研资讯日报",
+        "failure_title": "有机化学科研资讯日报运行失败报告",
+        "output_prefix": "organic_chem_news",
+        "header_label": "ORGANIC CHEM NEWS DAILY",
+        "meta_fields": "合成方法学、不对称、光氧化还原、金属有机、天然产物、机理、功能分子",
+        "field_keywords": ORGANIC_FIELD_KEYWORDS,
+        "relevance_terms": ORGANIC_CHEMISTRY_TERMS,
+        "arxiv_query_terms": ORGANIC_ARXIV_QUERY_TERMS,
+        "pubmed_query_terms": ORGANIC_PUBMED_QUERY_TERMS,
+        "crossref_journals": ORGANIC_CROSSREF_JOURNALS,
+        "rss_feeds": ORGANIC_RSS_FEEDS,
+        "source_weights": ORGANIC_SOURCE_WEIGHTS,
+        "default_field": "综合有机化学",
+        "ai_role": "有机化学领域科研编辑",
+        "ai_task": "生成有机化学科研资讯日报摘要",
+        "title_style": (
+            "有机化学标题与化学日报对齐，严谨性优先。标题应突出可从题名或摘要确认的有机化学学术亮点，"
+            "包括反应类型、底物/官能团、催化体系、选择性控制、机理证据、天然产物骨架、药物化学线索或功能分子结构。"
+            "优先使用“期刊名：研究对象/反应/机理的学术亮点”结构，例如"
+            "“Org. Lett.：镍催化芳基卤化物的选择性交叉偶联”、"
+            "“JOC：自由基环化构建含氮杂环骨架”、"
+            "“JACS：手性磷酸催化的不对称串联反应”。"
+            "不要使用反问句、悬念句、拟人化比喻或“不是……而是……”“一个……让……”等营销句式；"
+            "不添加输入里没有的产率、ee值、底物范围、应用承诺或因果结论。"
+        ),
+        "email_env": "ORGANIC_REPORT_EMAIL_TO",
+        "default_email_to": "",
     },
     "biology": {
         "key": "biology",
@@ -3749,7 +3935,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--profile",
         choices=sorted(REPORT_PROFILES),
         default=os.getenv("REPORT_PROFILE", "chemistry"),
-        help="Report profile to run: chemistry, biology, or statistics. Default: chemistry.",
+        help="Report profile to run: chemistry, organic_chemistry, biology, or statistics. Default: chemistry.",
     )
     parser.add_argument(
         "--days",

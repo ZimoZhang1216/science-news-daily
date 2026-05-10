@@ -12,6 +12,7 @@ from pathlib import Path
 
 PROFILE_LABELS = {
     "chemistry": "化学日报",
+    "organic_chemistry": "有机化学日报",
     "biology": "生物日报",
     "statistics": "统计学日报",
 }

@@ -22,7 +22,7 @@ jobs:
   generate:
     name: Generate all target daily reports
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 100
     env:
       EMAIL_ENABLED: "true"
       LLM_PROVIDER: ${{ secrets.LLM_PROVIDER }}
@@ -32,6 +32,7 @@ jobs:
       DEEPSEEK_MODEL: ${{ secrets.DEEPSEEK_MODEL }}
       REPORT_EMAIL_TO: ${{ secrets.REPORT_EMAIL_TO }}
       CHEM_REPORT_EMAIL_TO: ${{ secrets.CHEM_REPORT_EMAIL_TO }}
+      ORGANIC_REPORT_EMAIL_TO: ${{ secrets.ORGANIC_REPORT_EMAIL_TO }}
       BIO_REPORT_EMAIL_TO: ${{ secrets.BIO_REPORT_EMAIL_TO }}
       STAT_REPORT_EMAIL_TO: ${{ secrets.STAT_REPORT_EMAIL_TO }}
       SMTP_HOST: ${{ secrets.SMTP_HOST }}
@@ -67,6 +68,9 @@ jobs:
           fi
           if [ -z "${CHEM_REPORT_EMAIL_TO:-$REPORT_EMAIL_TO}" ]; then
             missing+=("CHEM_REPORT_EMAIL_TO_or_REPORT_EMAIL_TO")
+          fi
+          if [ -z "${ORGANIC_REPORT_EMAIL_TO:-$REPORT_EMAIL_TO}" ]; then
+            missing+=("ORGANIC_REPORT_EMAIL_TO_or_REPORT_EMAIL_TO")
           fi
           if [ -z "${BIO_REPORT_EMAIL_TO:-$REPORT_EMAIL_TO}" ]; then
             missing+=("BIO_REPORT_EMAIL_TO_or_REPORT_EMAIL_TO")
@@ -155,7 +159,7 @@ jobs:
           report_date="${{ steps.report_date.outputs.today }}"
           status_file="./output/cronjob_status_${report_date}.tsv"
           printf "profile\tstatus\texit_code\tstarted_at\tended_at\tlog_file\n" > "$status_file"
-          for profile in chemistry biology statistics; do
+          for profile in chemistry organic_chemistry biology statistics; do
             started_at="$(TZ=Asia/Shanghai date '+%F %T %Z')"
             log_file="./output/logs/${profile}_${report_date}.log"
             echo "::group::Generate ${profile} target report"
