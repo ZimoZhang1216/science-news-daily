@@ -102,6 +102,19 @@ DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
 DEFAULT_REPORT_EMAIL_TO = "2510248@mail.nankai.edu.cn"
 SUPPORTED_LLM_PROVIDERS = {"openai", "deepseek"}
 BANNED_TITLE_WORDS = {"震惊", "颠覆", "炸裂", "封神", "逆天", "重磅", "神作", "史诗级"}
+
+
+def resolve_cjk_font(platform: str | None = None) -> str:
+    target_platform = platform or sys.platform
+    if target_platform == "darwin":
+        return "Hiragino Sans GB"
+    if target_platform.startswith("win"):
+        return "Microsoft YaHei"
+    return "Noto Sans CJK SC"
+
+
+CJK_FONT_NAME = resolve_cjk_font()
+
 ELEMENT_SYMBOLS = {
     "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne",
     "Na", "Mg", "Al", "Si", "P", "S", "Cl", "Ar",
@@ -339,11 +352,39 @@ STATISTICS_TERM_TRANSLATIONS: list[tuple[str, str]] = [
     ("meta-analysis", "Meta分析"),
 ]
 
+BUSINESS_MANAGEMENT_TERM_TRANSLATIONS: list[tuple[str, str]] = [
+    ("strategic management", "战略管理"),
+    ("competitive strategy", "竞争战略"),
+    ("corporate strategy", "公司战略"),
+    ("organizational behavior", "组织行为"),
+    ("organizational culture", "组织文化"),
+    ("human resource management", "人力资源管理"),
+    ("employee creativity", "员工创造力"),
+    ("employee innovation", "员工创新"),
+    ("work engagement", "工作投入"),
+    ("career mobility", "职业流动"),
+    ("career advancement", "职业晋升"),
+    ("executive career", "高管职业发展"),
+    ("marketing strategy", "营销战略"),
+    ("consumer behavior", "消费者行为"),
+    ("digital marketing", "数字营销"),
+    ("innovation management", "创新管理"),
+    ("business model innovation", "商业模式创新"),
+    ("entrepreneurship", "创业"),
+    ("supply chain management", "供应链管理"),
+    ("supply chain resilience", "供应链韧性"),
+    ("digital transformation", "数字化转型"),
+    ("algorithmic management", "算法管理"),
+    ("corporate governance", "公司治理"),
+    ("esg", "ESG"),
+]
+
 PROFILE_TERM_TRANSLATIONS = {
     "chemistry": CHEMISTRY_TERM_TRANSLATIONS,
     "organic_chemistry": CHEMISTRY_TERM_TRANSLATIONS,
     "biology": BIOLOGY_TERM_TRANSLATIONS,
     "statistics": STATISTICS_TERM_TRANSLATIONS,
+    "business_management": BUSINESS_MANAGEMENT_TERM_TRANSLATIONS,
 }
 
 GENERIC_TITLE_BODIES = {
@@ -1116,6 +1157,99 @@ STATISTICS_SOURCE_WEIGHTS = {
     "arXiv": 52,
 }
 
+BUSINESS_MANAGEMENT_FIELD_KEYWORDS = {
+    "战略与组织": ["strategic management", "competitive strategy", "corporate strategy", "organizational theory", "organizational culture", "business strategy"],
+    "组织行为与人力资源": ["organizational behavior", "leadership", "employee behavior", "employee creativity", "employee innovation", "team performance", "organizational justice", "work engagement", "job performance", "human resource management", "talent management", "career mobility", "career advancement", "executive career"],
+    "市场营销": ["marketing strategy", "consumer behavior", "brand management", "digital marketing", "social media marketing", "influencer marketing", "customer engagement", "customer experience", "advertising effectiveness", "platform marketing"],
+    "创新与创业": ["innovation management", "business model innovation", "digital innovation", "entrepreneurship", "entrepreneurial orientation", "startup", "venture creation", "technology management", "research and development management"],
+    "运营与供应链": ["operations management", "supply chain management", "supply chain resilience", "service operations", "inventory management", "production management", "sustainable supply chain"],
+    "数字化与信息系统": ["digital transformation", "artificial intelligence in management", "generative ai", "human ai collaboration", "algorithmic management", "digital platform", "information systems", "technology adoption"],
+    "公司治理与可持续管理": ["corporate governance", "corporate social responsibility", "esg", "sustainable management", "stakeholder management", "board of directors", "executive compensation", "top management team"],
+}
+BUSINESS_MANAGEMENT_TERMS = sorted({term.lower() for values in BUSINESS_MANAGEMENT_FIELD_KEYWORDS.values() for term in values} | {"firm", "company", "business", "organization", "organisation", "corporate", "management", "manager", "employee", "workplace", "consumer", "market", "stakeholder"})
+BUSINESS_MANAGEMENT_ARXIV_QUERY_TERMS = ["strategic management", "organizational behavior", "human resource management", "marketing strategy", "innovation management", "entrepreneurship", "digital transformation", "supply chain management", "corporate governance"]
+BUSINESS_MANAGEMENT_PUBMED_QUERY_TERMS: list[str] = []
+BUSINESS_MANAGEMENT_RSS_FEEDS: list[dict[str, Any]] = []
+
+BUSINESS_MANAGEMENT_CROSSREF_JOURNALS: list[dict[str, Any]] = [
+    {"source": "International Journal of Management Reviews", "issns": ["1460-8545"], "broad": False},
+    {"source": "Academy of Management Annals", "issns": ["1941-6520"], "broad": False},
+    {"source": "Journal of Management", "issns": ["0149-2063"], "broad": False},
+    {"source": "Academy of Management Perspectives", "issns": ["1558-9080"], "broad": False},
+    {"source": "Academy of Management Journal", "issns": ["0001-4273"], "broad": False},
+    {"source": "Academy of Management Review", "issns": ["0363-7425"], "broad": False},
+    {"source": "Journal of Business Research", "issns": ["0148-2963"], "broad": False},
+    {"source": "Strategic Management Journal", "issns": ["0143-2095"], "broad": False},
+    {"source": "Strategic Entrepreneurship Journal", "issns": ["1932-4391"], "broad": False},
+    {"source": "Long Range Planning", "issns": ["0024-6301"], "broad": False},
+    {"source": "Journal of Applied Psychology", "issns": ["0021-9010"], "broad": False},
+    {"source": "Personnel Psychology", "issns": ["0031-5826"], "broad": False},
+    {"source": "Organizational Behavior and Human Decision Processes", "issns": ["0749-5978"], "broad": False},
+    {"source": "Journal of Organizational Behavior", "issns": ["0894-3796"], "broad": False},
+    {"source": "Human Relations", "issns": ["0018-7267"], "broad": False},
+    {"source": "Human Resource Management Review", "issns": ["1053-4822"], "broad": False},
+    {"source": "Annual Review of Organizational Psychology and Organizational Behavior", "issns": ["2327-0608"], "broad": False},
+    {"source": "Journal of Marketing", "issns": ["0022-2429"], "broad": False},
+    {"source": "Journal of Marketing Research", "issns": ["0022-2437"], "broad": False},
+    {"source": "Journal of Consumer Research", "issns": ["0093-5301"], "broad": False},
+    {"source": "Marketing Science", "issns": ["0732-2399"], "broad": False},
+    {"source": "Journal of the Academy of Marketing Science", "issns": ["0092-0703"], "broad": False},
+    {"source": "International Journal of Research in Marketing", "issns": ["0167-8116"], "broad": False},
+    {"source": "Research Policy", "issns": ["0048-7333"], "broad": False},
+    {"source": "Technovation", "issns": ["0166-4972"], "broad": False},
+    {"source": "Journal of Business Venturing", "issns": ["0883-9026"], "broad": False},
+    {"source": "Entrepreneurship Theory and Practice", "issns": ["1042-2587"], "broad": False},
+    {"source": "Journal of Operations Management", "issns": ["0272-6963"], "broad": False},
+    {"source": "Production and Operations Management", "issns": ["1059-1478"], "broad": False},
+    {"source": "Manufacturing & Service Operations Management", "issns": ["1523-4614"], "broad": False},
+    {"source": "Management Science", "issns": ["0025-1909"], "broad": False},
+    {"source": "MIS Quarterly", "issns": ["0276-7783"], "broad": False},
+    {"source": "Information Systems Research", "issns": ["1047-7047"], "broad": False},
+    {"source": "Journal of Management Information Systems", "issns": ["0742-1222"], "broad": False},
+    {"source": "Journal of the Association for Information Systems", "issns": ["1536-9323"], "broad": False},
+    {"source": "Information & Management", "issns": ["0378-7206"], "broad": False},
+]
+
+BUSINESS_MANAGEMENT_SOURCE_WEIGHTS = {
+    "International Journal of Management Reviews": 84,
+    "Academy of Management Annals": 82,
+    "Journal of Management": 80,
+    "Academy of Management Perspectives": 74,
+    "Academy of Management Journal": 78,
+    "Academy of Management Review": 78,
+    "Journal of Business Research": 66,
+    "Strategic Management Journal": 78,
+    "Strategic Entrepreneurship Journal": 74,
+    "Long Range Planning": 72,
+    "Journal of Applied Psychology": 76,
+    "Personnel Psychology": 74,
+    "Organizational Behavior and Human Decision Processes": 74,
+    "Journal of Organizational Behavior": 72,
+    "Human Relations": 70,
+    "Human Resource Management Review": 78,
+    "Annual Review of Organizational Psychology and Organizational Behavior": 78,
+    "Journal of Marketing": 78,
+    "Journal of Marketing Research": 78,
+    "Journal of Consumer Research": 76,
+    "Marketing Science": 76,
+    "Journal of the Academy of Marketing Science": 76,
+    "International Journal of Research in Marketing": 74,
+    "Research Policy": 78,
+    "Technovation": 68,
+    "Journal of Business Venturing": 76,
+    "Entrepreneurship Theory and Practice": 74,
+    "Journal of Operations Management": 78,
+    "Production and Operations Management": 76,
+    "Manufacturing & Service Operations Management": 74,
+    "Management Science": 78,
+    "MIS Quarterly": 78,
+    "Information Systems Research": 76,
+    "Journal of Management Information Systems": 72,
+    "Journal of the Association for Information Systems": 72,
+    "Information & Management": 66,
+    "arXiv": 48,
+}
+
 REPORT_PROFILES: dict[str, dict[str, Any]] = {
     "chemistry": {
         "key": "chemistry",
@@ -1236,6 +1370,42 @@ REPORT_PROFILES: dict[str, dict[str, Any]] = {
         ),
         "email_env": "STAT_REPORT_EMAIL_TO",
         "default_email_to": "",
+    },
+    "business_management": {
+        "key": "business_management",
+        "title": "工商管理科研资讯日报",
+        "failure_title": "工商管理科研资讯日报运行失败报告",
+        "output_prefix": "business_news",
+        "header_label": "BUSINESS NEWS DAILY",
+        "meta_fields": "战略与组织、组织行为与人力资源、市场营销、创新与创业、运营与供应链、数字化与信息系统、公司治理与可持续管理",
+        "field_keywords": BUSINESS_MANAGEMENT_FIELD_KEYWORDS,
+        "relevance_terms": BUSINESS_MANAGEMENT_TERMS,
+        "arxiv_query_terms": BUSINESS_MANAGEMENT_ARXIV_QUERY_TERMS,
+        "pubmed_query_terms": BUSINESS_MANAGEMENT_PUBMED_QUERY_TERMS,
+        "crossref_journals": BUSINESS_MANAGEMENT_CROSSREF_JOURNALS,
+        "rss_feeds": BUSINESS_MANAGEMENT_RSS_FEEDS,
+        "source_weights": BUSINESS_MANAGEMENT_SOURCE_WEIGHTS,
+        "default_field": "综合工商管理",
+        "ai_role": "工商管理领域科研编辑",
+        "ai_task": "生成工商管理科研资讯日报摘要",
+        "title_style": (
+            "工商管理标题采用严谨、保守的学术亮点风格，仅突出公开题名或摘要可核对的研究问题、"
+            "理论、数据、方法、结果或证据边界。优先使用“期刊名：研究对象/管理问题/方法的学术亮点”结构；"
+            "不要使用营销号、悬念、夸张或泛化表达，不添加输入中没有的样本量、理论、显著性、作者、DOI或因果结论。"
+        ),
+        "filter_crossref_items": True,
+        "exclude_terms": ["macroeconomic", "monetary policy", "gdp", "inflation", "exchange rate", "stock price", "stock return", "asset pricing", "portfolio", "investment advice", "water management", "waste management", "disease management", "pain management", "forest management", "energy management", "conference announcement", "call for papers", "book review", "erratum", "correction", "editorial"],
+        "hard_exclude_terms": ["conference announcement", "call for papers", "book review", "erratum", "correction", "editorial"],
+        "management_context_terms": ["firm", "company", "business", "organization", "organisation", "employee", "workplace", "leadership", "team", "manager", "marketing", "consumer", "customer", "operations", "supply chain", "corporate", "governance", "stakeholder", "entrepreneur", "startup", "strategy", "innovation", "digital transformation"],
+        "strong_operations_context_terms": ["operations management", "service operations", "production operations"],
+        "summary_rules": [
+            "工商管理日报 comment 只能根据公开题名和摘要区分研究问题、可确认的理论/数据/方法、核心结果、额外管理启示和限制。",
+            "公开题名或摘要缺少上述任一项时，直接说明信息有限，不得补写或推测。",
+            "不得新增输入中没有的样本量、理论、显著性、作者、DOI或因果结论。",
+        ],
+        "email_env": "BUSINESS_REPORT_EMAIL_TO",
+        "default_email_to": "",
+        "allow_default_email_fallback": False,
     },
 }
 
@@ -1500,6 +1670,21 @@ def infer_profile_key(item: NewsItem, profile: dict[str, Any] | None = None) -> 
     if profile and profile.get("key"):
         return str(profile["key"])
     field_name = item.field_name
+    if any(
+        token in field_name
+        for token in (
+            "工商管理",
+            "战略",
+            "组织行为",
+            "人力资源",
+            "市场营销",
+            "创新与创业",
+            "供应链",
+            "信息系统",
+            "公司治理",
+        )
+    ):
+        return "business_management"
     if any(token in field_name for token in ("统计", "贝叶斯", "因果", "高维", "生统")):
         return "statistics"
     if any(token in field_name for token in ("生物", "分子", "细胞", "免疫", "神经", "基因")):
@@ -1515,6 +1700,7 @@ def field_short_name(field_name: str) -> str:
         "综合化学": "化学问题",
         "综合生物学": "生命机制",
         "综合统计学": "统计问题",
+        "综合工商管理": "工商管理问题",
         "化学生物学": "化学生物",
         "材料化学": "材料体系",
         "物理化学": "物化机制",
@@ -1564,8 +1750,32 @@ def extract_cn_terms(item: NewsItem, profile: dict[str, Any] | None = None, limi
         "Nature",
         "Chemistry",
     }
+    business_function_words = {
+        "how",
+        "what",
+        "why",
+        "when",
+        "where",
+        "who",
+        "which",
+        "does",
+        "do",
+        "did",
+        "can",
+        "could",
+        "would",
+        "should",
+        "is",
+        "are",
+        "was",
+        "were",
+    }
     for token in title_tokens:
         if token in token_blacklist or len(token) > 12:
+            continue
+        if profile_key == "business_management" and (
+            token.lower() in business_function_words or len(token) <= 3
+        ):
             continue
         if profile_key == "biology" and not (token.isupper() or re.search(r"\d", token)):
             continue
@@ -1662,6 +1872,33 @@ def biology_title_has_unsupported_terms(title: str, item: NewsItem) -> bool:
         if cn_term in body and not any(evidence in haystack for evidence in evidence_terms):
             return True
     return False
+
+
+def business_title_has_unsupported_terms(title: str, item: NewsItem) -> bool:
+    body = title_body(title)
+    haystack = f"{item.title} {item.abstract}".lower()
+    evidence_by_term = {
+        "材料": ("material",),
+        "体系": ("system",),
+        "机制": (
+            "mechanism",
+            "mechanisms",
+            "mediation",
+            "mediating",
+            "moderation",
+            "moderating",
+            "process",
+            "processes",
+        ),
+    }
+    return any(
+        cn_term in body
+        and not any(
+            contains_english_term(haystack, evidence)
+            for evidence in evidence_terms
+        )
+        for cn_term, evidence_terms in evidence_by_term.items()
+    )
 
 
 def extract_terms_from_pairs(text: str, pairs: list[tuple[str, str]], limit: int) -> list[str]:
@@ -1781,9 +2018,83 @@ def classify_field(title: str, abstract: str, profile: dict[str, Any]) -> str:
     return max(scores.items(), key=lambda item: item[1])[0]
 
 
-def is_profile_relevant(item: NewsItem, profile: dict[str, Any]) -> bool:
+BUSINESS_MANAGEMENT_TERM_VARIANTS: dict[str, tuple[str, ...]] = {
+    "firm": ("firm", "firms"),
+    "company": ("company", "companies"),
+    "business": ("business", "businesses"),
+    "organization": ("organization", "organizations"),
+    "organisation": ("organisation", "organisations"),
+    "employee": ("employee", "employees"),
+    "workplace": ("workplace", "workplaces"),
+    "team": ("team", "teams"),
+    "manager": ("manager", "managers"),
+    "consumer": ("consumer", "consumers"),
+    "customer": ("customer", "customers"),
+    "operation": ("operation", "operations"),
+    "market": ("market", "markets"),
+    "stakeholder": ("stakeholder", "stakeholders"),
+    "entrepreneur": ("entrepreneur", "entrepreneurs"),
+    "startup": ("startup", "startups"),
+    "material": ("material", "materials"),
+    "system": ("system", "systems"),
+}
+
+
+def contains_english_term(haystack: str, term: str) -> bool:
+    variants = BUSINESS_MANAGEMENT_TERM_VARIANTS.get(term.lower(), (term.lower(),))
+    alternatives = "|".join(
+        re.escape(variant) for variant in sorted(variants, key=len, reverse=True)
+    )
+    pattern = rf"(?<![A-Za-z0-9])(?:{alternatives})(?![A-Za-z0-9])"
+    return re.search(pattern, haystack.lower()) is not None
+
+
+def is_profile_excluded(item: NewsItem, profile: dict[str, Any]) -> bool:
     haystack = f"{item.title} {item.abstract}".lower()
-    return any(term in haystack for term in profile["relevance_terms"])
+    hard_excluded = any(
+        contains_english_term(haystack, term)
+        for term in profile.get("hard_exclude_terms", [])
+    )
+    if hard_excluded:
+        return True
+    excluded = any(
+        contains_english_term(haystack, term)
+        for term in profile.get("exclude_terms", [])
+    )
+    if not excluded:
+        return False
+    context_terms = profile.get("management_context_terms", [])
+    strong_context = any(
+        contains_english_term(haystack, term)
+        for term in context_terms
+        if term != "operations"
+    ) or any(
+        contains_english_term(haystack, term)
+        for term in profile.get("strong_operations_context_terms", [])
+    )
+    return not strong_context
+
+
+def is_profile_relevant(item: NewsItem, profile: dict[str, Any]) -> bool:
+    if is_profile_excluded(item, profile):
+        return False
+    haystack = f"{item.title} {item.abstract}".lower()
+    if profile.get("key") != "business_management":
+        return any(term in haystack for term in profile["relevance_terms"])
+    return any(
+        contains_english_term(haystack, term)
+        for term in profile["relevance_terms"]
+    )
+
+
+def should_include_crossref_item(
+    item: NewsItem, journal: dict[str, Any], profile: dict[str, Any]
+) -> bool:
+    if is_profile_excluded(item, profile):
+        return False
+    if not journal.get("broad") and not profile.get("filter_crossref_items", False):
+        return True
+    return is_profile_relevant(item, profile)
 
 
 def text_from_xml(element: ET.Element | None) -> str:
@@ -2032,7 +2343,7 @@ def fetch_crossref_journal(
                 authors=author_names,
             )
             item.field_name = classify_field(item.title, item.abstract, profile)
-            if not journal.get("broad") or is_profile_relevant(item, profile):
+            if should_include_crossref_item(item, journal, profile):
                 items.append(item)
                 if doi:
                     seen.add(doi.lower())
@@ -2449,6 +2760,14 @@ def source_title_prefix(source: str, profile: dict[str, Any] | None = None) -> s
         return "科研快讯"
     pubmed_match = re.match(r"^PubMed\s*[:：]\s*(.+)$", normalized, flags=re.IGNORECASE)
     pubmed_journal = clean_text(pubmed_match.group(1)) if pubmed_match else ""
+    if profile and profile.get("key") == "business_management":
+        business_source = re.sub(
+            r"\s+via\s+.*$", "", pubmed_journal or normalized, flags=re.IGNORECASE
+        ).strip()
+        for journal in profile.get("crossref_journals", []):
+            journal_name = clean_text(journal.get("source", ""))
+            if journal_name and journal_name.lower() == business_source.lower():
+                return journal_name
     if profile and profile.get("key") == "biology":
         lowered = (pubmed_journal or normalized).lower()
         if lowered == "nature":
@@ -2531,6 +2850,13 @@ def rule_based_chinese_title(item: NewsItem, profile: dict[str, Any], variant_of
                 "{a}方向的新近论文",
                 "{a}分析的推断框架",
             ]
+        elif profile_key == "business_management":
+            templates_one_term = [
+                "{a}方向的管理研究",
+                "{a}研究中的组织与管理线索",
+                "{a}方向的新近论文",
+                "{a}问题的证据边界",
+            ]
         else:
             templates_one_term = [
                 "{a}相关体系的近期进展",
@@ -2561,6 +2887,16 @@ def rule_based_chinese_title(item: NewsItem, profile: dict[str, Any], variant_of
             "{a}算法的{b}评估",
             "{a}数据中的{b}分析",
         ]
+    elif profile_key == "business_management":
+        templates = [
+            "{a}与{b}的管理研究",
+            "{a}情境下的{b}关系研究",
+            "{a}方向的组织与管理线索",
+            "{a}与{b}的实证研究",
+            "{a}问题中的{b}证据",
+            "{a}方向的{b}管理研究",
+            "{a}与{b}的研究边界",
+        ]
     else:
         templates = [
             "{a}相关{b}机制研究",
@@ -2583,6 +2919,10 @@ def fallback_chinese_title(item: NewsItem, profile: dict[str, Any]) -> str:
         and not is_generic_title(existing_title)
         and not is_marketing_title(existing_title)
         and not (profile.get("key") == "biology" and biology_title_has_unsupported_terms(existing_title, item))
+        and not (
+            profile.get("key") == "business_management"
+            and business_title_has_unsupported_terms(existing_title, item)
+        )
         and chinese_char_count(existing_title) <= 46
     ):
         return existing_title
@@ -2635,6 +2975,11 @@ def normalize_attractive_title(title: str, item: NewsItem, profile: dict[str, An
     if is_marketing_title(normalized):
         return rule_based_chinese_title(item, profile)
     if profile.get("key") == "biology" and biology_title_has_unsupported_terms(normalized, item):
+        return rule_based_chinese_title(item, profile)
+    if (
+        profile.get("key") == "business_management"
+        and business_title_has_unsupported_terms(normalized, item)
+    ):
         return rule_based_chinese_title(item, profile)
     if chinese_char_count(normalized) > 46:
         return fallback
@@ -2805,6 +3150,95 @@ def resolve_llm_config(model_override: str = "") -> LLMConfig | None:
     )
 
 
+def ai_title_guidance(
+    profile: dict[str, Any],
+) -> tuple[str, str, str, list[str]]:
+    discipline_name = profile["title"].replace("科研资讯日报", "")
+    if profile.get("key") == "business_management":
+        title_schema_text = (
+            "严谨的工商管理学术亮点中文标题，18-36个中文字符左右，必须以来源/期刊名开头；"
+            "标题主体只突出公开题名或摘要可确认的研究问题、理论、数据、方法、核心结果、管理启示或证据边界；"
+            "缺少证据时使用研究对象与管理问题的保守表述"
+        )
+        attractive_title_prompt_text = (
+            f"请根据论文信息生成一个严谨的{discipline_name}学术亮点标题。要求：1. 必须以期刊/来源名开头。"
+            "2. 只使用题名或摘要明确支持的研究问题、理论、数据、方法、核心结果、管理启示或限制。"
+            "3. 不把相关性写成因果，不补写样本量、显著性、作者、DOI或未出现的理论。"
+            "4. 不使用反问、悬念、夸张、拟人化比喻和营销号句式。"
+        )
+        single_item_prompt_template = (
+            f"请根据以下论文信息生成一个严谨的{discipline_name}学术亮点标题。\n"
+            "要求：\n"
+            "1. 必须保留期刊/来源名作为标题开头。\n"
+            "2. 只突出公开信息可确认的研究问题、理论、数据、方法、核心结果、管理启示或限制。\n"
+            "3. 信息不足时采用研究对象与管理问题的保守表述，不推测机制或因果。\n"
+            "4. 不加入输入中没有的样本量、显著性、作者、DOI或理论。\n\n"
+            "论文信息：\n"
+            "来源：{source}\n"
+            "英文标题：{title}\n"
+            "摘要：{abstract}\n"
+            "领域：{field}\n\n"
+            "输出只给一个标题。"
+        )
+        title_style_rules = [
+            profile.get("title_style", DEFAULT_TITLE_STYLE_GUIDE),
+            "每个 attractive_title 必须是严谨的工商管理学术亮点标题，不要写成公众号导读标题。",
+            "优先把 source_alias 放在标题开头，并突出可核对的研究问题、理论、数据、方法、结果、管理启示或限制。",
+            "机制、因果、理论或实证结论只有在英文题名或摘要明确支持时才能写入。",
+            "禁止使用反问、悬念、夸张、拟人化比喻和营销号句式。",
+            "不能编造输入中没有的样本量、显著性、作者、DOI、理论或因果结论。",
+        ]
+        return (
+            title_schema_text,
+            attractive_title_prompt_text,
+            single_item_prompt_template,
+            title_style_rules,
+        )
+
+    title_schema_text = (
+        "严谨的学术亮点中文标题，18-36个中文字符左右，必须以来源/期刊名开头；"
+        "标题主体应突出可核对的研究对象、方法、机制、模型、数据类型、材料/体系或证据边界；"
+        "不要使用反问句、悬念句、拟人化比喻、营销号语气或“不是……而是……”“一个……让……”句式"
+    )
+    attractive_title_prompt_text = (
+        f"请根据论文信息生成一个严谨的{discipline_name}学术亮点标题。要求：1. 必须以期刊/来源名开头。"
+        "2. 标题主体聚焦题名或摘要中可确认的研究对象、方法、机制、模型、数据类型、材料/体系或证据边界。"
+        "3. 不使用反问、悬念、夸张、拟人化比喻和营销号句式；不使用“谁说”“不是……而是……”“一个……让……”。"
+        "4. 不添加输入中没有的性能数值、应用承诺、团队、作者或因果结论。"
+        "5. 可保留专业缩写、化学式、基因名、蛋白名、模型名和期刊缩写。"
+    )
+    single_item_prompt_template = (
+        f"请根据以下论文信息生成一个严谨的{discipline_name}学术亮点标题。\n"
+        "要求：\n"
+        "1. 必须保留期刊/来源名作为标题开头。\n"
+        "2. 标题突出研究对象、方法、机制、模型、数据类型、材料/体系或证据边界。\n"
+        "3. 不使用“谁说”“不是……而是……”“一个……让……”等营销号句式。\n"
+        "4. 不夸大结论，不制造虚假因果，不加入输入中没有的数值或应用承诺。\n\n"
+        "论文信息：\n"
+        "来源：{source}\n"
+        "英文标题：{title}\n"
+        "摘要：{abstract}\n"
+        "领域：{field}\n\n"
+        "输出只给一个标题。"
+    )
+    title_style_rules = [
+        profile.get("title_style", DEFAULT_TITLE_STYLE_GUIDE),
+        "每个 attractive_title 必须是严谨的学术亮点标题，不要写成公众号导读标题。",
+        "优先把 source_alias 放在标题开头，保留期刊、预印本平台或数据库来源名称。",
+        "标题主体必须体现该条目的独有关键词，例如研究对象、方法、机制、模型、数据类型、材料/体系或证据边界。",
+        "禁止使用“谁说”“不是……而是……”“一个……让……”“藏在……里”“有戏”等悬念式或营销式表达。",
+        "可以保留专业缩写、化学式、基因名、蛋白名、模型名和期刊缩写；不要使用“重磅”“震惊”“颠覆”等夸张词。",
+        "不能编造输入中没有的团队、学校、通讯作者、性能数值、临床结论或应用承诺。",
+        "不要把相关性写成因果；不能夸大临床、产业或应用价值。",
+    ]
+    return (
+        title_schema_text,
+        attractive_title_prompt_text,
+        single_item_prompt_template,
+        title_style_rules,
+    )
+
+
 def generate_ai_summaries(
     items: list[NewsItem],
     model: str,
@@ -2846,49 +3280,19 @@ def generate_ai_summaries(
         f"标题风格要求：{profile.get('title_style', DEFAULT_TITLE_STYLE_GUIDE)}"
         "只输出 JSON，不要输出 Markdown。"
     )
-    discipline_name = profile["title"].replace("科研资讯日报", "")
-    title_schema_text = (
-        "严谨的学术亮点中文标题，18-36个中文字符左右，必须以来源/期刊名开头；"
-        "标题主体应突出可核对的研究对象、方法、机制、模型、数据类型、材料/体系或证据边界；"
-        "不要使用反问句、悬念句、拟人化比喻、营销号语气或“不是……而是……”“一个……让……”句式"
-    )
-    attractive_title_prompt_text = (
-        f"请根据论文信息生成一个严谨的{discipline_name}学术亮点标题。要求：1. 必须以期刊/来源名开头。"
-        "2. 标题主体聚焦题名或摘要中可确认的研究对象、方法、机制、模型、数据类型、材料/体系或证据边界。"
-        "3. 不使用反问、悬念、夸张、拟人化比喻和营销号句式；不使用“谁说”“不是……而是……”“一个……让……”。"
-        "4. 不添加输入中没有的性能数值、应用承诺、团队、作者或因果结论。"
-        "5. 可保留专业缩写、化学式、基因名、蛋白名、模型名和期刊缩写。"
-    )
-    single_item_prompt_template = (
-        f"请根据以下论文信息生成一个严谨的{discipline_name}学术亮点标题。\n"
-        "要求：\n"
-        "1. 必须保留期刊/来源名作为标题开头。\n"
-        "2. 标题突出研究对象、方法、机制、模型、数据类型、材料/体系或证据边界。\n"
-        "3. 不使用“谁说”“不是……而是……”“一个……让……”等营销号句式。\n"
-        "4. 不夸大结论，不制造虚假因果，不加入输入中没有的数值或应用承诺。\n\n"
-        "论文信息：\n"
-        "来源：{source}\n"
-        "英文标题：{title}\n"
-        "摘要：{abstract}\n"
-        "领域：{field}\n\n"
-        "输出只给一个标题。"
-    )
-    title_style_rules = [
-        profile.get("title_style", DEFAULT_TITLE_STYLE_GUIDE),
-        "每个 attractive_title 必须是严谨的学术亮点标题，不要写成公众号导读标题。",
-        "优先把 source_alias 放在标题开头，保留期刊、预印本平台或数据库来源名称。",
-        "标题主体必须体现该条目的独有关键词，例如研究对象、方法、机制、模型、数据类型、材料/体系或证据边界。",
-        "禁止使用“谁说”“不是……而是……”“一个……让……”“藏在……里”“有戏”等悬念式或营销式表达。",
-        "可以保留专业缩写、化学式、基因名、蛋白名、模型名和期刊缩写；不要使用“重磅”“震惊”“颠覆”等夸张词。",
-        "不能编造输入中没有的团队、学校、通讯作者、性能数值、临床结论或应用承诺。",
-        "不要把相关性写成因果；不能夸大临床、产业或应用价值。",
-    ]
+    (
+        title_schema_text,
+        attractive_title_prompt_text,
+        single_item_prompt_template,
+        title_style_rules,
+    ) = ai_title_guidance(profile)
     comment_rules = [
         "comment 必须使用中文表达；可以保留必要英文缩写、化学式和物种名。",
         "不要输出以 ABSTRACT、SUMMARY 开头的英文原文片段。",
         "同批 comment 不要反复使用同一个句式；必须根据每篇题名和摘要写出不同的研究对象或证据边界。",
         "摘要不足时直接说明信息有限，并提示查看原文。",
     ]
+    comment_rules.extend(profile.get("summary_rules", []))
     if profile.get("key") == "biology":
         comment_rules.extend(
             [
@@ -3529,7 +3933,7 @@ def add_hyperlink(paragraph: Any, text: str, url: str) -> None:
 def set_run_font(
     run: Any,
     name: str = "Arial",
-    east_asia: str = "Microsoft YaHei",
+    east_asia: str = CJK_FONT_NAME,
     size: float | None = None,
     color: RGBColor | None = None,
     bold: bool | None = None,
@@ -3730,7 +4134,7 @@ def add_rich_text(
     bold: bool | None = None,
     italic: bool | None = None,
     name: str = "Arial",
-    east_asia: str = "Microsoft YaHei",
+    east_asia: str = CJK_FONT_NAME,
 ) -> list[Any]:
     runs: list[Any] = []
     for value, script in rich_text_segments(clean_text(text)):
@@ -3790,7 +4194,7 @@ def set_document_fonts(document: Document) -> None:
         style.font.name = "Arial"
         style._element.rPr.rFonts.set(qn("w:ascii"), "Arial")  # noqa: SLF001
         style._element.rPr.rFonts.set(qn("w:hAnsi"), "Arial")  # noqa: SLF001
-        style._element.rPr.rFonts.set(qn("w:eastAsia"), "Microsoft YaHei")  # noqa: SLF001
+        style._element.rPr.rFonts.set(qn("w:eastAsia"), CJK_FONT_NAME)  # noqa: SLF001
     normal = styles["Normal"]
     normal.font.size = Pt(9.6)
     normal.font.color.rgb = RGBColor(31, 41, 55)
@@ -4016,12 +4420,25 @@ def create_document(
     add_source_note(document, len(items))
 
     by_id = {item.item_id: item for item in items}
-    top_items = [by_id[item_id] for item_id in report_payload.get("top_ids", []) if item_id in by_id]
+    top_items: list[NewsItem] = []
+    selected_top_ids: set[str] = set()
+    for item_id in report_payload.get("top_ids", []):
+        if item_id not in by_id or item_id in selected_top_ids:
+            continue
+        top_items.append(by_id[item_id])
+        selected_top_ids.add(item_id)
+        if len(top_items) == 5:
+            break
     if len(top_items) < 5:
-        existing = {item.item_id for item in top_items}
-        top_items.extend([item for item in items if item.item_id not in existing][: 5 - len(top_items)])
+        for item in items:
+            if item.item_id in selected_top_ids:
+                continue
+            top_items.append(item)
+            selected_top_ids.add(item.item_id)
+            if len(top_items) == 5:
+                break
 
-    document.add_heading("今日重点 5 条", level=1)
+    document.add_heading(f"今日重点 {len(top_items[:5])} 条", level=1)
     for index, item in enumerate(top_items[:5], start=1):
         add_top_item_block(document, item, index)
 
@@ -4306,15 +4723,18 @@ def send_report_email(
     profile_recipient_value = os.getenv(profile["email_env"], "").strip()
     default_recipient_value = os.getenv("REPORT_EMAIL_TO", "").strip()
     recipient_options: list[tuple[str, list[str]]] = []
-    for label, value in (
-        (profile["email_env"], profile_recipient_value),
-        ("REPORT_EMAIL_TO", default_recipient_value),
-        ("profile default", profile["default_email_to"]),
-    ):
+    recipient_candidates = [(profile["email_env"], profile_recipient_value)]
+    if profile.get("allow_default_email_fallback", True):
+        recipient_candidates.append(("REPORT_EMAIL_TO", default_recipient_value))
+    recipient_candidates.append(("profile default", profile["default_email_to"]))
+    for label, value in recipient_candidates:
         recipients = parse_email_recipients(value)
         if recipients and all(recipients != existing for _, existing in recipient_options):
             recipient_options.append((label, recipients))
 
+    recipient_config_label = profile["email_env"]
+    if profile.get("allow_default_email_fallback", True):
+        recipient_config_label = f"{profile['email_env']} or REPORT_EMAIL_TO"
     missing = [
         name
         for name, value in {
@@ -4322,7 +4742,7 @@ def send_report_email(
             "SMTP_USERNAME": smtp_username,
             "SMTP_PASSWORD": smtp_password,
             "SMTP_FROM or SMTP_USERNAME": smtp_from,
-            f"{profile['email_env']} or REPORT_EMAIL_TO": recipient_options,
+            recipient_config_label: recipient_options,
         }.items()
         if not value
     ]
@@ -4491,7 +4911,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--profile",
         choices=sorted(REPORT_PROFILES),
         default=os.getenv("REPORT_PROFILE", "chemistry"),
-        help="Report profile to run: chemistry, organic_chemistry, biology, or statistics. Default: chemistry.",
+        help="Report profile to run: chemistry, organic_chemistry, biology, statistics, or business_management. Default: chemistry.",
     )
     parser.add_argument(
         "--days",
