@@ -1,13 +1,15 @@
 # 科研资讯日报自动化项目
 
-这个项目会从 arXiv、PubMed、Crossref 期刊元数据和 RSS 源检索近 24 小时到 3 天内的前沿论文/科研资讯，调用 OpenAI 或 DeepSeek 生成中文标题、简短中文摘要和分领域摘要，并输出 Word 文档。化学、有机化学、生物和统计学日报统一使用严谨的学术亮点标题，突出可核对的研究对象、方法、机制、模型或证据边界。当前支持化学、有机化学、生物、统计学四套日报；配置 SMTP 后，本地仍保存 `.docx`，邮件附件会自动转换为 `.pdf`。
+这个项目会从 arXiv、PubMed、Crossref 期刊元数据和 RSS 源检索近 24 小时到 3 天内的前沿论文/科研资讯，调用 OpenAI 或 DeepSeek 生成中文标题、简短中文摘要和分领域摘要，并输出 Word 文档。化学、有机化学、生物、统计学和工商管理日报统一使用严谨的学术亮点标题，突出可核对的研究对象、方法、机制、模型或证据边界。当前支持五套日报；配置 SMTP 后，本地仍保存 `.docx`，邮件附件会自动转换为 `.pdf`。
 
 默认输出：
 
 ```text
 ./output/chem_news_YYYY-MM-DD.docx
+./output/organic_chem_news_YYYY-MM-DD.docx
 ./output/bio_news_YYYY-MM-DD.docx
 ./output/stat_news_YYYY-MM-DD.docx
+./output/business_news_YYYY-MM-DD.docx
 ```
 
 默认输出目录位于项目内，避免定时任务写入 `~/Documents` 或 iCloud 目录时遇到权限问题。仍可通过 `--output-dir` 手动指定其他目录。
@@ -18,8 +20,11 @@
 - 有机化学：Organic Letters、The Journal of Organic Chemistry、JACS、Angewandte Chemie、Nature Chemistry、Chemical Science、ACS Catalysis、arXiv/PubMed 有机合成与药物化学关键词、Chemistry World。
 - 生物：arXiv q-bio、PubMed、Nature、Science、Cell、Nature Biotechnology、Nature Methods、Nature Genetics、Nature Medicine、PLOS Biology、eLife 等。
 - 统计学：arXiv stat/math.ST、PubMed 生物统计关键词、Annals of Statistics、Biometrika、JASA、JRSS B、Statistical Science、Bayesian Analysis、Bernoulli、JMLR 等。
+- 工商管理：arXiv 管理研究关键词，以及 Crossref 中 36 本已核验 ISSN 的英文管理学、组织行为、人力资源、营销、创新创业、运营、信息系统和公司治理期刊。
 
 说明：出版商页面经常有访问限制或反爬策略，因此脚本优先使用 Crossref/RSS/API 等稳定接口。某个来源失败时会记录日志并跳过，不会中断整份日报。
+
+工商管理 Crossref 配置只接入 36 本可验证的英文期刊。中文推荐期刊暂未接入，因为当前公开元数据接口的覆盖和可核验性不足；`International Journal of Operations & Production Management` 也未接入，因为现有 Crossref ISSN 映射错误，可能把无关内容混入日报。
 
 ## 安装
 
@@ -61,7 +66,7 @@ export DEEPSEEK_MODEL="deepseek-v4-flash"
 export NCBI_EMAIL="you@example.com"
 export NCBI_API_KEY="你的 NCBI API Key"
 export CROSSREF_MAILTO="you@example.com"
-export REPORT_PROFILE="chemistry"  # 可选：chemistry、organic_chemistry、biology、statistics
+export REPORT_PROFILE="chemistry"  # 可选：chemistry、organic_chemistry、biology、statistics、business_management
 export CHEM_NEWS_DAYS="3"
 export CHEM_NEWS_MAX_ITEMS="30"
 export SCIENCE_NEWS_MIN_ITEMS="15"
@@ -96,6 +101,7 @@ CHEM_REPORT_EMAIL_TO=chem-reader@example.com
 ORGANIC_REPORT_EMAIL_TO=organic-reader@example.com
 BIO_REPORT_EMAIL_TO=bio-reader@example.com
 STAT_REPORT_EMAIL_TO=stat-reader@example.com
+BUSINESS_REPORT_EMAIL_TO=business-reader@example.com
 SMTP_HOST=smtp.example.com
 SMTP_PORT=465
 SMTP_USERNAME=your_email@example.com
@@ -112,7 +118,8 @@ EMAIL_ENABLED=true
 - `SMTP_PASSWORD` 应使用邮箱服务商提供的 SMTP 授权码/app password，不要使用网页登录密码。
 - `CHEM_REPORT_EMAIL_TO`、`BIO_REPORT_EMAIL_TO`、`STAT_REPORT_EMAIL_TO` 分别控制化学、生物、统计学收件人。
 - `ORGANIC_REPORT_EMAIL_TO` 控制有机化学日报目标收件人。
-- `REPORT_EMAIL_TO` 是通用目标收件人兜底；任一学科的专属收件人为空或被 SMTP 全部拒收时，会尝试回退到 `REPORT_EMAIL_TO`。
+- `BUSINESS_REPORT_EMAIL_TO` 是工商管理日报的专属目标收件人；工商管理不会回退到 `REPORT_EMAIL_TO`，避免把管理类日报误发给通用收件人。
+- `REPORT_EMAIL_TO` 是化学、有机化学、生物和统计学的通用目标收件人兜底；这些学科的专属收件人为空或被 SMTP 全部拒收时，会尝试回退到 `REPORT_EMAIL_TO`。
 - 邮件附件只发送 PDF；本地输出目录仍保留对应 `.docx`。
 - PDF 转换依赖 LibreOffice。macOS 可安装 LibreOffice；如果命令不在 PATH，可设置 `LIBREOFFICE_PATH=/Applications/LibreOffice.app/Contents/MacOS/soffice`。
 - 默认本地运行时，如果 SMTP 未配置、PDF 转换失败，或日报没有完整 AI 总结，脚本只会记录 `Email not sent`，不会影响 Word 生成。
@@ -127,12 +134,13 @@ EMAIL_ENABLED=true
 python main.py
 ```
 
-生成有机化学、生物或统计学日报：
+生成有机化学、生物、统计学或工商管理日报：
 
 ```bash
 python main.py --profile organic_chemistry
 python main.py --profile biology
 python main.py --profile statistics
+python main.py --profile business_management
 ```
 
 只看最近 24 小时：
@@ -153,6 +161,8 @@ python main.py --no-openai --verbose
 python main.py --profile chemistry --output-dir ./output --no-email
 python main.py --profile organic_chemistry --output-dir ./output --no-email
 python main.py --profile biology --output-dir ./output --no-email
+python main.py --profile statistics --output-dir ./output --no-email
+python main.py --profile business_management --output-dir ./output --no-email
 ```
 
 指定输出目录：
@@ -189,7 +199,7 @@ macOS/Linux 可以用 cron，例如每天早上 8 点运行：
 
 ## GitHub Actions 自动运行
 
-项目现在把 GitHub Actions 拆成 9 个独立 workflow，避免“手动测试、私人邮箱、每日自动任务”互相干扰。
+项目现在把 GitHub Actions 拆成 11 个独立 workflow，避免“手动测试、私人邮箱、每日自动任务”互相干扰。
 
 单科目标收件人 workflow：
 
@@ -197,6 +207,7 @@ macOS/Linux 可以用 cron，例如每天早上 8 点运行：
 - `.github/workflows/target-organic-chemistry.yml`：`Organic Chemistry News - Target Email`，发送到 `ORGANIC_REPORT_EMAIL_TO`；为空或拒收时回落到 `REPORT_EMAIL_TO`。
 - `.github/workflows/target-biology.yml`：`Biology News - Target Email`，发送到 `BIO_REPORT_EMAIL_TO`；为空或拒收时回落到 `REPORT_EMAIL_TO`。
 - `.github/workflows/target-statistics.yml`：`Statistics News - Target Email`，发送到 `STAT_REPORT_EMAIL_TO`；为空或拒收时回落到 `REPORT_EMAIL_TO`。
+- `.github/workflows/target-business-management.yml`：`Business Management News - Target Email`，只发送到 `BUSINESS_REPORT_EMAIL_TO`，不回落到 `REPORT_EMAIL_TO`。
 
 单科私人邮箱 workflow：
 
@@ -204,12 +215,13 @@ macOS/Linux 可以用 cron，例如每天早上 8 点运行：
 - `.github/workflows/personal-organic-chemistry.yml`：`Organic Chemistry News - Personal Email`，发送到 `PERSONAL_REPORT_EMAIL_TO`。
 - `.github/workflows/personal-biology.yml`：`Biology News - Personal Email`，发送到 `PERSONAL_REPORT_EMAIL_TO`。
 - `.github/workflows/personal-statistics.yml`：`Statistics News - Personal Email`，发送到 `PERSONAL_REPORT_EMAIL_TO`。
+- `.github/workflows/personal-business-management.yml`：`Business Management News - Personal Email`，把 `PERSONAL_REPORT_EMAIL_TO` 作为工商管理专属收件人。
 
 每日自动 workflow：
 
 - `.github/workflows/cronjob-daily.yml`：`Cronjob Daily Research News`，专门给 cron-job.org 等外部定时器触发。
 - 监听 `repository_dispatch` 的 `event_type=science-news-daily`，也保留 `workflow_dispatch` 便于手动测试。
-- 每次运行固定生成化学、有机化学、生物、统计学四份日报，并分别发送到目标收件人，不使用 `PERSONAL_REPORT_EMAIL_TO`。
+- 每次运行固定生成化学、有机化学、生物、统计学四份日报；仅当 `BUSINESS_REPORT_EMAIL_TO` 非空时追加工商管理日报。未配置该变量不会令既有四科失败，也不会把工商管理日报发给 `REPORT_EMAIL_TO`。
 - `repository_dispatch` 成功后会保存当天 marker，避免外部定时器重复请求导致当天重复发送。
 
 所有发邮件 workflow 都强制使用：
@@ -238,7 +250,8 @@ python main.py --profile <profile> --output-dir ./output --require-email --requi
 - `ORGANIC_REPORT_EMAIL_TO`：有机化学日报目标收件人；为空或 SMTP 全部拒收时回落到 `REPORT_EMAIL_TO`。
 - `BIO_REPORT_EMAIL_TO`：生物日报目标收件人；为空或 SMTP 全部拒收时回落到 `REPORT_EMAIL_TO`。
 - `STAT_REPORT_EMAIL_TO`：统计学日报目标收件人；为空或 SMTP 全部拒收时回落到 `REPORT_EMAIL_TO`。
-- `PERSONAL_REPORT_EMAIL_TO`：私人手动 workflow 专用收件人，供四条 `personal-*` workflow 使用。
+- `BUSINESS_REPORT_EMAIL_TO`：工商管理日报目标收件人；不回落到 `REPORT_EMAIL_TO`。每日 workflow 仅在该 Secret 非空时运行工商管理。
+- `PERSONAL_REPORT_EMAIL_TO`：私人手动 workflow 专用收件人，供五条 `personal-*` workflow 使用。
 - `SMTP_HOST`、`SMTP_PORT`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`SMTP_FROM`、`SMTP_SECURITY`：用于发送 PDF 附件邮件。
 
 workflow 会把 Secrets 注入为环境变量：
@@ -254,6 +267,7 @@ CHEM_REPORT_EMAIL_TO: ${{ secrets.CHEM_REPORT_EMAIL_TO }}
 ORGANIC_REPORT_EMAIL_TO: ${{ secrets.ORGANIC_REPORT_EMAIL_TO }}
 BIO_REPORT_EMAIL_TO: ${{ secrets.BIO_REPORT_EMAIL_TO }}
 STAT_REPORT_EMAIL_TO: ${{ secrets.STAT_REPORT_EMAIL_TO }}
+BUSINESS_REPORT_EMAIL_TO: ${{ secrets.BUSINESS_REPORT_EMAIL_TO }}
 PERSONAL_REPORT_EMAIL_TO: ${{ secrets.PERSONAL_REPORT_EMAIL_TO }}
 SMTP_HOST: ${{ secrets.SMTP_HOST }}
 SMTP_PORT: ${{ secrets.SMTP_PORT }}
@@ -295,7 +309,7 @@ workflow 会安装 LibreOffice Writer 和 Noto CJK 字体，用于把本地保�
 }
 ```
 
-外部定时器不需要传 `profiles`；`Cronjob Daily Research News` 会自动运行化学、有机化学、生物、统计学四份日报并发送四封 PDF 附件邮件。
+外部定时器不需要传 `profiles`；`Cronjob Daily Research News` 会固定运行化学、有机化学、生物、统计学四份日报，并在 `BUSINESS_REPORT_EMAIL_TO` 已配置时追加工商管理日报。
 
 服务器上也可以用 curl 测试：
 
@@ -331,7 +345,7 @@ curl -L -X POST \
 1. 打开对应的 workflow run。
 2. 在页面底部找到 `Artifacts`。
 3. 下载对应 artifact，例如 `chemistry-target-output`、`biology-personal-output` 或 `cronjob-science-news-daily-output`。
-4. 解压后即可看到生成的 `.docx`；如果本次完成了邮件 PDF 转换，也会包含同名 `.pdf`。正常情况会包含 `chem_news_YYYY-MM-DD.docx`、`bio_news_YYYY-MM-DD.docx`、`stat_news_YYYY-MM-DD.docx`；抓取为 0 条时会生成对应失败报告。
+4. 解压后即可看到生成的 `.docx`；如果本次完成了邮件 PDF 转换，也会包含同名 `.pdf`。正常情况会包含对应学科的 `chem_news_YYYY-MM-DD.docx`、`organic_chem_news_YYYY-MM-DD.docx`、`bio_news_YYYY-MM-DD.docx`、`stat_news_YYYY-MM-DD.docx` 或 `business_news_YYYY-MM-DD.docx`；抓取为 0 条时会生成对应失败报告，例如 `business_news_运行失败报告.docx`。
 
 GitHub Actions 只调用公开 API/RSS/元数据接口和你配置的模型 API，不会自动登录学校账号，也不会下载受版权保护的 PDF。
 
@@ -339,9 +353,9 @@ GitHub Actions 只调用公开 API/RSS/元数据接口和你配置的模型 API�
 
 Word 文档包含：
 
-- 标题：化学科研资讯日报
+- 对应学科的日报标题
 - 日期
-- 今日重点 5 条
+- 今日重点（最多 5 条，按实际收录数量显示）
 - 分领域摘要
 - 每条资讯的中文标题、原始英文标题、来源、发布日期、DOI/链接、简短中文摘要和原文摘要
 

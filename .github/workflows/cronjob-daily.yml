@@ -35,6 +35,7 @@ jobs:
       ORGANIC_REPORT_EMAIL_TO: ${{ secrets.ORGANIC_REPORT_EMAIL_TO }}
       BIO_REPORT_EMAIL_TO: ${{ secrets.BIO_REPORT_EMAIL_TO }}
       STAT_REPORT_EMAIL_TO: ${{ secrets.STAT_REPORT_EMAIL_TO }}
+      BUSINESS_REPORT_EMAIL_TO: ${{ secrets.BUSINESS_REPORT_EMAIL_TO }}
       SMTP_HOST: ${{ secrets.SMTP_HOST }}
       SMTP_PORT: ${{ secrets.SMTP_PORT }}
       SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
@@ -159,7 +160,13 @@ jobs:
           report_date="${{ steps.report_date.outputs.today }}"
           status_file="./output/cronjob_status_${report_date}.tsv"
           printf "profile\tstatus\texit_code\tstarted_at\tended_at\tlog_file\n" > "$status_file"
-          for profile in chemistry organic_chemistry biology statistics; do
+          profiles=(chemistry organic_chemistry biology statistics)
+          if [ -n "${BUSINESS_REPORT_EMAIL_TO:-}" ]; then
+            profiles+=(business_management)
+          else
+            echo "BUSINESS_REPORT_EMAIL_TO is not configured; skipping business_management."
+          fi
+          for profile in "${profiles[@]}"; do
             started_at="$(TZ=Asia/Shanghai date '+%F %T %Z')"
             log_file="./output/logs/${profile}_${report_date}.log"
             echo "::group::Generate ${profile} target report"
