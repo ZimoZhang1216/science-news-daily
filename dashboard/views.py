@@ -372,10 +372,16 @@ def _profile_form(repository: PersonalizationRepository) -> None:
     except ValueError as exc:
         st.error(_validation_message(exc))
         return
+    except Exception:
+        st.error("保存到 Turso 暂时失败，未生成预览。请检查网络后重试。")
+        return
 
     settings = _dispatch_settings_or_none()
     if settings is None:
-        completion = ("warning", "已保存画像并创建预览任务；尚未配置 GitHub 触发条件，因此不会发送邮件。")
+        completion = (
+            "warning",
+            "画像和预览任务已写入 Turso；尚未配置 GitHub 触发条件，因此不会发送邮件。",
+        )
     else:
         try:
             dispatch_command(settings, "preview", preview.delivery_id)
@@ -477,7 +483,10 @@ def _edit_profile_form(repository: PersonalizationRepository, user_id: str, disp
         except ValueError as exc:
             st.error(_validation_message(exc))
             return
-        st.success(f"科研画像已保存为版本 {version}。")
+        except Exception:
+            st.error("保存到 Turso 暂时失败，请检查网络后重试。")
+            return
+        st.success(f"科研画像已保存为版本 {version}，云端计划已更新。")
 
 
 def render_users(repository: PersonalizationRepository | None) -> None:
@@ -501,8 +510,12 @@ def render_users(repository: PersonalizationRepository | None) -> None:
         )
         action = "恢复启用" if user.status != "active" else "暂停"
         if right.button(action, key=f"status-{user.id}"):
-            repository.set_user_status(user.id, "active" if action == "恢复启用" else "paused")
-            st.rerun()
+            try:
+                repository.set_user_status(user.id, "active" if action == "恢复启用" else "paused")
+            except Exception:
+                st.error("更新用户状态失败，请检查网络后重试。")
+            else:
+                st.rerun()
     selected_user = st.selectbox(
         "选择要编辑的用户", users, format_func=lambda user: user.display_name
     )
@@ -521,9 +534,13 @@ def render_reports(repository: PersonalizationRepository | None) -> None:
         selected = st.selectbox("用户", users, format_func=lambda user: user.display_name)
         report_date = st.date_input("日报日期", value=date.today())
         if st.button("生成手动预览", type="primary"):
-            delivery = repository.create_manual_preview(selected.id, report_date)
+            try:
+                delivery = repository.create_manual_preview(selected.id, report_date)
+            except Exception:
+                st.error("创建预览任务失败，请检查网络后重试。")
+                return
             if settings is None:
-                st.warning("预览任务已进入队列，但尚未在“设置”中配置 GitHub 触发条件。")
+                st.warning("预览任务已写入 Turso，但尚未在“设置”中配置 GitHub 触发条件。")
             else:
                 try:
                     dispatch_command(settings, "preview", delivery.delivery_id)
@@ -556,13 +573,16 @@ def render_reports(repository: PersonalizationRepository | None) -> None:
                     )
                 except ValueError:
                     st.warning("这个预览已不再处于可确认状态。")
+                except Exception:
+                    st.error("启用固定频率计划失败，请检查网络后重试。")
                 else:
                     if schedule.next_run_at is None:
-                        st.success("固定频率计划已启用。")
+                        st.success("固定频率计划已启用；面板状态将在下次同步后刷新。")
                     else:
                         st.success(
                             "固定频率计划已启用；下一次自动发送日报："
                             f"{_format_local_next_run(schedule.next_run_at, schedule.timezone)}。"
+                            "面板状态将在下次同步后刷新。"
                         )
         if delivery["status"] == "retryable_failed" and delivery["mode"] == "manual":
             if st.button("重新执行", key=f"retry-{delivery['id']}"):

@@ -5,10 +5,12 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest import mock
 from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
 
+import dashboard.app as dashboard_app
 from personalization.models import ResearchProfileInput, ScheduleInput, UserInput
 from personalization.repository import PersonalizationRepository
 
@@ -81,6 +83,178 @@ class DashboardSmokeTests(unittest.TestCase):
             sys.path[:] = original_path
 
         self.assertIn("PAGE_RENDERERS", module_globals)
+
+    def test_cached_local_repository_initializes_only_once_per_database_path(self) -> None:
+        repository = unittest.mock.Mock()
+        dashboard_app._open_repository.clear()
+        try:
+            with unittest.mock.patch.object(
+                PersonalizationRepository, "for_sqlite", return_value=repository
+            ) as open_sqlite:
+                first = dashboard_app._open_repository("local", str(self.database_path), "")
+                second = dashboard_app._open_repository("local", str(self.database_path), "")
+        finally:
+            dashboard_app._open_repository.clear()
+
+        self.assertIs(first, second)
+        open_sqlite.assert_called_once_with(self.database_path)
+        repository.initialize.assert_called_once_with()
+
+    def test_new_replica_does_not_contact_turso_until_manual_sync(self) -> None:
+        replica_path = Path(self.tempdir.name) / "replica.db"
+        repository = unittest.mock.Mock()
+        dashboard_app._open_repository.clear()
+        try:
+            with unittest.mock.patch.object(
+                PersonalizationRepository, "for_local_replica", return_value=repository
+            ):
+                opened = dashboard_app._open_repository(
+                    "replica", str(replica_path), "libsql://dashboard.example"
+                )
+        finally:
+            dashboard_app._open_repository.clear()
+
+        self.assertIs(opened, repository)
+        repository.initialize.assert_not_called()
+        repository.sync.assert_not_called()
+
+    def test_replica_mode_exposes_a_manual_sync_button(self) -> None:
+        replica_path = Path(self.tempdir.name) / "replica.db"
+        repository = mock.Mock()
+        repository.is_local_replica = True
+        repository.is_local_data_ready = True
+        repository.last_sync_at = None
+        repository.last_sync_error = None
+        repository.operations_snapshot.return_value = {
+            "total_users": 0,
+            "pending": 0,
+            "sent": 0,
+            "retryable_failed": 0,
+        }
+        repository.list_recent_events.return_value = []
+        repository.list_users.return_value = []
+        dashboard_app._open_repository.clear()
+        try:
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "PERSONAL_ADMIN_LOCAL_DB": "",
+                        "PERSONAL_ADMIN_REPLICA_PATH": str(replica_path),
+                        "TURSO_DATABASE_URL": "libsql://dashboard.example",
+                        "TURSO_AUTH_TOKEN": "test-token",
+                    },
+                    clear=False,
+                ),
+                patch.object(
+                    PersonalizationRepository, "for_local_replica", return_value=repository
+                ),
+            ):
+                app = AppTest.from_file(
+                    str(Path(__file__).resolve().parents[1] / "dashboard/app.py")
+                )
+                app.run()
+        finally:
+            dashboard_app._open_repository.clear()
+
+        self.assertIn("同步当前状态", [element.label for element in app.button])
+
+    def test_manual_sync_button_calls_sync_only_after_the_user_clicks(self) -> None:
+        replica_path = Path(self.tempdir.name) / "replica.db"
+        repository = mock.Mock()
+        repository.is_local_replica = True
+        repository.is_local_data_ready = True
+        repository.last_sync_at = None
+        repository.last_sync_error = None
+        repository.operations_snapshot.return_value = {
+            "total_users": 0,
+            "pending": 0,
+            "sent": 0,
+            "retryable_failed": 0,
+        }
+        repository.list_recent_events.return_value = []
+        repository.list_users.return_value = []
+        dashboard_app._open_repository.clear()
+        try:
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "PERSONAL_ADMIN_LOCAL_DB": "",
+                        "PERSONAL_ADMIN_REPLICA_PATH": str(replica_path),
+                        "TURSO_DATABASE_URL": "libsql://dashboard.example",
+                        "TURSO_AUTH_TOKEN": "test-token",
+                    },
+                    clear=False,
+                ),
+                patch.object(
+                    PersonalizationRepository, "for_local_replica", return_value=repository
+                ),
+            ):
+                app = AppTest.from_file(
+                    str(Path(__file__).resolve().parents[1] / "dashboard/app.py")
+                )
+                app.run()
+                sync_button = next(button for button in app.button if button.label == "同步当前状态")
+                sync_button.click().run()
+        finally:
+            dashboard_app._open_repository.clear()
+
+        repository.sync.assert_called_once_with()
+        self.assertIn("已同步当前状态", " ".join(element.value for element in app.success))
+
+    def test_replica_without_a_completed_sync_shows_a_retryable_empty_state(self) -> None:
+        replica_path = Path(self.tempdir.name) / "replica.db"
+        repository = mock.Mock()
+        repository.is_local_replica = True
+        repository.is_local_data_ready = False
+        repository.last_sync_at = None
+        repository.last_sync_error = None
+        dashboard_app._open_repository.clear()
+        try:
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "PERSONAL_ADMIN_LOCAL_DB": "",
+                        "PERSONAL_ADMIN_REPLICA_PATH": str(replica_path),
+                        "TURSO_DATABASE_URL": "libsql://dashboard.example",
+                        "TURSO_AUTH_TOKEN": "test-token",
+                    },
+                    clear=False,
+                ),
+                patch.object(
+                    PersonalizationRepository, "for_local_replica", return_value=repository
+                ),
+            ):
+                app = AppTest.from_file(
+                    str(Path(__file__).resolve().parents[1] / "dashboard/app.py")
+                )
+                app.run()
+        finally:
+            dashboard_app._open_repository.clear()
+
+        rendered = " ".join(element.value for element in app.info)
+        self.assertIn("本地副本尚未准备好", rendered)
+
+    def test_replica_copy_does_not_claim_that_cloud_writes_are_pending_uploads(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        content = "\n".join(
+            (root / path).read_text(encoding="utf-8")
+            for path in ("README.md", "dashboard/app.py", "dashboard/views.py")
+        )
+
+        self.assertNotIn("本地修改尚未同步", content)
+        self.assertNotIn("已保存在本地", content)
+        self.assertIn("写入会直接提交到 Turso 云端主库", content)
+
+    def test_secondary_buttons_keep_high_contrast_text(self) -> None:
+        stylesheet = (Path(__file__).resolve().parents[1] / "dashboard/style.css").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('.stButton > button:not([kind="primary"])', stylesheet)
+        self.assertIn("color: var(--ink) !important;", stylesheet)
 
     def test_missing_database_configuration_is_explained_without_secret_values(self) -> None:
         with patch.dict(os.environ, {}, clear=True):

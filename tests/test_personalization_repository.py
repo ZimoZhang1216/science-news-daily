@@ -2,6 +2,7 @@ import importlib.util
 import os
 import sys
 import tempfile
+import threading
 import types
 import unittest
 from unittest import mock
@@ -234,6 +235,156 @@ class PersonalizationRepositoryTests(unittest.TestCase):
                 pass
 
         self.assertEqual(calls, ["BEGIN", "commit"])
+
+    def test_local_replica_connection_uses_local_path_and_manual_sync(self) -> None:
+        calls: list[tuple[object, ...] | str] = []
+
+        class FakeReplicaConnection:
+            def sync(self) -> None:
+                calls.append("sync")
+
+        connection = FakeReplicaConnection()
+        module = types.SimpleNamespace(
+            connect=lambda **kwargs: (
+                calls.append(("connect", kwargs)),
+                connection,
+            )[-1]
+        )
+
+        with mock.patch.dict(sys.modules, {"libsql": module}):
+            repository = PersonalizationRepository.for_local_replica(
+                Path("/tmp/dashboard-replica.db"),
+                "libsql://dashboard.example",
+                "test-token",
+            )
+            self.assertTrue(repository.is_local_replica)
+            self.assertTrue(repository.sync())
+
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "connect",
+                    {
+                        "database": "/tmp/dashboard-replica.db",
+                        "sync_url": "libsql://dashboard.example",
+                        "auth_token": "test-token",
+                        "_check_same_thread": False,
+                    },
+                ),
+                "sync",
+            ],
+        )
+
+    def test_replica_becomes_readable_only_after_a_successful_sync_brings_the_schema(self) -> None:
+        class FakeCursor:
+            def __init__(self, row: tuple[int] | None) -> None:
+                self.row = row
+
+            def fetchone(self) -> tuple[int] | None:
+                return self.row
+
+        class FakeReplicaConnection:
+            def __init__(self) -> None:
+                self.synced = False
+
+            def execute(self, statement: str, parameters=()) -> FakeCursor:
+                del statement, parameters
+                return FakeCursor((1,) if self.synced else None)
+
+            def sync(self) -> None:
+                self.synced = True
+
+        connection = FakeReplicaConnection()
+        module = types.SimpleNamespace(connect=lambda **kwargs: connection)
+
+        with mock.patch.dict(sys.modules, {"libsql": module}):
+            repository = PersonalizationRepository.for_local_replica(
+                Path("/tmp/dashboard-replica.db"),
+                "libsql://dashboard.example",
+                "test-token",
+            )
+            self.assertFalse(repository.is_local_data_ready)
+
+            repository.sync()
+
+        self.assertTrue(repository.is_local_data_ready)
+
+    def test_manual_sync_bootstraps_the_existing_schema_for_an_empty_primary(self) -> None:
+        class FakeCursor:
+            def __init__(self, row: tuple[int] | None = None) -> None:
+                self.row = row
+
+            def fetchone(self) -> tuple[int] | None:
+                return self.row
+
+        class FakeReplicaConnection:
+            def __init__(self) -> None:
+                self.has_schema = False
+                self.statements: list[str] = []
+                self.sync_calls = 0
+
+            def execute(self, statement: str, parameters=()) -> FakeCursor:
+                del parameters
+                if "sqlite_master" in statement:
+                    return FakeCursor((1,) if self.has_schema else None)
+                self.statements.append(statement)
+                if "CREATE TABLE IF NOT EXISTS users" in statement:
+                    self.has_schema = True
+                return FakeCursor()
+
+            def commit(self) -> None:
+                pass
+
+            def sync(self) -> None:
+                self.sync_calls += 1
+
+        connection = FakeReplicaConnection()
+        module = types.SimpleNamespace(connect=lambda **kwargs: connection)
+
+        with mock.patch.dict(sys.modules, {"libsql": module}):
+            repository = PersonalizationRepository.for_local_replica(
+                Path("/tmp/dashboard-replica.db"),
+                "libsql://dashboard.example",
+                "test-token",
+            )
+            repository.sync()
+
+        self.assertTrue(repository.is_local_data_ready)
+        self.assertGreaterEqual(connection.sync_calls, 2)
+        self.assertTrue(any("CREATE TABLE IF NOT EXISTS users" in sql for sql in connection.statements))
+
+    def test_plain_sqlite_repository_has_no_remote_sync(self) -> None:
+        self.assertFalse(self.repository.is_local_replica)
+        self.assertFalse(self.repository.sync())
+
+    def test_sqlite_repository_is_usable_from_a_later_streamlit_rerun_thread(self) -> None:
+        errors: list[Exception] = []
+
+        def read_snapshot() -> None:
+            try:
+                self.repository.operations_snapshot()
+            except Exception as exc:  # pragma: no cover - assertion below records the error.
+                errors.append(exc)
+
+        rerun_thread = threading.Thread(target=read_snapshot)
+        rerun_thread.start()
+        rerun_thread.join()
+
+        self.assertEqual(errors, [])
+
+    def test_replica_sync_records_a_non_sensitive_failure_state(self) -> None:
+        class FailingReplicaConnection:
+            def sync(self) -> None:
+                raise ConnectionError("token=must-not-appear")
+
+        repository = PersonalizationRepository(FailingReplicaConnection(), is_local_replica=True)
+
+        with self.assertRaises(ConnectionError):
+            repository.sync()
+
+        self.assertIsNone(repository.last_sync_at)
+        self.assertEqual(repository.last_sync_error, "ConnectionError")
 
     def test_manual_retry_command_rejects_an_automatic_delivery(self) -> None:
         user_id = self.repository.create_user_with_profile(

@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from threading import RLock
 from typing import Any, Iterator, Literal, Sequence
 from zoneinfo import ZoneInfo
 
@@ -147,15 +148,39 @@ class ScheduleRecord:
 class PersonalizationRepository:
     """A small repository that works with sqlite3 and the libsql DB-API surface."""
 
-    def __init__(self, connection: Any) -> None:
+    def __init__(self, connection: Any, *, is_local_replica: bool = False) -> None:
         self.connection = connection
+        self.is_local_replica = is_local_replica
+        self.is_local_data_ready = not is_local_replica
+        self._local_schema_known_missing = False
+        self.last_sync_at: datetime | None = None
+        self.last_sync_error: str | None = None
+        self._connection_lock = RLock()
 
     @classmethod
     def for_sqlite(cls, path: Path) -> "PersonalizationRepository":
-        connection = sqlite3.connect(path)
+        connection = sqlite3.connect(path, check_same_thread=False)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         return cls(connection)
+
+    @classmethod
+    def for_local_replica(
+        cls, path: Path, sync_url: str, auth_token: str
+    ) -> "PersonalizationRepository":
+        """Open a local libsql replica that is refreshed only by ``sync`` calls."""
+
+        import libsql
+
+        connection = libsql.connect(
+            database=str(path),
+            sync_url=sync_url,
+            auth_token=auth_token,
+            _check_same_thread=False,
+        )
+        repository = cls(connection, is_local_replica=True)
+        repository._refresh_local_data_ready()
+        return repository
 
     @classmethod
     def from_environment(cls) -> "PersonalizationRepository":
@@ -169,31 +194,77 @@ class PersonalizationRepository:
 
     def initialize(self) -> None:
         schema = (Path(__file__).with_name("schema.sql")).read_text(encoding="utf-8")
-        if isinstance(self.connection, sqlite3.Connection):
-            self.connection.executescript(schema)
+        with self._connection_lock:
+            if isinstance(self.connection, sqlite3.Connection):
+                self.connection.executescript(schema)
+                self.connection.commit()
+                return
+            for statement in schema.split(";"):
+                if statement.strip() and not statement.lstrip().upper().startswith("PRAGMA"):
+                    self.connection.execute(statement)
             self.connection.commit()
-            return
-        for statement in schema.split(";"):
-            if statement.strip() and not statement.lstrip().upper().startswith("PRAGMA"):
-                self.connection.execute(statement)
-        self.connection.commit()
+            self.is_local_data_ready = True
 
     def close(self) -> None:
-        self.connection.close()
+        with self._connection_lock:
+            self.connection.close()
+
+    def _refresh_local_data_ready(self) -> bool:
+        """Report whether the local replica has the existing application schema."""
+
+        if not self.is_local_replica:
+            self.is_local_data_ready = True
+            return True
+        with self._connection_lock:
+            try:
+                cursor = self.connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'users'"
+                )
+                self.is_local_data_ready = cursor.fetchone() is not None
+                self._local_schema_known_missing = not self.is_local_data_ready
+            except Exception:
+                self.is_local_data_ready = False
+                self._local_schema_known_missing = False
+        return self.is_local_data_ready
+
+    def sync(self) -> bool:
+        """Pull current Turso primary data into an embedded local read replica."""
+
+        if not self.is_local_replica:
+            return False
+        with self._connection_lock:
+            try:
+                self.connection.sync()
+            except Exception as exc:
+                self.last_sync_error = type(exc).__name__
+                raise
+            self._refresh_local_data_ready()
+            if self._local_schema_known_missing:
+                # The production runner normally creates this schema before the dashboard opens.
+                # Keep an empty first deployment recoverable after the administrator explicitly
+                # requests sync, without issuing DDL during normal page navigation.
+                self.initialize()
+                self.connection.sync()
+                self._refresh_local_data_ready()
+            self.last_sync_at = _utc_now()
+            self.last_sync_error = None
+        return True
 
     @contextmanager
     def _transaction(self) -> Iterator[None]:
-        try:
-            begin_statement = "BEGIN IMMEDIATE" if isinstance(self.connection, sqlite3.Connection) else "BEGIN"
-            self.connection.execute(begin_statement)
-            yield
-            self.connection.commit()
-        except Exception:
-            self.connection.rollback()
-            raise
+        with self._connection_lock:
+            try:
+                begin_statement = "BEGIN IMMEDIATE" if isinstance(self.connection, sqlite3.Connection) else "BEGIN"
+                self.connection.execute(begin_statement)
+                yield
+                self.connection.commit()
+            except Exception:
+                self.connection.rollback()
+                raise
 
     def _execute(self, statement: str, parameters: Sequence[Any] = ()) -> Any:
-        return self.connection.execute(statement, tuple(parameters))
+        with self._connection_lock:
+            return self.connection.execute(statement, tuple(parameters))
 
     @staticmethod
     def _normalise_row(cursor: Any, row: Any | None) -> Any | None:
@@ -208,12 +279,14 @@ class PersonalizationRepository:
         }
 
     def _fetchone(self, statement: str, parameters: Sequence[Any] = ()) -> Any | None:
-        cursor = self._execute(statement, parameters)
-        return self._normalise_row(cursor, cursor.fetchone())
+        with self._connection_lock:
+            cursor = self.connection.execute(statement, tuple(parameters))
+            return self._normalise_row(cursor, cursor.fetchone())
 
     def _fetchall(self, statement: str, parameters: Sequence[Any] = ()) -> list[Any]:
-        cursor = self._execute(statement, parameters)
-        return [self._normalise_row(cursor, row) for row in cursor.fetchall()]
+        with self._connection_lock:
+            cursor = self.connection.execute(statement, tuple(parameters))
+            return [self._normalise_row(cursor, row) for row in cursor.fetchall()]
 
     @staticmethod
     def _value(row: Any, key: str) -> Any:
