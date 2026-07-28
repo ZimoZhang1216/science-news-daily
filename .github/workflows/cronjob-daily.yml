@@ -241,3 +241,94 @@ jobs:
           fi
           echo "main.py exited with code ${code}"
           exit "$code"
+
+  user-scheduler:
+    name: Run due personalised research dailies
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    env:
+      EMAIL_ENABLED: "true"
+      TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+      TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+      LLM_PROVIDER: ${{ secrets.LLM_PROVIDER }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      DEEPSEEK_MODEL: ${{ secrets.DEEPSEEK_MODEL }}
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      SMTP_FROM: ${{ secrets.SMTP_FROM }}
+      SMTP_SECURITY: ${{ secrets.SMTP_SECURITY }}
+      MAX_JOBS_PER_RUN: ${{ vars.MAX_JOBS_PER_RUN || '10' }}
+      MAX_RUNTIME_MINUTES: ${{ vars.MAX_RUNTIME_MINUTES || '80' }}
+      CUSTOM_DELIVERY_LEASE_MINUTES: ${{ vars.CUSTOM_DELIVERY_LEASE_MINUTES || '120' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install PDF export dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libreoffice-writer fonts-noto-cjk
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run bounded user scheduler
+        id: scheduler
+        shell: bash
+        env:
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          mkdir -p ./output/logs
+          if [ -z "${TURSO_DATABASE_URL:-}" ] || [ -z "${TURSO_AUTH_TOKEN:-}" ]; then
+            echo "User scheduler skipped: database credentials not configured." | tee ./output/logs/user_scheduler.log
+            status=0
+            summary='scheduler_summary={"discovered":0,"claimed":0,"sent":0,"skipped":1,"failed":0,"waiting_retry":0,"recovered":0,"has_more_due":false}'
+          else
+            set +e
+            python custom_user_daily.py scan 2>&1 | tee ./output/logs/user_scheduler.log
+            status=${PIPESTATUS[0]}
+            summary="$(grep '^scheduler_summary=' ./output/logs/user_scheduler.log | tail -n 1 || true)"
+            if [ -z "$summary" ]; then
+              summary='scheduler_summary={"discovered":0,"claimed":0,"sent":0,"skipped":0,"failed":1,"waiting_retry":0,"recovered":0,"has_more_due":false}'
+            fi
+          fi
+          echo "$summary"
+          echo "summary=${summary#scheduler_summary=}" >> "$GITHUB_OUTPUT"
+          echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Write scheduler summary
+        if: always()
+        run: |
+          echo "## Personalised scheduler" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          echo '${{ steps.scheduler.outputs.summary }}' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload user scheduler artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cronjob-user-scheduler-output
+          path: |
+            ./output/custom/
+            ./output/logs/user_scheduler.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Fail workflow when user scheduler failed
+        if: always() && steps.scheduler.outputs.exit_code != '0'
+        run: |
+          echo "User scheduler exited with code ${{ steps.scheduler.outputs.exit_code }}"
+          exit "${{ steps.scheduler.outputs.exit_code }}"

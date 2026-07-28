@@ -96,6 +96,9 @@ class DeliveryClaim:
     status: str
     attempt_count: int
     created: bool
+    schedule_id: str = ""
+    schedule_period_key: str = ""
+    execution_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -111,6 +114,16 @@ class DeliveryRecord:
     artifact_name: str
     artifact_run_id: str
     last_error: str
+    schedule_id: str
+    schedule_period_key: str
+    locked_at: str
+    locked_by: str
+    execution_id: str
+    last_attempt_at: str
+    next_retry_at: str
+    error_stage: str
+    email_prepared_at: str
+    email_sending_at: str
 
 
 @dataclass(frozen=True)
@@ -184,6 +197,9 @@ class PersonalizationRepository:
 
     @classmethod
     def from_environment(cls) -> "PersonalizationRepository":
+        local_database = os.environ.get("PERSONAL_ADMIN_LOCAL_DB", "").strip()
+        if local_database:
+            return cls.for_sqlite(Path(local_database).expanduser())
         url = os.environ.get("TURSO_DATABASE_URL", "").strip()
         token = os.environ.get("TURSO_AUTH_TOKEN", "").strip()
         if not url or not token:
@@ -197,13 +213,80 @@ class PersonalizationRepository:
         with self._connection_lock:
             if isinstance(self.connection, sqlite3.Connection):
                 self.connection.executescript(schema)
+                self._migrate_scheduler_schema()
                 self.connection.commit()
                 return
             for statement in schema.split(";"):
                 if statement.strip() and not statement.lstrip().upper().startswith("PRAGMA"):
                     self.connection.execute(statement)
+            self._migrate_scheduler_schema()
             self.connection.commit()
             self.is_local_data_ready = True
+
+    def _table_columns(self, table_name: str) -> set[str]:
+        cursor = self.connection.execute(f"PRAGMA table_info({table_name})")
+        fetchall = getattr(cursor, "fetchall", None)
+        if fetchall is None:
+            # Minimal DB-API doubles used by the replica bootstrap path do not expose
+            # metadata rows. The following ALTER statements are harmless no-ops there.
+            return set()
+        rows = [self._normalise_row(cursor, row) for row in fetchall()]
+        return {str(self._value(row, "name")) for row in rows}
+
+    def _add_column_if_missing(self, table_name: str, column_name: str, definition: str) -> None:
+        if column_name not in self._table_columns(table_name):
+            try:
+                self.connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
+            except Exception as exc:  # noqa: BLE001 - another scheduler may have completed the same migration.
+                message = str(exc).lower()
+                if "duplicate column" not in message and "already exists" not in message:
+                    raise
+
+    def _migrate_scheduler_schema(self) -> None:
+        """Add scheduler columns without invalidating existing SQLite or Turso data."""
+
+        self.connection.execute(
+            "CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        for column_name, definition in (
+            ("last_run_at", "TEXT NOT NULL DEFAULT ''"),
+        ):
+            self._add_column_if_missing("schedules", column_name, definition)
+        for column_name, definition in (
+            ("schedule_id", "TEXT NOT NULL DEFAULT ''"),
+            ("schedule_period_key", "TEXT NOT NULL DEFAULT ''"),
+            ("locked_at", "TEXT NOT NULL DEFAULT ''"),
+            ("locked_by", "TEXT NOT NULL DEFAULT ''"),
+            ("execution_id", "TEXT NOT NULL DEFAULT ''"),
+            ("last_attempt_at", "TEXT NOT NULL DEFAULT ''"),
+            ("next_retry_at", "TEXT NOT NULL DEFAULT ''"),
+            ("error_stage", "TEXT NOT NULL DEFAULT ''"),
+            ("email_prepared_at", "TEXT NOT NULL DEFAULT ''"),
+            ("email_sending_at", "TEXT NOT NULL DEFAULT ''"),
+        ):
+            self._add_column_if_missing("deliveries", column_name, definition)
+        self.connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_deliveries_retry ON deliveries(mode, status, next_retry_at)"
+        )
+        self.connection.execute(
+            """
+            UPDATE deliveries
+            SET schedule_id = (
+                SELECT schedules.id FROM schedules WHERE schedules.user_id = deliveries.user_id
+            )
+            WHERE mode = 'automatic' AND schedule_id = ''
+            """
+        )
+        self.connection.execute(
+            """
+            UPDATE deliveries SET schedule_period_key = 'legacy:' || id
+            WHERE mode = 'automatic' AND schedule_period_key = ''
+            """
+        )
+        self.connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+            ("delivery_scheduler_v1", _timestamp()),
+        )
 
     def close(self) -> None:
         with self._connection_lock:
@@ -535,17 +618,40 @@ class PersonalizationRepository:
             for row in rows
         ]
 
-    def set_user_status(self, user_id: str, status: Literal["active", "paused", "expired"]) -> None:
+    def set_user_status(
+        self,
+        user_id: str,
+        status: Literal["active", "paused", "expired"],
+        now_utc: datetime | None = None,
+    ) -> None:
         if status not in {"active", "paused", "expired"}:
             raise ValueError("invalid user status")
+        now = (now_utc or _utc_now()).astimezone(UTC)
         with self._transaction():
             self._execute(
                 "UPDATE users SET status = ?, updated_at = ? WHERE id = ?",
-                (status, _timestamp(), user_id),
+                (status, _timestamp(now), user_id),
             )
+            next_run_at = ""
+            if status == "active":
+                row = self._fetchone("SELECT * FROM schedules WHERE user_id = ?", (user_id,))
+                if row is None:
+                    raise ValueError("user does not have a schedule")
+                schedule = ScheduleInput.from_form(
+                    frequency=self._value(row, "frequency"),
+                    weekday=self._value(row, "weekday"),
+                    timezone=self._value(row, "timezone"),
+                    local_send_time=self._value(row, "local_send_time"),
+                    enabled=True,
+                )
+                next_run_at = _timestamp(compute_next_run(schedule, now))
             self._execute(
-                "UPDATE schedules SET enabled = ?, updated_at = ? WHERE user_id = ?",
-                (int(status == "active"), _timestamp(), user_id),
+                """
+                UPDATE schedules
+                SET enabled = ?, next_run_at = CASE WHEN ? != '' THEN ? ELSE next_run_at END, updated_at = ?
+                WHERE user_id = ?
+                """,
+                (int(status == "active"), next_run_at, next_run_at, _timestamp(now), user_id),
             )
 
     def operations_snapshot(self) -> dict[str, int]:
@@ -699,29 +805,6 @@ class PersonalizationRepository:
         )
         self.set_schedule_next_run(schedule_id, compute_next_run(schedule, now_utc))
 
-    def _advance_due_schedule_in_transaction(self, due: DueSchedule) -> None:
-        row = self._fetchone("SELECT * FROM schedules WHERE id = ?", (due.schedule_id,))
-        if row is None:
-            raise ValueError("schedule does not exist")
-        next_run_at = self._value(row, "next_run_at")
-        if next_run_at and _to_datetime(next_run_at) > due.due_at:
-            return
-        schedule = ScheduleInput.from_form(
-            frequency=self._value(row, "frequency"),
-            weekday=self._value(row, "weekday"),
-            timezone=self._value(row, "timezone"),
-            local_send_time=self._value(row, "local_send_time"),
-            enabled=bool(self._value(row, "enabled")),
-        )
-        self._execute(
-            "UPDATE schedules SET next_run_at = ?, updated_at = ? WHERE id = ?",
-            (
-                _timestamp(compute_next_run(schedule, due.due_at)),
-                _timestamp(),
-                due.schedule_id,
-            ),
-        )
-
     def _create_report_run(
         self, user_id: str, profile_version: int, report_date: date, mode: str
     ) -> str:
@@ -752,10 +835,17 @@ class PersonalizationRepository:
             status=self._value(row, "status"),
             attempt_count=int(self._value(row, "attempt_count")),
             created=created,
+            schedule_id=self._value(row, "schedule_id"),
+            schedule_period_key=self._value(row, "schedule_period_key"),
+            execution_id=self._value(row, "execution_id"),
         )
 
-    def enqueue_automatic_delivery(self, due: DueSchedule) -> DeliveryClaim:
-        key = f"automatic:{due.user_id}:{due.report_date.isoformat()}:email"
+    def enqueue_automatic_delivery(
+        self, due: DueSchedule, now_utc: datetime | None = None
+    ) -> DeliveryClaim:
+        now_utc = (now_utc or _utc_now()).astimezone(UTC)
+        period_key = _timestamp(due.due_at)
+        key = f"automatic:{due.user_id}:{due.schedule_id}:{period_key}:email"
         with self._transaction():
             run_id = self._create_report_run(
                 due.user_id, due.profile_version, due.report_date, "automatic"
@@ -765,8 +855,8 @@ class PersonalizationRepository:
                 """
                 INSERT INTO deliveries (
                     id, user_id, report_run_id, profile_version, report_date, channel, mode,
-                    status, idempotency_key, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 'email', 'automatic', 'queued', ?, ?, ?)
+                    status, idempotency_key, schedule_id, schedule_period_key, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 'email', 'automatic', 'queued', ?, ?, ?, ?, ?)
                 ON CONFLICT(idempotency_key) DO NOTHING
                 """,
                 (
@@ -776,6 +866,8 @@ class PersonalizationRepository:
                     due.profile_version,
                     due.report_date.isoformat(),
                     key,
+                    due.schedule_id,
+                    period_key,
                     _timestamp(),
                     _timestamp(),
                 ),
@@ -784,9 +876,7 @@ class PersonalizationRepository:
             assert row is not None
             if self._value(row, "id") != delivery_id:
                 self._execute("DELETE FROM report_runs WHERE id = ?", (run_id,))
-                self._advance_due_schedule_in_transaction(due)
                 return self._claim_from_row(row, created=False)
-            self._advance_due_schedule_in_transaction(due)
             self._append_event(run_id, delivery_id, "delivery_queued", "Automatic delivery queued")
             return self._claim_from_row(row, created=True)
 
@@ -835,6 +925,16 @@ class PersonalizationRepository:
             artifact_name=self._value(row, "artifact_name"),
             artifact_run_id=self._value(row, "artifact_run_id"),
             last_error=self._value(row, "last_error"),
+            schedule_id=self._value(row, "schedule_id"),
+            schedule_period_key=self._value(row, "schedule_period_key"),
+            locked_at=self._value(row, "locked_at"),
+            locked_by=self._value(row, "locked_by"),
+            execution_id=self._value(row, "execution_id"),
+            last_attempt_at=self._value(row, "last_attempt_at"),
+            next_retry_at=self._value(row, "next_retry_at"),
+            error_stage=self._value(row, "error_stage"),
+            email_prepared_at=self._value(row, "email_prepared_at"),
+            email_sending_at=self._value(row, "email_sending_at"),
         )
 
     def get_delivery_execution_context(self, delivery_id: str) -> DeliveryExecutionContext:
@@ -865,60 +965,122 @@ class PersonalizationRepository:
         )
         return [self.get_delivery(self._value(row, "id")) for row in rows]
 
-    def claim_delivery(self, delivery_id: str) -> DeliveryClaim | None:
-        with self._transaction():
-            row = self._fetchone("SELECT * FROM deliveries WHERE id = ?", (delivery_id,))
-            if row is None or self._value(row, "status") != "queued":
-                return None
-            self._execute(
-                "UPDATE deliveries SET status = 'claimed', attempt_count = attempt_count + 1, updated_at = ? WHERE id = ?",
-                (_timestamp(), delivery_id),
+    def _claim_delivery_in_transaction(
+        self,
+        delivery_id: str,
+        execution_id: str,
+        now_utc: datetime,
+        *,
+        retry: bool,
+    ) -> DeliveryClaim | None:
+        timestamp = _timestamp(now_utc)
+        if retry:
+            status_predicate = "status = 'retryable_failed' AND mode = 'automatic' AND attempt_count < 3 AND (next_retry_at = '' OR next_retry_at <= ?)"
+        else:
+            status_predicate = "status = 'queued'"
+        eligibility_predicate = """
+            AND (
+                mode != 'automatic' OR EXISTS (
+                    SELECT 1 FROM schedules
+                    JOIN users ON users.id = schedules.user_id
+                    WHERE schedules.id = deliveries.schedule_id
+                      AND schedules.enabled = 1
+                      AND users.status = 'active'
+                )
             )
-            self._execute(
-                "UPDATE report_runs SET status = 'running', started_at = ? WHERE id = ?",
-                (_timestamp(), self._value(row, "report_run_id")),
-            )
-            updated = self._fetchone("SELECT * FROM deliveries WHERE id = ?", (delivery_id,))
-            assert updated is not None
-            self._append_event(
-                self._value(updated, "report_run_id"), delivery_id, "delivery_claimed", "Delivery claimed"
-            )
-            return self._claim_from_row(updated, created=False)
+        """
+        cursor = self._execute(
+            f"""
+            UPDATE deliveries
+            SET status = 'claimed', attempt_count = attempt_count + 1,
+                locked_at = ?, locked_by = ?, execution_id = ?, last_attempt_at = ?,
+                next_retry_at = '', error_stage = '', updated_at = ?
+            WHERE id = ? AND {status_predicate} {eligibility_predicate}
+            RETURNING *
+            """,
+            (timestamp, execution_id, execution_id, timestamp, timestamp, delivery_id, timestamp)
+            if retry
+            else (timestamp, execution_id, execution_id, timestamp, timestamp, delivery_id),
+        )
+        updated = self._normalise_row(cursor, cursor.fetchone())
+        if updated is None:
+            return None
+        report_run_id = self._value(updated, "report_run_id")
+        self._execute(
+            "UPDATE report_runs SET status = 'running', started_at = ?, error_summary = '' WHERE id = ?",
+            (timestamp, report_run_id),
+        )
+        self._append_event(
+            report_run_id,
+            delivery_id,
+            "automatic_retry_claimed" if retry else "delivery_claimed",
+            "Automatic retry claimed" if retry else "Delivery claimed",
+        )
+        return self._claim_from_row(updated, created=False)
 
-    def claim_automatic_retry(self, delivery_id: str) -> DeliveryClaim | None:
+    def claim_delivery(
+        self,
+        delivery_id: str,
+        execution_id: str = "manual-worker",
+        now_utc: datetime | None = None,
+    ) -> DeliveryClaim | None:
         with self._transaction():
-            row = self._fetchone("SELECT * FROM deliveries WHERE id = ?", (delivery_id,))
-            if (
-                row is None
-                or self._value(row, "mode") != "automatic"
-                or self._value(row, "status") != "retryable_failed"
-                or int(self._value(row, "attempt_count")) >= 3
-            ):
-                return None
-            self._execute(
-                "UPDATE deliveries SET status = 'claimed', attempt_count = attempt_count + 1, updated_at = ? WHERE id = ?",
-                (_timestamp(), delivery_id),
+            return self._claim_delivery_in_transaction(
+                delivery_id, execution_id, (now_utc or _utc_now()).astimezone(UTC), retry=False
             )
-            self._execute(
-                "UPDATE report_runs SET status = 'running', started_at = ?, error_summary = '' WHERE id = ?",
-                (_timestamp(), self._value(row, "report_run_id")),
-            )
-            updated = self._fetchone("SELECT * FROM deliveries WHERE id = ?", (delivery_id,))
-            assert updated is not None
-            self._append_event(
-                self._value(updated, "report_run_id"), delivery_id, "automatic_retry_claimed", "Automatic retry claimed"
-            )
-            return self._claim_from_row(updated, created=False)
 
-    def list_recoverable_automatic_delivery_ids(self) -> list[str]:
+    def claim_automatic_retry(
+        self,
+        delivery_id: str,
+        execution_id: str = "scheduler",
+        now_utc: datetime | None = None,
+    ) -> DeliveryClaim | None:
+        with self._transaction():
+            return self._claim_delivery_in_transaction(
+                delivery_id, execution_id, (now_utc or _utc_now()).astimezone(UTC), retry=True
+            )
+
+    def claim_next_due_delivery(
+        self, now_utc: datetime, execution_id: str
+    ) -> DeliveryClaim | None:
+        """Enqueue and atomically claim at most one automatic delivery for this worker."""
+
+        for due in self.list_due_schedules(now_utc):
+            delivery = self.enqueue_automatic_delivery(due, now_utc)
+            if delivery.status == "queued":
+                claim = self.claim_delivery(delivery.delivery_id, execution_id, now_utc)
+                if claim is not None:
+                    return claim
+        for delivery_id in self.list_recoverable_automatic_delivery_ids(now_utc):
+            claim = self.claim_automatic_retry(delivery_id, execution_id, now_utc)
+            if claim is not None:
+                return claim
+        return None
+
+    def list_recoverable_automatic_delivery_ids(self, now_utc: datetime | None = None) -> list[str]:
+        timestamp = _timestamp(now_utc or _utc_now())
         rows = self._fetchall(
             """
             SELECT id FROM deliveries
             WHERE mode = 'automatic' AND status = 'retryable_failed' AND attempt_count < 3
+              AND (next_retry_at = '' OR next_retry_at <= ?)
             ORDER BY updated_at ASC
-            """
+            """,
+            (timestamp,),
         )
         return [self._value(row, "id") for row in rows]
+
+    def count_waiting_automatic_retries(self) -> int:
+        """Return automatic deliveries that have a scheduled retry but are not due yet."""
+
+        row = self._fetchone(
+            """
+            SELECT COUNT(*) AS count FROM deliveries
+            WHERE mode = 'automatic' AND status = 'retryable_failed'
+              AND attempt_count < 3 AND next_retry_at != ''
+            """
+        )
+        return int(self._value(row, "count") or 0)
 
     def recover_expired_deliveries(
         self, now_utc: datetime, lease_minutes: int
@@ -930,8 +1092,9 @@ class PersonalizationRepository:
         with self._transaction():
             rows = self._fetchall(
                 """
-                SELECT id, report_run_id FROM deliveries
-                WHERE status IN ('claimed', 'sending') AND updated_at <= ?
+                SELECT id, report_run_id, status, attempt_count FROM deliveries
+                WHERE status IN ('claimed', 'sending')
+                  AND COALESCE(NULLIF(locked_at, ''), updated_at) <= ?
                 ORDER BY updated_at ASC
                 """,
                 (cutoff,),
@@ -940,13 +1103,23 @@ class PersonalizationRepository:
             for row in rows:
                 delivery_id = self._value(row, "id")
                 run_id = self._value(row, "report_run_id")
+                is_sending = self._value(row, "status") == "sending"
+                error_stage = "email_outcome_unknown" if is_sending else "execution_lease"
+                status = "failed" if is_sending else "retryable_failed"
+                next_retry_at = "" if is_sending else _timestamp(now_utc + timedelta(minutes=30))
+                recovery_message = (
+                    "SMTP outcome unknown after execution lease expired"
+                    if is_sending
+                    else message
+                )
                 self._execute(
                     """
                     UPDATE deliveries
-                    SET status = 'retryable_failed', last_error = ?, updated_at = ?
+                    SET status = ?, last_error = ?, error_stage = ?, next_retry_at = ?,
+                        locked_at = '', locked_by = '', execution_id = '', updated_at = ?
                     WHERE id = ?
                     """,
-                    (message, _timestamp(now_utc), delivery_id),
+                    (status, recovery_message, error_stage, next_retry_at, _timestamp(now_utc), delivery_id),
                 )
                 self._execute(
                     """
@@ -954,9 +1127,9 @@ class PersonalizationRepository:
                     SET status = 'failed', error_summary = ?, finished_at = ?
                     WHERE id = ?
                     """,
-                    (message, _timestamp(now_utc), run_id),
+                    (recovery_message, _timestamp(now_utc), run_id),
                 )
-                self._append_event(run_id, delivery_id, "delivery_lease_expired", message)
+                self._append_event(run_id, delivery_id, "delivery_lease_expired", recovery_message)
                 recovered_ids.append(delivery_id)
             return recovered_ids
 
@@ -1014,38 +1187,172 @@ class PersonalizationRepository:
             )
             return self._claim_from_row(updated, created=False)
 
-    def mark_sent(self, delivery_id: str) -> None:
+    def mark_email_prepared(self, delivery_id: str, now_utc: datetime | None = None) -> None:
+        timestamp = _timestamp(now_utc or _utc_now())
+        with self._transaction():
+            self._execute(
+                """
+                UPDATE deliveries SET email_prepared_at = ?, updated_at = ?
+                WHERE id = ? AND status = 'claimed'
+                """,
+                (timestamp, timestamp, delivery_id),
+            )
+
+    def mark_email_sending(self, delivery_id: str, now_utc: datetime | None = None) -> None:
+        timestamp = _timestamp(now_utc or _utc_now())
+        with self._transaction():
+            row = self._fetchone("SELECT report_run_id FROM deliveries WHERE id = ? AND status = 'claimed'", (delivery_id,))
+            if row is None:
+                return
+            self._execute(
+                """
+                UPDATE deliveries
+                SET status = 'sending', email_sending_at = ?, updated_at = ?
+                WHERE id = ? AND status = 'claimed'
+                """,
+                (timestamp, timestamp, delivery_id),
+            )
+            self._append_event(
+                self._value(row, "report_run_id"), delivery_id, "delivery_sending", "SMTP send started"
+            )
+
+    def mark_email_outcome_unknown(
+        self,
+        delivery_id: str,
+        error_summary: str,
+        now_utc: datetime | None = None,
+    ) -> None:
+        """Record an SMTP ambiguity without risking an automatic duplicate email."""
+
+        timestamp = _timestamp(now_utc or _utc_now())
+        with self._transaction():
+            row = self._fetchone(
+                "SELECT * FROM deliveries WHERE id = ? AND status = 'sending'", (delivery_id,)
+            )
+            if row is None:
+                return
+            message = f"SMTP outcome unknown: {error_summary[:400]}"
+            self._execute(
+                """
+                UPDATE deliveries
+                SET status = 'failed', last_error = ?, error_stage = 'email_outcome_unknown',
+                    next_retry_at = '', locked_at = '', locked_by = '', execution_id = '', updated_at = ?
+                WHERE id = ?
+                """,
+                (message, timestamp, delivery_id),
+            )
+            self._execute(
+                "UPDATE report_runs SET status = 'failed', error_summary = ?, finished_at = ? WHERE id = ?",
+                (message, timestamp, self._value(row, "report_run_id")),
+            )
+            self._append_event(
+                self._value(row, "report_run_id"),
+                delivery_id,
+                "email_outcome_unknown",
+                message,
+            )
+
+    def mark_sent(self, delivery_id: str, now_utc: datetime | None = None) -> None:
+        sent_at = (now_utc or _utc_now()).astimezone(UTC)
+        timestamp = _timestamp(sent_at)
         with self._transaction():
             row = self._fetchone("SELECT * FROM deliveries WHERE id = ?", (delivery_id,))
             if row is None or self._value(row, "status") not in {"claimed", "sending"}:
                 return
             self._execute(
-                "UPDATE deliveries SET status = 'sent', sent_at = ?, updated_at = ?, last_error = '' WHERE id = ?",
-                (_timestamp(), _timestamp(), delivery_id),
+                """
+                UPDATE deliveries
+                SET status = 'sent', sent_at = ?, updated_at = ?, last_error = '', error_stage = '',
+                    next_retry_at = '', locked_at = '', locked_by = '', execution_id = ''
+                WHERE id = ?
+                """,
+                (timestamp, timestamp, delivery_id),
             )
             self._execute(
                 "UPDATE report_runs SET status = 'completed', finished_at = ? WHERE id = ?",
-                (_timestamp(), self._value(row, "report_run_id")),
+                (timestamp, self._value(row, "report_run_id")),
             )
+            if self._value(row, "schedule_id"):
+                schedule_id = self._value(row, "schedule_id")
+                self._execute(
+                    "UPDATE schedules SET last_run_at = ?, updated_at = ? WHERE id = ?",
+                    (timestamp, timestamp, schedule_id),
+                )
+                schedule_row = self._fetchone("SELECT * FROM schedules WHERE id = ?", (schedule_id,))
+                if schedule_row is not None and bool(self._value(schedule_row, "enabled")):
+                    schedule = ScheduleInput.from_form(
+                        frequency=self._value(schedule_row, "frequency"),
+                        weekday=self._value(schedule_row, "weekday"),
+                        timezone=self._value(schedule_row, "timezone"),
+                        local_send_time=self._value(schedule_row, "local_send_time"),
+                        enabled=True,
+                    )
+                    self._execute(
+                        """
+                        UPDATE schedules SET next_run_at = ?, updated_at = ?
+                        WHERE id = ? AND enabled = 1 AND next_run_at <= ?
+                        """,
+                        (
+                            _timestamp(compute_next_run(schedule, sent_at)),
+                            timestamp,
+                            schedule_id,
+                            timestamp,
+                        ),
+                    )
             self._append_event(
                 self._value(row, "report_run_id"), delivery_id, "delivery_sent", "Email delivered"
             )
 
-    def mark_retryable_failure(self, delivery_id: str, error_summary: str) -> None:
+    def mark_retryable_failure(
+        self,
+        delivery_id: str,
+        error_stage: str,
+        error_summary: str | None = None,
+        now_utc: datetime | None = None,
+    ) -> None:
+        """Persist a retryable failure with a bounded exponential backoff."""
+
+        if error_summary is None:
+            error_summary = error_stage
+            error_stage = "unknown"
+        timestamp = _timestamp(now_utc or _utc_now())
         with self._transaction():
             row = self._fetchone("SELECT * FROM deliveries WHERE id = ?", (delivery_id,))
             if row is None:
                 return
+            attempt_count = int(self._value(row, "attempt_count"))
+            retry_exhausted = attempt_count >= 3
+            next_retry_at = ""
+            if not retry_exhausted:
+                next_retry_at = _timestamp(
+                    (now_utc or _utc_now()).astimezone(UTC)
+                    + timedelta(minutes=30 * (2 ** max(0, attempt_count - 1)))
+                )
             self._execute(
-                "UPDATE deliveries SET status = 'retryable_failed', last_error = ?, updated_at = ? WHERE id = ?",
-                (error_summary[:500], _timestamp(), delivery_id),
+                """
+                UPDATE deliveries
+                SET status = ?, last_error = ?, error_stage = ?, next_retry_at = ?,
+                    locked_at = '', locked_by = '', execution_id = '', updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    "failed" if retry_exhausted else "retryable_failed",
+                    error_summary[:500],
+                    error_stage[:80],
+                    next_retry_at,
+                    timestamp,
+                    delivery_id,
+                ),
             )
             self._execute(
                 "UPDATE report_runs SET status = 'failed', error_summary = ?, finished_at = ? WHERE id = ?",
-                (error_summary[:500], _timestamp(), self._value(row, "report_run_id")),
+                (error_summary[:500], timestamp, self._value(row, "report_run_id")),
             )
             self._append_event(
-                self._value(row, "report_run_id"), delivery_id, "delivery_failed", error_summary
+                self._value(row, "report_run_id"),
+                delivery_id,
+                "retry_exhausted" if retry_exhausted else "delivery_failed",
+                "Retry limit reached" if retry_exhausted else error_summary,
             )
 
     def retry_delivery(self, delivery_id: str) -> Literal["preview", "deliver"] | None:

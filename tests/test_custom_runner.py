@@ -144,11 +144,11 @@ class CustomRunnerTests(unittest.TestCase):
         first_attempt = self.repository.list_deliveries_for_user(self.user_id)[0]
         self.assertEqual(first_attempt.attempt_count, 1)
 
-        for _ in range(3):
-            run_due_deliveries(self.repository, now, services)
+        run_due_deliveries(self.repository, now + timedelta(minutes=31), services)
+        run_due_deliveries(self.repository, now + timedelta(minutes=92), services)
 
         delivery = self.repository.list_deliveries_for_user(self.user_id)[0]
-        self.assertEqual(delivery.status, "retryable_failed")
+        self.assertEqual(delivery.status, "failed")
         self.assertEqual(delivery.attempt_count, 3)
 
     def test_expired_automatic_claim_waits_until_the_next_scan_before_retrying(self) -> None:
@@ -161,8 +161,12 @@ class CustomRunnerTests(unittest.TestCase):
         self.assertIsNotNone(self.repository.claim_delivery(delivery.delivery_id))
         now = datetime(2026, 7, 28, 3, 0, tzinfo=UTC)
         self.repository._execute(
-            "UPDATE deliveries SET updated_at = ? WHERE id = ?",
-            ((now - timedelta(minutes=121)).isoformat(), delivery.delivery_id),
+            "UPDATE deliveries SET updated_at = ?, locked_at = ? WHERE id = ?",
+            (
+                (now - timedelta(minutes=121)).isoformat(),
+                (now - timedelta(minutes=121)).isoformat(),
+                delivery.delivery_id,
+            ),
         )
         self.repository.connection.commit()
         services = RunnerServices(

@@ -186,6 +186,12 @@ class CapturingSmtp:
 
 
 class ReportGenerationApiTests(unittest.TestCase):
+    def test_email_success_log_does_not_include_recipient_addresses(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
+
+        self.assertNotIn('LOGGER.info("Sent report email to %s', source)
+        self.assertIn('"Sent report email to %d recipient(s) with PDF attachment %s"', source)
+
     def setUp(self) -> None:
         self.tempdir = TemporaryDirectory()
         self.profile = main.resolve_profile("chemistry")
@@ -259,3 +265,60 @@ class ReportGenerationApiTests(unittest.TestCase):
 
         self.assertTrue(sent)
         self.assertEqual(smtp.messages[0]["To"], "client@test")
+
+    def test_personalised_smtp_transport_error_is_exposed_as_ambiguous(self) -> None:
+        class BrokenSmtp(CapturingSmtp):
+            def send_message(self, message):
+                raise ConnectionError("connection closed after DATA")
+
+        pdf_path = Path(self.tempdir.name) / "preview.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4\n")
+        environment = {
+            "EMAIL_ENABLED": "true",
+            "SMTP_HOST": "smtp.test",
+            "SMTP_USERNAME": "sender@test",
+            "SMTP_PASSWORD": "x",
+            "SMTP_FROM": "sender@test",
+            "SMTP_SECURITY": "ssl",
+        }
+        with patch.dict("os.environ", environment, clear=True), patch.object(
+            main.smtplib, "SMTP_SSL", return_value=BrokenSmtp()
+        ):
+            with self.assertRaises(main.EmailTransportUncertainError):
+                main.send_report_email(
+                    pdf_path,
+                    date(2026, 7, 28),
+                    self.profile,
+                    ai_generated=True,
+                    recipient_override=["client@test"],
+                    raise_on_transport_error=True,
+                )
+
+    def test_personalised_smtp_login_rejection_is_retryable(self) -> None:
+        class LoginRejectedSmtp(CapturingSmtp):
+            def login(self, username: str, password: str) -> None:
+                raise main.smtplib.SMTPAuthenticationError(535, b"authentication failed")
+
+        pdf_path = Path(self.tempdir.name) / "preview.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4\n")
+        environment = {
+            "EMAIL_ENABLED": "true",
+            "SMTP_HOST": "smtp.test",
+            "SMTP_USERNAME": "sender@test",
+            "SMTP_PASSWORD": "x",
+            "SMTP_FROM": "sender@test",
+            "SMTP_SECURITY": "ssl",
+        }
+        with patch.dict("os.environ", environment, clear=True), patch.object(
+            main.smtplib, "SMTP_SSL", return_value=LoginRejectedSmtp()
+        ):
+            sent = main.send_report_email(
+                pdf_path,
+                date(2026, 7, 28),
+                self.profile,
+                ai_generated=True,
+                recipient_override=["client@test"],
+                raise_on_transport_error=True,
+            )
+
+        self.assertFalse(sent)

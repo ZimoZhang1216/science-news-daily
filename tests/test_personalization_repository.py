@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -100,7 +101,25 @@ class PersonalizationRepositoryTests(unittest.TestCase):
         self.repository.set_schedule_next_run(due.schedule_id, due.due_at)
         repaired = self.repository.enqueue_automatic_delivery(due)
         self.assertFalse(repaired.created)
-        self.assertGreater(self.repository.get_schedule(user_id).next_run_at, due.due_at)
+        self.assertEqual(self.repository.get_schedule(user_id).next_run_at, due.due_at)
+
+    def test_successful_automatic_delivery_advances_next_run(self) -> None:
+        user_id = self.repository.create_user_with_profile(
+            self.user(), self.profile("battery"), self.daily_schedule()
+        )
+        due_at = datetime(2026, 7, 27, 23, 30, tzinfo=timezone.utc)
+        due = self.repository.make_due_schedule(user_id, date(2026, 7, 28), due_at)
+        self.repository.set_schedule_next_run(due.schedule_id, due_at)
+        delivery = self.repository.enqueue_automatic_delivery(due, due_at)
+        claim = self.repository.claim_delivery(delivery.delivery_id, "worker-a", due_at)
+
+        self.assertIsNotNone(claim)
+        self.repository.mark_sent(delivery.delivery_id, due_at)
+
+        schedule = self.repository.get_schedule(user_id)
+        row = self.repository._fetchone("SELECT last_run_at FROM schedules WHERE id = ?", (due.schedule_id,))
+        self.assertEqual(schedule.next_run_at, datetime(2026, 7, 28, 23, 30, tzinfo=timezone.utc))
+        self.assertEqual(self.repository._value(row, "last_run_at"), due_at.isoformat())
 
     def test_history_for_user_returns_existing_main_prepare_items_mapping(self) -> None:
         user_id = self.repository.create_user_with_profile(
@@ -235,6 +254,21 @@ class PersonalizationRepositoryTests(unittest.TestCase):
                 pass
 
         self.assertEqual(calls, ["BEGIN", "commit"])
+
+    def test_environment_repository_uses_local_sqlite_when_configured(self) -> None:
+        database_path = Path(self.tempdir.name) / "scheduler-local.db"
+
+        with mock.patch.dict(
+            os.environ,
+            {"PERSONAL_ADMIN_LOCAL_DB": str(database_path)},
+            clear=True,
+        ):
+            repository = PersonalizationRepository.from_environment()
+            try:
+                repository.initialize()
+                self.assertIsInstance(repository.connection, sqlite3.Connection)
+            finally:
+                repository.close()
 
     def test_local_replica_connection_uses_local_path_and_manual_sync(self) -> None:
         calls: list[tuple[object, ...] | str] = []
@@ -426,8 +460,12 @@ class PersonalizationRepositoryTests(unittest.TestCase):
         self.assertIsNotNone(self.repository.claim_delivery(delivery.delivery_id))
         now = datetime(2026, 7, 28, 3, 0, tzinfo=timezone.utc)
         self.repository._execute(
-            "UPDATE deliveries SET updated_at = ? WHERE id = ?",
-            ((now - timedelta(minutes=121)).isoformat(), delivery.delivery_id),
+            "UPDATE deliveries SET updated_at = ?, locked_at = ? WHERE id = ?",
+            (
+                (now - timedelta(minutes=121)).isoformat(),
+                (now - timedelta(minutes=121)).isoformat(),
+                delivery.delivery_id,
+            ),
         )
         self.repository.connection.commit()
 

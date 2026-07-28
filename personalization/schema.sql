@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS schedules (
     timezone TEXT NOT NULL,
     local_send_time TEXT NOT NULL,
     next_run_at TEXT NOT NULL,
+    last_run_at TEXT NOT NULL DEFAULT '',
     enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
     updated_at TEXT NOT NULL
 );
@@ -76,6 +77,16 @@ CREATE TABLE IF NOT EXISTS deliveries (
     artifact_name TEXT NOT NULL DEFAULT '',
     artifact_run_id TEXT NOT NULL DEFAULT '',
     sent_at TEXT NOT NULL DEFAULT '',
+    schedule_id TEXT NOT NULL DEFAULT '',
+    schedule_period_key TEXT NOT NULL DEFAULT '',
+    locked_at TEXT NOT NULL DEFAULT '',
+    locked_by TEXT NOT NULL DEFAULT '',
+    execution_id TEXT NOT NULL DEFAULT '',
+    last_attempt_at TEXT NOT NULL DEFAULT '',
+    next_retry_at TEXT NOT NULL DEFAULT '',
+    error_stage TEXT NOT NULL DEFAULT '',
+    email_prepared_at TEXT NOT NULL DEFAULT '',
+    email_sending_at TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -119,5 +130,6 @@ CREATE TABLE IF NOT EXISTS source_metrics (
 
 CREATE INDEX IF NOT EXISTS idx_schedules_next_run_at ON schedules(next_run_at);
 CREATE INDEX IF NOT EXISTS idx_deliveries_status_updated_at ON deliveries(status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_deliveries_retry ON deliveries(mode, status, next_retry_at);
 CREATE INDEX IF NOT EXISTS idx_report_items_user_date ON report_items(user_id, report_date);
 CREATE INDEX IF NOT EXISTS idx_report_runs_user_date ON report_runs(user_id, report_date);
