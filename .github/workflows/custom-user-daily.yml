@@ -1,0 +1,121 @@
+name: Custom User Research Daily
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+  repository_dispatch:
+    types:
+      - personal-news-command
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: custom-user-daily-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EMAIL_ENABLED: "true"
+  TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+  TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+  LLM_PROVIDER: ${{ secrets.LLM_PROVIDER }}
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+  DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+  DEEPSEEK_MODEL: ${{ secrets.DEEPSEEK_MODEL }}
+  SMTP_HOST: ${{ secrets.SMTP_HOST }}
+  SMTP_PORT: ${{ secrets.SMTP_PORT }}
+  SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+  SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+  SMTP_FROM: ${{ secrets.SMTP_FROM }}
+  SMTP_SECURITY: ${{ secrets.SMTP_SECURITY }}
+
+jobs:
+  automatic-scan:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install PDF export dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libreoffice-writer fonts-noto-cjk
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+      - name: Generate and send due automatic reports
+        run: python custom_user_daily.py scan
+
+  preview:
+    if: github.event_name == 'repository_dispatch' && github.event.client_payload.command == 'preview'
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    outputs:
+      delivery_id: ${{ steps.metadata.outputs.delivery_id }}
+      artifact_name: ${{ steps.metadata.outputs.artifact_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install PDF export dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libreoffice-writer fonts-noto-cjk
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+      - name: Generate preview without sending email
+        env:
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: python custom_user_daily.py preview --delivery-id "${{ github.event.client_payload.delivery_id }}"
+      - name: Read preview artifact metadata
+        id: metadata
+        run: python custom_user_daily.py artifact-metadata --delivery-id "${{ github.event.client_payload.delivery_id }}"
+      - name: Upload preview files
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.metadata.outputs.artifact_name }}
+          path: output/custom/${{ steps.metadata.outputs.delivery_id }}/
+          if-no-files-found: error
+          retention-days: 14
+
+  retry:
+    if: github.event_name == 'repository_dispatch' && github.event.client_payload.command == 'retry'
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install PDF export dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libreoffice-writer fonts-noto-cjk
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+      - name: Choose retry operation
+        id: retry
+        run: python custom_user_daily.py retry --delivery-id "${{ github.event.client_payload.delivery_id }}"
+      - name: Regenerate failed preview
+        env:
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: python custom_user_daily.py preview --delivery-id "${{ steps.retry.outputs.delivery_id }}"
+      - name: Read regenerated preview metadata
+        id: regenerated
+        run: python custom_user_daily.py artifact-metadata --delivery-id "${{ steps.retry.outputs.delivery_id }}"
+      - name: Upload regenerated preview files
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.regenerated.outputs.artifact_name }}
+          path: output/custom/${{ steps.regenerated.outputs.delivery_id }}/
+          if-no-files-found: error
+          retention-days: 14

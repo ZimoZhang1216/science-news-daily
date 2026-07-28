@@ -2621,6 +2621,10 @@ def rank_item(item: NewsItem, now: datetime, profile: dict[str, Any]) -> float:
     haystack = f"{item.title} {item.abstract}".lower()
     keyword_hits = sum(1 for term in profile["relevance_terms"] if term in haystack)
     learning_bonus = sum(weight for term, weight in LEARNING_VALUE_TERMS.items() if term in haystack)
+    preference_bonus = min(
+        8,
+        sum(2 for term in profile.get("custom_preference_terms", ()) if term in haystack),
+    )
     abstract_bonus = min(len(item.abstract) / 450, 6)
     title_bonus = 4 if any(term in item.title.lower() for term in LEARNING_VALUE_TERMS) else 0
     metadata_penalty = 5 if "未提供摘要" in item.abstract or not item.abstract else 0
@@ -2632,6 +2636,7 @@ def rank_item(item: NewsItem, now: datetime, profile: dict[str, Any]) -> float:
         source_weight
         + keyword_hits * 1.4
         + learning_bonus
+        + preference_bonus
         + title_bonus
         + abstract_bonus
         + recency_bonus
@@ -3123,8 +3128,10 @@ def parse_json_object(raw: str) -> dict[str, Any]:
         return normalize_parsed_json(json.loads(match.group(0)))
 
 
-def resolve_llm_config(model_override: str = "") -> LLMConfig | None:
-    provider = os.getenv("LLM_PROVIDER", "openai").strip().lower() or "openai"
+def resolve_llm_config(
+    model_override: str = "", provider_override: str = ""
+) -> LLMConfig | None:
+    provider = provider_override.strip().lower() or os.getenv("LLM_PROVIDER", "openai").strip().lower() or "openai"
     if provider not in SUPPORTED_LLM_PROVIDERS:
         LOGGER.warning(
             "Unsupported LLM_PROVIDER=%s; supported values are openai or deepseek. "
@@ -3244,6 +3251,7 @@ def generate_ai_summaries(
     model: str,
     max_ai_items: int,
     profile: dict[str, Any],
+    provider_override: str = "",
 ) -> dict[str, Any]:
     if not items:
         return {"top_ids": [], "field_summaries": [], "ai_generated": False}
@@ -3252,7 +3260,7 @@ def generate_ai_summaries(
         apply_fallback_summaries(items, profile)
         return fallback_report_payload(items, profile)
 
-    llm_config = resolve_llm_config(model)
+    llm_config = resolve_llm_config(model, provider_override)
     if llm_config is None:
         apply_fallback_summaries(items, profile)
         return fallback_report_payload(items, profile)
@@ -3741,13 +3749,14 @@ def apply_ai_scientific_notation(
     model: str,
     profile: dict[str, Any],
     enabled: bool = True,
+    provider_override: str = "",
 ) -> bool:
     initialize_rule_notation(items, report_payload)
     if not enabled:
         return False
     if not items or OpenAI is None:
         return False
-    llm_config = resolve_llm_config(model)
+    llm_config = resolve_llm_config(model, provider_override)
     if llm_config is None or not llm_config.api_key:
         LOGGER.info("Scientific notation AI pass skipped; model provider or API key is unavailable.")
         return False
@@ -4708,6 +4717,7 @@ def send_report_email(
     profile: dict[str, Any],
     is_failure: bool = False,
     ai_generated: bool = False,
+    recipient_override: list[str] | None = None,
 ) -> bool:
     if not env_flag("EMAIL_ENABLED", True):
         LOGGER.info("Email sending is disabled by EMAIL_ENABLED.")
@@ -4720,21 +4730,27 @@ def send_report_email(
     smtp_security = os.getenv("SMTP_SECURITY", "").strip().lower() or "ssl"
     smtp_port_raw = os.getenv("SMTP_PORT", "").strip()
     smtp_port = int(smtp_port_raw) if smtp_port_raw else (587 if smtp_security in {"starttls", "tls"} else 465)
-    profile_recipient_value = os.getenv(profile["email_env"], "").strip()
-    default_recipient_value = os.getenv("REPORT_EMAIL_TO", "").strip()
     recipient_options: list[tuple[str, list[str]]] = []
-    recipient_candidates = [(profile["email_env"], profile_recipient_value)]
-    if profile.get("allow_default_email_fallback", True):
-        recipient_candidates.append(("REPORT_EMAIL_TO", default_recipient_value))
-    recipient_candidates.append(("profile default", profile["default_email_to"]))
-    for label, value in recipient_candidates:
-        recipients = parse_email_recipients(value)
-        if recipients and all(recipients != existing for _, existing in recipient_options):
-            recipient_options.append((label, recipients))
+    if recipient_override is not None:
+        recipients = [recipient.strip() for recipient in recipient_override if recipient.strip()]
+        if recipients:
+            recipient_options.append(("recipient override", recipients))
+        recipient_config_label = "recipient override"
+    else:
+        profile_recipient_value = os.getenv(profile["email_env"], "").strip()
+        default_recipient_value = os.getenv("REPORT_EMAIL_TO", "").strip()
+        recipient_candidates = [(profile["email_env"], profile_recipient_value)]
+        if profile.get("allow_default_email_fallback", True):
+            recipient_candidates.append(("REPORT_EMAIL_TO", default_recipient_value))
+        recipient_candidates.append(("profile default", profile["default_email_to"]))
+        for label, value in recipient_candidates:
+            recipients = parse_email_recipients(value)
+            if recipients and all(recipients != existing for _, existing in recipient_options):
+                recipient_options.append((label, recipients))
 
-    recipient_config_label = profile["email_env"]
-    if profile.get("allow_default_email_fallback", True):
-        recipient_config_label = f"{profile['email_env']} or REPORT_EMAIL_TO"
+        recipient_config_label = profile["email_env"]
+        if profile.get("allow_default_email_fallback", True):
+            recipient_config_label = f"{profile['email_env']} or REPORT_EMAIL_TO"
     missing = [
         name
         for name, value in {
@@ -4850,10 +4866,12 @@ def collect_items(
     profile: dict[str, Any],
 ) -> tuple[list[NewsItem], list[SourceStatus]]:
     session = build_session()
-    fetchers: list[tuple[str, Callable[[], list[NewsItem]]]] = [
-        ("arXiv", lambda: fetch_arxiv(session, since, until, args.source_limit, profile)),
-        ("PubMed", lambda: fetch_pubmed(session, since, until, args.source_limit, profile)),
-    ]
+    enabled_source_ids = set(profile.get("enabled_source_ids", ()))
+    fetchers: list[tuple[str, Callable[[], list[NewsItem]]]] = []
+    if not enabled_source_ids or "arxiv" in enabled_source_ids:
+        fetchers.append(("arXiv", lambda: fetch_arxiv(session, since, until, args.source_limit, profile)))
+    if not enabled_source_ids or "pubmed" in enabled_source_ids:
+        fetchers.append(("PubMed", lambda: fetch_pubmed(session, since, until, args.source_limit, profile)))
 
     all_items: list[NewsItem] = []
     statuses: list[SourceStatus] = []
@@ -4873,35 +4891,37 @@ def collect_items(
                 )
             )
 
-    try:
-        crossref_items, crossref_statuses = fetch_crossref(session, since, until, args.source_limit, profile)
-        LOGGER.info("Crossref returned %d items", len(crossref_items))
-        all_items.extend(crossref_items)
-        statuses.extend(crossref_statuses)
-    except Exception as exc:  # noqa: BLE001 - defensive guard around the grouped source.
-        LOGGER.exception("Crossref failed and was skipped: %s", exc)
-        statuses.append(
-            SourceStatus(
-                name="Crossref",
-                success=False,
-                error=f"{type(exc).__name__}: {exc}",
+    if not enabled_source_ids or "crossref" in enabled_source_ids:
+        try:
+            crossref_items, crossref_statuses = fetch_crossref(session, since, until, args.source_limit, profile)
+            LOGGER.info("Crossref returned %d items", len(crossref_items))
+            all_items.extend(crossref_items)
+            statuses.extend(crossref_statuses)
+        except Exception as exc:  # noqa: BLE001 - defensive guard around the grouped source.
+            LOGGER.exception("Crossref failed and was skipped: %s", exc)
+            statuses.append(
+                SourceStatus(
+                    name="Crossref",
+                    success=False,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
             )
-        )
 
-    try:
-        rss_items, rss_statuses = fetch_rss(session, since, until, args.source_limit, profile)
-        LOGGER.info("RSS returned %d items", len(rss_items))
-        all_items.extend(rss_items)
-        statuses.extend(rss_statuses)
-    except Exception as exc:  # noqa: BLE001 - defensive guard around the grouped source.
-        LOGGER.exception("RSS failed and was skipped: %s", exc)
-        statuses.append(
-            SourceStatus(
-                name="RSS",
-                success=False,
-                error=f"{type(exc).__name__}: {exc}",
+    if not enabled_source_ids or "rss" in enabled_source_ids:
+        try:
+            rss_items, rss_statuses = fetch_rss(session, since, until, args.source_limit, profile)
+            LOGGER.info("RSS returned %d items", len(rss_items))
+            all_items.extend(rss_items)
+            statuses.extend(rss_statuses)
+        except Exception as exc:  # noqa: BLE001 - defensive guard around the grouped source.
+            LOGGER.exception("RSS failed and was skipped: %s", exc)
+            statuses.append(
+                SourceStatus(
+                    name="RSS",
+                    success=False,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
             )
-        )
     return all_items, statuses
 
 
@@ -5046,6 +5066,159 @@ def ensure_item_ids(items: list[NewsItem]) -> None:
         else:
             item.item_id = f"N{stable_hash(item.title)}"
         used.add(item.item_id)
+
+
+@dataclass(frozen=True)
+class ReportGenerationOptions:
+    days: int
+    max_items: int
+    min_items: int
+    source_limit: int
+    max_ai_items: int
+    llm_provider: str
+    model: str
+    report_date: date
+    output_dir: Path
+    require_ai: bool
+    no_openai: bool = False
+
+
+@dataclass
+class ReportGenerationResult:
+    output_path: Path | None
+    selected_items: list[NewsItem]
+    source_statuses: list[SourceStatus]
+    report_payload: dict[str, Any]
+    collected_count: int
+    selected_count: int
+    ai_generated: bool
+    failure_exit_code: int | None
+
+
+def generate_report(
+    options: ReportGenerationOptions,
+    profile: dict[str, Any],
+    history: dict[str, set[str]] | None = None,
+    item_filter: Callable[[NewsItem], bool] | None = None,
+) -> ReportGenerationResult:
+    """Generate one report without sending email or persisting local history."""
+
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=options.days)
+    from network_check import run_network_checks
+
+    diagnostics = run_network_checks(logger=LOGGER)
+    if not diagnostics.network_ok:
+        LOGGER.warning("Network is unavailable or degraded: %s", " | ".join(diagnostics.summary_lines()))
+    LOGGER.info("Collecting %s items from %s to %s", profile["key"], since.isoformat(), now.isoformat())
+    args = argparse.Namespace(source_limit=options.source_limit)
+    collected, source_statuses = collect_items(args, since, now, profile)
+    filtered = [item for item in collected if item_filter is None or item_filter(item)]
+    prepared = prepare_items(
+        filtered,
+        options.max_items,
+        now,
+        profile,
+        history=history,
+        min_items=options.min_items,
+    )
+    ensure_item_ids(prepared)
+    LOGGER.info("Prepared %d history-aware deduplicated items", len(prepared))
+
+    if not prepared:
+        reason = "抓取和过滤后没有可写入日报的资讯。"
+        failure_exit_code = 2 if all_sources_failed(source_statuses) else 1
+        if failure_exit_code == 2:
+            reason = "全部来源抓取失败，未获得任何资讯。"
+        output_path = create_failure_report(
+            report_date=options.report_date,
+            output_dir=options.output_dir,
+            profile=profile,
+            diagnostics=diagnostics,
+            source_statuses=source_statuses,
+            reason=reason,
+            collected_count=len(collected),
+            prepared_count=0,
+        )
+        return ReportGenerationResult(
+            output_path=output_path,
+            selected_items=[],
+            source_statuses=source_statuses,
+            report_payload={},
+            collected_count=len(collected),
+            selected_count=0,
+            ai_generated=False,
+            failure_exit_code=4 if options.require_ai else failure_exit_code,
+        )
+
+    if options.no_openai:
+        apply_fallback_summaries(prepared, profile)
+        report_payload = fallback_report_payload(prepared, profile)
+    else:
+        if options.require_ai and options.max_ai_items < len(prepared):
+            LOGGER.error(
+                "AI summary is required for every item, but max_ai_items=%d is less than prepared item count=%d.",
+                options.max_ai_items,
+                len(prepared),
+            )
+            return ReportGenerationResult(
+                output_path=None,
+                selected_items=prepared,
+                source_statuses=source_statuses,
+                report_payload={},
+                collected_count=len(collected),
+                selected_count=len(prepared),
+                ai_generated=False,
+                failure_exit_code=4,
+            )
+        report_payload = generate_ai_summaries(
+            prepared,
+            options.model,
+            options.max_ai_items,
+            profile,
+            provider_override=options.llm_provider,
+        )
+
+    if options.require_ai and not report_payload.get("ai_generated"):
+        LOGGER.error("AI summary is required, but model generation was incomplete.")
+        return ReportGenerationResult(
+            output_path=None,
+            selected_items=prepared,
+            source_statuses=source_statuses,
+            report_payload=report_payload,
+            collected_count=len(collected),
+            selected_count=len(prepared),
+            ai_generated=False,
+            failure_exit_code=4,
+        )
+
+    report_payload["notation_ai_generated"] = apply_ai_scientific_notation(
+        prepared,
+        report_payload,
+        options.model,
+        profile,
+        enabled=not options.no_openai,
+        provider_override=options.llm_provider,
+    )
+    output_path = create_document(
+        prepared,
+        report_payload,
+        options.report_date,
+        options.output_dir,
+        profile,
+        diagnostics=diagnostics,
+        source_statuses=source_statuses,
+    )
+    return ReportGenerationResult(
+        output_path=output_path,
+        selected_items=prepared,
+        source_statuses=source_statuses,
+        report_payload=report_payload,
+        collected_count=len(collected),
+        selected_count=len(prepared),
+        ai_generated=bool(report_payload.get("ai_generated")),
+        failure_exit_code=None,
+    )
 
 
 def main() -> int:

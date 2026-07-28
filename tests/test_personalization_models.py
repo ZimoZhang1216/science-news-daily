@@ -1,0 +1,261 @@
+import unittest
+from datetime import date, datetime, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
+
+import main
+from personalization.models import (
+    ProfileRecommendation,
+    RecommendationRequest,
+    ResearchProfileInput,
+    ScheduleInput,
+    UserInput,
+)
+from personalization.profile import compose_effective_profile, item_matches_research_profile
+
+
+class PersonalizationModelTests(unittest.TestCase):
+    def valid_profile(self) -> ResearchProfileInput:
+        return ResearchProfileInput.from_form(
+            base_profile="chemistry",
+            research_topic="Lithium metal batteries",
+            include_keywords="",
+            exclude_keywords="",
+            source_ids=(),
+            journal_ids=(),
+            content_preferences=(),
+            max_items=12,
+            llm_provider="openai",
+            llm_model="gpt-5.4-mini",
+            output_formats=("docx",),
+        )
+
+    def test_recommendation_request_requires_the_three_operator_inputs(self) -> None:
+        with self.assertRaisesRegex(ValueError, "research_topic is required"):
+            RecommendationRequest.from_form("张三", "reader@example.com", "")
+
+    def test_recommendation_result_uses_a_disabled_schedule(self) -> None:
+        result = ProfileRecommendation(
+            profile=self.valid_profile(),
+            schedule=ScheduleInput.from_form("daily", None, "Asia/Shanghai", "07:30", False),
+            rationale="课题聚焦固态电池界面。",
+            uncertainty="未指定期刊，因此使用基础学科期刊池。",
+        )
+
+        self.assertFalse(result.schedule.enabled)
+
+    def test_recommendation_result_rejects_an_enabled_schedule(self) -> None:
+        with self.assertRaisesRegex(ValueError, "schedule.enabled must be False"):
+            ProfileRecommendation(
+                profile=self.valid_profile(),
+                schedule=ScheduleInput.from_form("daily", None, "Asia/Shanghai", "07:30", True),
+                rationale="课题聚焦固态电池界面。",
+                uncertainty="未指定期刊，因此使用基础学科期刊池。",
+            )
+
+    def test_profile_input_normalizes_keywords_and_rejects_unknown_base_profile(self) -> None:
+        profile = ResearchProfileInput.from_form(
+            base_profile="chemistry",
+            research_topic="Lithium metal batteries",
+            include_keywords="SEI; solid electrolyte, SEI",
+            exclude_keywords="review",
+            source_ids=("arxiv", "pubmed"),
+            journal_ids=(),
+            content_preferences=("mechanism",),
+            max_items=12,
+            llm_provider="openai",
+            llm_model="gpt-5.4-mini",
+            output_formats=("docx", "pdf"),
+        )
+
+        self.assertEqual(profile.include_keywords, ("sei", "solid electrolyte"))
+        self.assertEqual(profile.exclude_keywords, ("review",))
+        with self.assertRaisesRegex(ValueError, "base_profile"):
+            ResearchProfileInput.from_form(
+                base_profile="unknown",
+                research_topic="x",
+                include_keywords="",
+                exclude_keywords="",
+                source_ids=(),
+                journal_ids=(),
+                content_preferences=(),
+                max_items=12,
+                llm_provider="openai",
+                llm_model="gpt-5.4-mini",
+                output_formats=("pdf",),
+            )
+
+    def test_weekly_schedule_requires_a_weekday_and_valid_timezone(self) -> None:
+        with self.assertRaisesRegex(ValueError, "weekday"):
+            ScheduleInput.from_form("weekly", None, "Asia/Shanghai", "07:30", True)
+        with self.assertRaisesRegex(ValueError, "timezone"):
+            ScheduleInput.from_form("daily", None, "Mars/Olympus", "07:30", True)
+
+    def test_user_input_requires_an_email_address(self) -> None:
+        user = UserInput.from_form("Alice", "alice@example.test", "active")
+        self.assertEqual(user.email, "alice@example.test")
+        with self.assertRaisesRegex(ValueError, "email"):
+            UserInput.from_form("Alice", "not-an-email", "active")
+
+
+class PersonalizationProfileTests(unittest.TestCase):
+    def make_profile(
+        self,
+        *,
+        source_ids: tuple[str, ...] = (),
+        journal_ids: tuple[str, ...] = (),
+        content_preferences: tuple[str, ...] = (),
+        include_keywords: str = "",
+        exclude_keywords: str = "",
+    ) -> ResearchProfileInput:
+        return ResearchProfileInput.from_form(
+            base_profile="chemistry",
+            research_topic="Lithium metal batteries",
+            include_keywords=include_keywords,
+            exclude_keywords=exclude_keywords,
+            source_ids=source_ids,
+            journal_ids=journal_ids,
+            content_preferences=content_preferences,
+            max_items=12,
+            llm_provider="openai",
+            llm_model="gpt-5.4-mini",
+            output_formats=("docx", "pdf"),
+        )
+
+    def test_effective_profile_is_a_copy_with_a_personal_title(self) -> None:
+        profile = self.make_profile(include_keywords="solid electrolyte", exclude_keywords="review")
+
+        effective = compose_effective_profile(profile, "usr_001")
+        base = main.resolve_profile("chemistry")
+
+        self.assertEqual(effective["title"], "Lithium metal batteries 科研资讯日报")
+        self.assertIn("solid electrolyte", effective["relevance_terms"])
+        self.assertNotIn("solid electrolyte", base["relevance_terms"])
+
+    def test_exclude_keyword_wins_and_include_keyword_is_required_when_configured(self) -> None:
+        profile = self.make_profile(include_keywords="battery", exclude_keywords="review")
+
+        self.assertFalse(
+            item_matches_research_profile(
+                main.NewsItem("Battery review", "arXiv", None, "https://e.test/1"), profile
+            )
+        )
+        self.assertFalse(
+            item_matches_research_profile(
+                main.NewsItem("Protein folding", "arXiv", None, "https://e.test/2"), profile
+            )
+        )
+        self.assertTrue(
+            item_matches_research_profile(
+                main.NewsItem("Battery interface transport", "arXiv", None, "https://e.test/3"),
+                profile,
+            )
+        )
+
+    def test_selected_sources_and_preference_change_only_the_effective_profile(self) -> None:
+        profile = self.make_profile(
+            source_ids=("pubmed",),
+            journal_ids=("0002-7863",),
+            content_preferences=("mechanism",),
+        )
+
+        effective = compose_effective_profile(profile, "usr_001")
+
+        self.assertEqual(effective["enabled_source_ids"], ("pubmed",))
+        self.assertEqual([journal["source"] for journal in effective["crossref_journals"]], ["JACS"])
+        self.assertIn("mechanism", effective["custom_preference_terms"])
+
+
+class CapturingSmtp:
+    def __init__(self) -> None:
+        self.messages = []
+
+    def __enter__(self) -> "CapturingSmtp":
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        return None
+
+    def login(self, username: str, password: str) -> None:
+        return None
+
+    def send_message(self, message):
+        self.messages.append(message)
+        return {}
+
+
+class ReportGenerationApiTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tempdir = TemporaryDirectory()
+        self.profile = main.resolve_profile("chemistry")
+
+    def tearDown(self) -> None:
+        self.tempdir.cleanup()
+
+    def test_generate_report_applies_user_filter_after_existing_collection(self) -> None:
+        item = main.NewsItem(
+            "Battery interface transport",
+            "arXiv",
+            datetime(2026, 7, 28, tzinfo=timezone.utc),
+            "https://e.test/b",
+            abstract="Battery ion transport study.",
+        )
+        options = main.ReportGenerationOptions(
+            days=1,
+            max_items=10,
+            min_items=1,
+            source_limit=10,
+            max_ai_items=10,
+            llm_provider="openai",
+            model="",
+            report_date=date(2026, 7, 28),
+            output_dir=Path(self.tempdir.name),
+            require_ai=False,
+            no_openai=False,
+        )
+        output_path = Path(self.tempdir.name) / "report.docx"
+        payload = main.fallback_report_payload([item], self.profile)
+        with (
+            patch.object(main, "collect_items", return_value=([item], [main.SourceStatus("arXiv", True, 1)])),
+            patch("network_check.run_network_checks", return_value=type("Diagnostics", (), {"network_ok": True, "summary_lines": lambda self: []})()),
+            patch.object(main, "generate_ai_summaries", return_value=payload),
+            patch.object(main, "apply_ai_scientific_notation", return_value=False),
+            patch.object(main, "create_document", return_value=output_path),
+        ):
+            result = main.generate_report(
+                options,
+                self.profile,
+                item_filter=lambda candidate: "battery" in candidate.title.casefold(),
+            )
+
+        self.assertEqual(result.selected_count, 1)
+        self.assertEqual(result.output_path, output_path)
+
+    def test_send_report_email_uses_explicit_custom_recipient_without_profile_fallback(self) -> None:
+        pdf_path = Path(self.tempdir.name) / "preview.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4\n")
+        smtp = CapturingSmtp()
+        environment = {
+            "EMAIL_ENABLED": "true",
+            "SMTP_HOST": "smtp.test",
+            "SMTP_USERNAME": "sender@test",
+            "SMTP_PASSWORD": "x",
+            "SMTP_FROM": "sender@test",
+            "SMTP_SECURITY": "ssl",
+            "REPORT_EMAIL_TO": "wrong@test",
+        }
+
+        with patch.dict("os.environ", environment, clear=True), patch.object(
+            main.smtplib, "SMTP_SSL", return_value=smtp
+        ):
+            sent = main.send_report_email(
+                pdf_path,
+                date(2026, 7, 28),
+                self.profile,
+                ai_generated=True,
+                recipient_override=["client@test"],
+            )
+
+        self.assertTrue(sent)
+        self.assertEqual(smtp.messages[0]["To"], "client@test")

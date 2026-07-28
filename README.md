@@ -349,6 +349,55 @@ curl -L -X POST \
 
 GitHub Actions 只调用公开 API/RSS/元数据接口和你配置的模型 API，不会自动登录学校账号，也不会下载受版权保护的 PDF。
 
+## 专属日报运营面板
+
+仓库新增了一个本地 Streamlit 运营面板，用于维护客户级科研日报。它不会替换现有的 5 套固定学科画像和 11 个 workflow；专属日报仍复用既有的抓取、排序、AI、DOCX、PDF 和 SMTP 路径，只是按保存的客户画像筛选与发送。
+
+面板支持创建和版本化客户科研画像：研究主题、包含/排除词、来源、期刊 ISSN、内容偏好、条目上限、模型、输出格式和发送计划。保存新版画像不会改写已经生成的历史日报配置。
+
+### 新用户开通与预览确认
+
+专属日报必须按以下顺序开通：
+
+```text
+必填信息 → 使用当前配置 provider 的大模型建议（可编辑） → 生成预览（不发邮件）
+→ 启用计划 → 下一个固定发送时间自动邮件
+```
+
+先填写姓名、收件邮箱和研究方向，再由面板生成可编辑的研究画像与计划建议；保存画像后只会创建预览任务。预览会生成并上传 DOCX/PDF artifact，绝不会向收件人发邮件。确认预览内容后，点击“启用固定频率计划”才会启用计划；系统会重新计算严格晚于启用时刻的下一次固定发送时间，并由 `Custom User Research Daily` workflow 的 15 分钟扫描在该时间后自动发送。
+
+面板的“系统建议”与日报 runner 共用当前配置的模型供应商和凭据：使用 `LLM_PROVIDER` 选择 `openai` 或 `deepseek`，并配置对应的 `OPENAI_API_KEY` 或 `DEEPSEEK_API_KEY`（以及可选模型名）。若当前 provider 缺少或无法使用模型 Key，面板不会静默使用规则模板或其他 fallback 生成建议；它会保留必填信息并提示修正模型配置后重试。
+
+在私有 `.env` 中配置以下变量；`.env.example` 只保留空变量名：
+
+```text
+TURSO_DATABASE_URL=
+TURSO_AUTH_TOKEN=
+PERSONAL_ADMIN_GITHUB_REPOSITORY=owner/repository
+GITHUB_DISPATCH_TOKEN=
+```
+
+`TURSO_*` 用于保存画像、计划、报告历史和投递状态。`PERSONAL_ADMIN_GITHUB_REPOSITORY` 与 `GITHUB_DISPATCH_TOKEN` 使本地面板可以请求专用的 `Custom User Research Daily` GitHub workflow。Token 只能保存在本地环境，不能写入仓库。
+
+本地开发可以不使用 Turso，而使用被 Git 忽略的 SQLite 文件：
+
+```bash
+export PERSONAL_ADMIN_LOCAL_DB=".personal-admin/dashboard.db"
+streamlit run dashboard/app.py
+```
+
+日常使用配置 Turso 后，去掉 `PERSONAL_ADMIN_LOCAL_DB` 并执行相同命令：
+
+```bash
+streamlit run dashboard/app.py
+```
+
+`Custom User Research Daily` workflow 每 15 分钟扫描一次到期的启用计划。自动日报在生成成功后直接投递；手动路径保持独立，只生成供检查的预览 artifact，不发送邮件。每个自动“用户/日期/渠道”组合有幂等键，手动预览也只能确认一次。
+
+启用该 workflow 前，把上述数据库、模型和 SMTP 变量作为 GitHub Actions secrets 配置，并额外加入 `TURSO_DATABASE_URL` 与 `TURSO_AUTH_TOKEN`。专属日报 workflow 使用 Python 3.11，并安装 `libsql` 直接连接 Turso。
+
+操作建议：编辑正在服务的客户前先在 Users 页面暂停该客户；保存后会创建新的画像版本，下一次新建报告才使用新版。手动预览 artifact 在 GitHub Actions 中保留 14 天；过期后需要重新生成预览。自动投递失败最多自动重试 3 次，且每 15 分钟扫描最多尝试一次。任务在 120 分钟内未完成会被保守地标为待重试，不会在同一轮扫描立即再次发送。
+
 ## 输出结构
 
 Word 文档包含：
