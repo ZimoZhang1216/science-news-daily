@@ -377,7 +377,9 @@ PERSONAL_ADMIN_GITHUB_REPOSITORY=owner/repository
 GITHUB_DISPATCH_TOKEN=
 ```
 
-`TURSO_*` 用于保存画像、计划、报告历史和投递状态。`PERSONAL_ADMIN_GITHUB_REPOSITORY` 与 `GITHUB_DISPATCH_TOKEN` 使本地面板可以请求专用的 `Custom User Research Daily` GitHub workflow。Token 只能保存在本地环境，不能写入仓库。
+`TURSO_*` 用于保存画像、计划、报告历史和投递状态。日常面板会在本机维护一个 Turso 读取副本：切换页面、查看用户和投递记录只读取本地副本；点击侧栏的“同步当前状态”才会刷新 GitHub Actions 写入的云端状态。首次启动不会自动联网；首次或缓存为空时，点击该按钮即可建立可读取副本。需要自定义本机缓存位置时，可设置 `PERSONAL_ADMIN_REPLICA_PATH`。`PERSONAL_ADMIN_GITHUB_REPOSITORY` 与 `GITHUB_DISPATCH_TOKEN` 使本地面板可以请求专用的 `Custom User Research Daily` GitHub workflow。Token 只能保存在本地环境，不能写入仓库。
+
+当前使用的 libsql Embedded Replica 只将读取保存在本机；用户画像、计划和暂停状态的写入会直接提交到 Turso 云端主库。因此同步按钮用于拉取最新状态，而不是上传待提交修改。同步临时失败时，面板仍会显示上次已同步的数据；如果尚未成功同步过，面板会显示可重试的空状态，不会执行数据库查询或触发任务。对于一个尚未初始化的空 Turso 数据库，首次成功点击同步会建立项目既有表结构，再读取本地副本。
 
 本地开发可以不使用 Turso，而使用被 Git 忽略的 SQLite 文件：
 
