@@ -199,7 +199,7 @@ macOS/Linux 可以用 cron，例如每天早上 8 点运行：
 
 ## GitHub Actions 自动运行
 
-项目现在把 GitHub Actions 拆成 11 个独立 workflow，避免“手动测试、私人邮箱、每日自动任务”互相干扰。
+项目现在把 GitHub Actions 拆成固定日报、手动预览和统一用户调度等独立 workflow，避免“手动测试、私人邮箱、每日自动任务”互相干扰。
 
 单科目标收件人 workflow：
 
@@ -223,6 +223,7 @@ macOS/Linux 可以用 cron，例如每天早上 8 点运行：
 - 监听 `repository_dispatch` 的 `event_type=science-news-daily`，也保留 `workflow_dispatch` 便于手动测试。
 - 每次运行固定生成化学、有机化学、生物、统计学四份日报；仅当 `BUSINESS_REPORT_EMAIL_TO` 非空时追加工商管理日报。未配置该变量不会令既有四科失败，也不会把工商管理日报发给 `REPORT_EMAIL_TO`。
 - `repository_dispatch` 成功后会保存当天 marker，避免外部定时器重复请求导致当天重复发送。
+- 同一次外部唤醒还会运行数据库驱动的用户计划调度器；固定日报的当天 marker 不会跳过用户计划扫描。
 
 所有发邮件 workflow 都强制使用：
 
@@ -283,7 +284,13 @@ workflow 会安装 LibreOffice Writer 和 Noto CJK 字体，用于把本地保�
 
 ### 外部定时器触发
 
-使用 cron-job.org、UptimeRobot、服务器 cron、Cloudflare Workers Cron Trigger 等外部定时器，每天北京时间 07:30 调用 GitHub `repository_dispatch` API。仓库内的自动入口只有 `.github/workflows/cronjob-daily.yml`，不会再由各个单科手动 workflow 接收外部定时器事件。
+使用 cron-job.org、UptimeRobot、服务器 cron、Cloudflare Workers Cron Trigger 等外部定时器，每 30 分钟调用 GitHub `repository_dispatch` API。仓库内的自动入口只有 `.github/workflows/cronjob-daily.yml`；外部定时器不需要知道用户、计划或收件人。
+
+例如 cron 表达式为：
+
+```cron
+*/30 * * * *
+```
 
 先创建一个 GitHub fine-grained personal access token：
 
@@ -309,7 +316,7 @@ workflow 会安装 LibreOffice Writer 和 Noto CJK 字体，用于把本地保�
 }
 ```
 
-外部定时器不需要传 `profiles`；`Cronjob Daily Research News` 会固定运行化学、有机化学、生物、统计学四份日报，并在 `BUSINESS_REPORT_EMAIL_TO` 已配置时追加工商管理日报。
+外部定时器不需要传 `profiles`；`Cronjob Daily Research News` 会固定运行化学、有机化学、生物、统计学四份日报，并在 `BUSINESS_REPORT_EMAIL_TO` 已配置时追加工商管理日报。同时，它会在 Turso/SQLite 中领取有限数量的到期用户计划。单次最多领取 `MAX_JOBS_PER_RUN`（默认 10）个用户任务，并在 `MAX_RUNTIME_MINUTES`（默认 80）预算内停止领取新任务；未领取任务保留到下一次唤醒。
 
 服务器上也可以用 curl 测试：
 
@@ -364,7 +371,7 @@ GitHub Actions 只调用公开 API/RSS/元数据接口和你配置的模型 API�
 → 启用计划 → 下一个固定发送时间自动邮件
 ```
 
-先填写姓名、收件邮箱和研究方向，再由面板生成可编辑的研究画像与计划建议；保存画像后只会创建预览任务。预览会生成并上传 DOCX/PDF artifact，绝不会向收件人发邮件。确认预览内容后，点击“启用固定频率计划”才会启用计划；系统会重新计算严格晚于启用时刻的下一次固定发送时间，并由 `Custom User Research Daily` workflow 的 15 分钟扫描在该时间后自动发送。
+先填写姓名、收件邮箱和研究方向，再由面板生成可编辑的研究画像与计划建议；保存画像后只会创建预览任务。预览会生成并上传 DOCX/PDF artifact，绝不会向收件人发邮件。确认预览内容后，点击“启用固定频率计划”才会启用计划；系统会重新计算严格晚于启用时刻的下一次固定发送时间，并由统一 `Cronjob Daily Research News` workflow 的 30 分钟唤醒在该时间后自动发送。
 
 面板的“系统建议”与日报 runner 共用当前配置的模型供应商和凭据：使用 `LLM_PROVIDER` 选择 `openai` 或 `deepseek`，并配置对应的 `OPENAI_API_KEY` 或 `DEEPSEEK_API_KEY`（以及可选模型名）。若当前 provider 缺少或无法使用模型 Key，面板不会静默使用规则模板或其他 fallback 生成建议；它会保留必填信息并提示修正模型配置后重试。
 
@@ -373,6 +380,9 @@ GitHub Actions 只调用公开 API/RSS/元数据接口和你配置的模型 API�
 ```text
 TURSO_DATABASE_URL=
 TURSO_AUTH_TOKEN=
+MAX_JOBS_PER_RUN=10
+MAX_RUNTIME_MINUTES=80
+CUSTOM_DELIVERY_LEASE_MINUTES=120
 PERSONAL_ADMIN_GITHUB_REPOSITORY=owner/repository
 GITHUB_DISPATCH_TOKEN=
 ```
@@ -388,17 +398,21 @@ export PERSONAL_ADMIN_LOCAL_DB=".personal-admin/dashboard.db"
 streamlit run dashboard/app.py
 ```
 
+同一个 `PERSONAL_ADMIN_LOCAL_DB` 也可让 `custom_user_daily.py scan` 使用 SQLite，便于本地调度验证；GitHub Actions 生产运行仍使用 Turso。两种模式共用同一套迁移、幂等键和条件领取逻辑。
+
 日常使用配置 Turso 后，去掉 `PERSONAL_ADMIN_LOCAL_DB` 并执行相同命令：
 
 ```bash
 streamlit run dashboard/app.py
 ```
 
-`Custom User Research Daily` workflow 每 15 分钟扫描一次到期的启用计划。自动日报在生成成功后直接投递；手动路径保持独立，只生成供检查的预览 artifact，不发送邮件。每个自动“用户/日期/渠道”组合有幂等键，手动预览也只能确认一次。
+自动用户计划不再使用独立的 GitHub `schedule`。外部 cronjob 每 30 分钟触发统一 workflow，调度器只扫描 `active` 用户的启用计划和已到期的 UTC `next_run_at`。手动 `Custom User Research Daily` workflow 保留 preview/retry dispatch，仅用于运营操作。
 
-启用该 workflow 前，把上述数据库、模型和 SMTP 变量作为 GitHub Actions secrets 配置，并额外加入 `TURSO_DATABASE_URL` 与 `TURSO_AUTH_TOKEN`。专属日报 workflow 使用 Python 3.11，并安装 `libsql` 直接连接 Turso。
+每个自动投递使用“用户 ID + 计划 ID + UTC 应执行周期 + 渠道”的唯一幂等键；数据库使用条件更新记录执行 ID、锁定者、锁定时间和尝试次数，多个 workflow 不能领取同一周期。成功投递后才会按用户时区推进 `next_run_at`，因此延迟唤醒只补当前欠送周期，不会跳过失败任务或一次性补发多期。失败会记录抓取、AI、Word、PDF、邮件或数据库阶段，并按 30、60 分钟的退避重试，最多 3 次；第三次失败会转为最终失败，等待运营处理而不会伪装成“等待重试”。`claimed` 任务超过 `CUSTOM_DELIVERY_LEASE_MINUTES` 会进入下一轮可重试状态；已进入 SMTP `sending` 后超时、SMTP 传输异常或邮件成功后数据库状态写入异常，都会标为“投递结果未知”，默认不自动重发，避免 SMTP 已接收但数据库尚未写回时的重复邮件。只有 SMTP 明确返回未发送时才进入自动重试；“结果未知”需要运营者人工核验后处理。
 
-操作建议：编辑正在服务的客户前先在 Users 页面暂停该客户；保存后会创建新的画像版本，下一次新建报告才使用新版。手动预览 artifact 在 GitHub Actions 中保留 14 天；过期后需要重新生成预览。自动投递失败最多自动重试 3 次，且每 15 分钟扫描最多尝试一次。任务在 120 分钟内未完成会被保守地标为待重试，不会在同一轮扫描立即再次发送。
+启用统一调度前，把数据库、模型和 SMTP 变量作为 GitHub Actions secrets 配置，并额外加入 `TURSO_DATABASE_URL` 与 `TURSO_AUTH_TOKEN`。可将 `MAX_JOBS_PER_RUN`、`MAX_RUNTIME_MINUTES` 和 `CUSTOM_DELIVERY_LEASE_MINUTES` 配置为 GitHub Actions repository variables。运行摘要只输出任务数量，不输出邮箱、SMTP 密码、API Key 或 Turso Token。
+
+操作建议：编辑正在服务的客户前先在 Users 页面暂停该客户；保存后会创建新的画像版本，下一次新建报告才使用新版。手动预览 artifact 在 GitHub Actions 中保留 14 天；过期后需要重新生成预览。用户的发送时间在界面按其 IANA 时区显示，数据库保存 UTC；夏令时歧义时间取第一次出现，不存在的本地时间向前顺延。自动投递失败最多自动重试 3 次，且不会在同一轮扫描立即再次发送。
 
 ## 输出结构
 

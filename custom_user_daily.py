@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -55,7 +57,14 @@ def main() -> int:
     services = default_services(output_root)
 
     if args.command == "scan":
-        return run_due_deliveries(repository, datetime.now(UTC), services)
+        summary = run_due_deliveries(
+            repository,
+            datetime.now(UTC),
+            services,
+            execution_id=os.getenv("GITHUB_RUN_ID", "").strip() or f"scheduler-{uuid.uuid4().hex}",
+        )
+        print(f"scheduler_summary={json.dumps(summary.as_dict(), sort_keys=True)}")
+        return summary.exit_code
     if args.command == "preview":
         return generate_preview(repository, _require_delivery_id(parser, args.delivery_id), services)
     if args.command == "artifact-metadata":

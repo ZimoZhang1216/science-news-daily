@@ -4711,6 +4711,10 @@ def convert_docx_to_pdf(docx_path: Path) -> Path | None:
     return pdf_path
 
 
+class EmailTransportUncertainError(RuntimeError):
+    """SMTP transport ended without a reliable delivery outcome."""
+
+
 def send_report_email(
     attachment_path: Path,
     report_date: date,
@@ -4718,6 +4722,7 @@ def send_report_email(
     is_failure: bool = False,
     ai_generated: bool = False,
     recipient_override: list[str] | None = None,
+    raise_on_transport_error: bool = False,
 ) -> bool:
     if not env_flag("EMAIL_ENABLED", True):
         LOGGER.info("Email sending is disabled by EMAIL_ENABLED.")
@@ -4819,17 +4824,29 @@ def send_report_email(
     last_error: Exception | None = None
     for option_index, (recipient_label, recipients) in enumerate(recipient_options, start=1):
         message = build_message(recipients)
+        smtp: Any | None = None
         try:
             if smtp_security == "ssl":
-                with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=30) as smtp:
-                    smtp.login(smtp_username, smtp_password)
-                    refused = smtp.send_message(message)
+                smtp = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=30)
             else:
-                with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as smtp:
-                    if smtp_security in {"starttls", "tls"}:
-                        smtp.starttls()
-                    smtp.login(smtp_username, smtp_password)
-                    refused = smtp.send_message(message)
+                smtp = smtplib.SMTP(smtp_host, smtp_port, timeout=30)
+                if smtp_security in {"starttls", "tls"}:
+                    smtp.starttls()
+            smtp.login(smtp_username, smtp_password)
+        except Exception as exc:  # noqa: BLE001 - this occurs before SMTP DATA is attempted.
+            last_error = exc
+            LOGGER.warning("Email connection or authentication failed via %s: %s", recipient_label, type(exc).__name__)
+            if smtp is not None:
+                try:
+                    smtp.close()
+                except Exception:  # noqa: BLE001 - best-effort cleanup only.
+                    pass
+            if option_index < len(recipient_options):
+                LOGGER.warning("Trying fallback recipients from %s.", recipient_options[option_index][0])
+                continue
+            return False
+        try:
+            refused = smtp.send_message(message)
         except smtplib.SMTPRecipientsRefused as exc:
             last_error = exc
             LOGGER.warning("Email recipients from %s were refused: %s", recipient_label, refused_summary(exc.recipients))
@@ -4837,25 +4854,46 @@ def send_report_email(
                 LOGGER.warning("Trying fallback recipients from %s.", recipient_options[option_index][0])
                 continue
             return False
+        except (smtplib.SMTPSenderRefused, smtplib.SMTPDataError, smtplib.SMTPHeloError) as exc:
+            last_error = exc
+            LOGGER.warning("SMTP rejected email via %s: %s", recipient_label, type(exc).__name__)
+            return False
         except Exception as exc:  # noqa: BLE001 - email failure should not invalidate the report.
             last_error = exc
-            LOGGER.warning("Email sending failed via %s: %s", recipient_label, exc)
-            if option_index < len(recipient_options):
-                LOGGER.warning("Trying fallback recipients from %s.", recipient_options[option_index][0])
-                continue
+            LOGGER.warning("Email sending failed via %s: %s", recipient_label, type(exc).__name__)
+            if raise_on_transport_error:
+                raise EmailTransportUncertainError(type(exc).__name__) from exc
             return False
+        finally:
+            if smtp is not None:
+                try:
+                    smtp.quit()
+                except Exception:  # noqa: BLE001 - the SMTP result above is already authoritative.
+                    try:
+                        smtp.close()
+                    except Exception:  # noqa: BLE001 - best-effort cleanup only.
+                        pass
 
         if refused:
             LOGGER.warning("Email sent with refused recipients via %s: %s", recipient_label, refused_summary(refused))
+            if raise_on_transport_error and len(refused) < len(recipients):
+                raise EmailTransportUncertainError("SMTPPartialRecipientRefusal")
             if option_index < len(recipient_options):
                 LOGGER.warning("Trying fallback recipients from %s.", recipient_options[option_index][0])
                 continue
             return False
 
-        LOGGER.info("Sent report email to %s with PDF attachment %s", ", ".join(recipients), email_attachment_path)
+        LOGGER.info(
+            "Sent report email to %d recipient(s) with PDF attachment %s",
+            len(recipients),
+            email_attachment_path.name,
+        )
         return True
 
-    LOGGER.warning("Email sending failed: %s", last_error or "no recipient options")
+    LOGGER.warning(
+        "Email sending failed: %s",
+        type(last_error).__name__ if last_error is not None else "no recipient options",
+    )
     return False
 
 
@@ -5093,6 +5131,7 @@ class ReportGenerationResult:
     selected_count: int
     ai_generated: bool
     failure_exit_code: int | None
+    failure_stage: str | None = None
 
 
 def generate_report(
@@ -5149,6 +5188,7 @@ def generate_report(
             selected_count=0,
             ai_generated=False,
             failure_exit_code=4 if options.require_ai else failure_exit_code,
+            failure_stage="fetch",
         )
 
     if options.no_openai:
@@ -5170,6 +5210,7 @@ def generate_report(
                 selected_count=len(prepared),
                 ai_generated=False,
                 failure_exit_code=4,
+                failure_stage="ai",
             )
         report_payload = generate_ai_summaries(
             prepared,
@@ -5190,6 +5231,7 @@ def generate_report(
             selected_count=len(prepared),
             ai_generated=False,
             failure_exit_code=4,
+            failure_stage="ai",
         )
 
     report_payload["notation_ai_generated"] = apply_ai_scientific_notation(
@@ -5200,15 +5242,29 @@ def generate_report(
         enabled=not options.no_openai,
         provider_override=options.llm_provider,
     )
-    output_path = create_document(
-        prepared,
-        report_payload,
-        options.report_date,
-        options.output_dir,
-        profile,
-        diagnostics=diagnostics,
-        source_statuses=source_statuses,
-    )
+    try:
+        output_path = create_document(
+            prepared,
+            report_payload,
+            options.report_date,
+            options.output_dir,
+            profile,
+            diagnostics=diagnostics,
+            source_statuses=source_statuses,
+        )
+    except Exception as exc:  # noqa: BLE001 - keep the scheduler retryable after document failure.
+        LOGGER.error("Word document generation failed: %s", type(exc).__name__)
+        return ReportGenerationResult(
+            output_path=None,
+            selected_items=prepared,
+            source_statuses=source_statuses,
+            report_payload=report_payload,
+            collected_count=len(collected),
+            selected_count=len(prepared),
+            ai_generated=bool(report_payload.get("ai_generated")),
+            failure_exit_code=5,
+            failure_stage="word",
+        )
     return ReportGenerationResult(
         output_path=output_path,
         selected_items=prepared,
