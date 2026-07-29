@@ -261,6 +261,41 @@ class ReportGenerationApiTests(unittest.TestCase):
         self.assertEqual(result.selected_count, 1)
         self.assertEqual(result.output_path, output_path)
 
+    def test_generate_report_falls_back_to_base_profile_results_when_keywords_are_too_narrow(self) -> None:
+        item = main.NewsItem(
+            "Economic policy evidence",
+            "OpenAlex",
+            datetime(2026, 7, 28, tzinfo=timezone.utc),
+            "https://e.test/economics",
+            abstract="Recent economics research.",
+        )
+        options = main.ReportGenerationOptions(
+            days=3,
+            max_items=10,
+            min_items=1,
+            source_limit=10,
+            max_ai_items=10,
+            llm_provider="openai",
+            model="",
+            report_date=date(2026, 7, 28),
+            output_dir=Path(self.tempdir.name),
+            require_ai=False,
+            no_openai=False,
+        )
+        output_path = Path(self.tempdir.name) / "report.docx"
+        payload = main.fallback_report_payload([item], self.profile)
+        with (
+            patch.object(main, "collect_items", return_value=([item], [main.SourceStatus("OpenAlex", True, 1)])),
+            patch("network_check.run_network_checks", return_value=type("Diagnostics", (), {"network_ok": True, "summary_lines": lambda self: []})()),
+            patch.object(main, "generate_ai_summaries", return_value=payload),
+            patch.object(main, "apply_ai_scientific_notation", return_value=False),
+            patch.object(main, "create_document", return_value=output_path),
+        ):
+            result = main.generate_report(options, self.profile, item_filter=lambda _candidate: False)
+
+        self.assertEqual(result.selected_count, 1)
+        self.assertEqual(result.output_path, output_path)
+
     def test_send_report_email_uses_explicit_custom_recipient_without_profile_fallback(self) -> None:
         pdf_path = Path(self.tempdir.name) / "preview.pdf"
         pdf_path.write_bytes(b"%PDF-1.4\n")

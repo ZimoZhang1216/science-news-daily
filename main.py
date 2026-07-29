@@ -5682,6 +5682,12 @@ def generate_report(
     args = argparse.Namespace(source_limit=options.source_limit)
     collected, source_statuses = collect_items(args, since, now, profile)
     filtered = [item for item in collected if item_filter is None or item_filter(item)]
+    if item_filter is not None and not filtered and collected:
+        # Source collectors already enforce the base discipline profile.  A
+        # strict user-keyword pass can otherwise turn a useful low-volume
+        # daily into an empty report, so retain those base-relevant items.
+        LOGGER.warning("No items matched the custom keyword filter; using base-profile results as a fallback.")
+        filtered = collected
     prepared = prepare_items(
         filtered,
         options.max_items,
