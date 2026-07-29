@@ -381,6 +381,15 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertEqual(views.SOURCE_LABELS["hackernews"], "Hacker News 社区信号")
         self.assertEqual(views.SOURCE_LABELS["github_releases"], "GitHub Releases 社区信号")
 
+    def test_user_profile_ui_exposes_a_one_to_sixty_day_information_window(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "dashboard/views.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertEqual(source.count('"资讯时间窗口（天）"'), 2)
+        self.assertIn("min_value=1", source)
+        self.assertIn("max_value=60", source)
+
     def test_preview_ready_copy_never_offers_manual_email_send(self) -> None:
         self.create_preview_ready_user_with_disabled_schedule()
         app = self.local_dashboard_app()

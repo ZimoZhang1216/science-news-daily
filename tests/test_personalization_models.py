@@ -18,7 +18,7 @@ from personalization.profile import compose_effective_profile, item_matches_rese
 
 
 class PersonalizationModelTests(unittest.TestCase):
-    def valid_profile(self) -> ResearchProfileInput:
+    def valid_profile(self, *, lookback_days: int = 3) -> ResearchProfileInput:
         return ResearchProfileInput.from_form(
             base_profile="chemistry",
             research_topic="Lithium metal batteries",
@@ -31,6 +31,7 @@ class PersonalizationModelTests(unittest.TestCase):
             llm_provider="openai",
             llm_model="gpt-5.4-mini",
             output_formats=("docx",),
+            lookback_days=lookback_days,
         )
 
     def test_recommendation_request_requires_the_three_operator_inputs(self) -> None:
@@ -69,10 +70,12 @@ class PersonalizationModelTests(unittest.TestCase):
             llm_provider="openai",
             llm_model="gpt-5.4-mini",
             output_formats=("docx", "pdf"),
+            lookback_days=60,
         )
 
         self.assertEqual(profile.include_keywords, ("sei", "solid electrolyte"))
         self.assertEqual(profile.exclude_keywords, ("review",))
+        self.assertEqual(profile.lookback_days, 60)
         with self.assertRaisesRegex(ValueError, "base_profile"):
             ResearchProfileInput.from_form(
                 base_profile="unknown",
@@ -86,7 +89,16 @@ class PersonalizationModelTests(unittest.TestCase):
                 llm_provider="openai",
                 llm_model="gpt-5.4-mini",
                 output_formats=("pdf",),
+                lookback_days=3,
             )
+
+    def test_profile_input_rejects_lookback_windows_outside_one_to_sixty_days(self) -> None:
+        self.assertEqual(self.valid_profile(lookback_days=1).lookback_days, 1)
+        self.assertEqual(self.valid_profile(lookback_days=60).lookback_days, 60)
+        with self.assertRaisesRegex(ValueError, "lookback_days"):
+            self.valid_profile(lookback_days=0)
+        with self.assertRaisesRegex(ValueError, "lookback_days"):
+            self.valid_profile(lookback_days=61)
 
     def test_weekly_schedule_requires_a_weekday_and_valid_timezone(self) -> None:
         with self.assertRaisesRegex(ValueError, "weekday"):

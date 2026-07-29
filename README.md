@@ -416,6 +416,8 @@ streamlit run dashboard/app.py
 
 同一个 `PERSONAL_ADMIN_LOCAL_DB` 也可让 `custom_user_daily.py scan` 使用 SQLite，便于本地调度验证；GitHub Actions 生产运行仍使用 Turso。两种模式共用同一套迁移、幂等键和条件领取逻辑。
 
+每个用户画像还可设置“资讯时间窗口（天）”，范围为 1–60 天，默认 3 天。它只决定日报生成时向前收集多久的资讯；不改变用户的发送频率、当地发送时间、外部 cronjob 的 30 分钟唤醒或跨日报去重窗口。该值随画像版本保存：编辑后只影响之后新建的预览和自动日报；旧用户和旧版本会自动按 3 天兼容。
+
 日常使用配置 Turso 后，去掉 `PERSONAL_ADMIN_LOCAL_DB` 并执行相同命令：
 
 ```bash

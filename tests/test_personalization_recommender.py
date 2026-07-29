@@ -77,6 +77,7 @@ class PersonalizationRecommenderTests(unittest.TestCase):
         self.assertEqual(recommendation.profile.llm_model, "deepseek-v4-flash")
         self.assertEqual(recommendation.profile.research_topic, "固态电池界面离子传导机制")
         self.assertNotEqual(recommendation.profile.research_topic, valid_request().research_topic)
+        self.assertEqual(recommendation.profile.lookback_days, 3)
         self.assertFalse(recommendation.schedule.enabled)
 
     def test_recommender_rejects_a_journal_outside_the_selected_profile(self) -> None:

@@ -100,7 +100,7 @@ def _positive_env_int(name: str, default: int) -> int:
 def _generation_options(context: DeliveryExecutionContext, output_root: Path) -> main.ReportGenerationOptions:
     profile = context.profile.input
     return main.ReportGenerationOptions(
-        days=_positive_env_int("CUSTOM_REPORT_DAYS", 3),
+        days=profile.lookback_days,
         max_items=profile.max_items,
         min_items=1,
         source_limit=_positive_env_int("CHEM_NEWS_SOURCE_LIMIT", 80),

@@ -309,6 +309,15 @@ def _profile_form(repository: PersonalizationRepository) -> None:
             value=profile_recommendation.max_items,
             key="onboarding_max_items",
         )
+        lookback_days = st.number_input(
+            "资讯时间窗口（天）",
+            min_value=1,
+            max_value=60,
+            value=profile_recommendation.lookback_days,
+            step=1,
+            help="控制每份日报收集过去多少天的资讯，不影响发送时间或频率。",
+            key="onboarding_lookback_days",
+        )
         output_formats = st.multiselect(
             "输出格式",
             ["docx", "pdf"],
@@ -370,6 +379,7 @@ def _profile_form(repository: PersonalizationRepository) -> None:
             journal_ids=journal_ids,
             content_preferences=preferences,
             max_items=max_items,
+            lookback_days=lookback_days,
             llm_provider=provider,
             llm_model=model,
             output_formats=output_formats,
@@ -441,6 +451,14 @@ def _edit_profile_form(repository: PersonalizationRepository, user_id: str, disp
                 format_func=lambda value: _label(PREFERENCE_LABELS, value),
             )
             max_items = st.slider("每份日报条目数", 1, 50, current.max_items)
+            lookback_days = st.number_input(
+                "资讯时间窗口（天）",
+                min_value=1,
+                max_value=60,
+                value=current.lookback_days,
+                step=1,
+                help="控制每份日报收集过去多少天的资讯，不影响发送时间或频率。",
+            )
             model_left, model_right = st.columns(2)
             provider = model_left.selectbox(
                 "模型服务商",
@@ -481,6 +499,7 @@ def _edit_profile_form(repository: PersonalizationRepository, user_id: str, disp
                 journal_ids=journal_ids,
                 content_preferences=preferences,
                 max_items=max_items,
+                lookback_days=lookback_days,
                 llm_provider=provider,
                 llm_model=model,
                 output_formats=output_formats,

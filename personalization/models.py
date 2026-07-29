@@ -101,6 +101,7 @@ class ResearchProfileInput:
     journal_ids: tuple[str, ...]
     content_preferences: tuple[str, ...]
     max_items: int
+    lookback_days: int
     llm_provider: str
     llm_model: str
     output_formats: tuple[str, ...]
@@ -120,6 +121,7 @@ class ResearchProfileInput:
         llm_provider: str,
         llm_model: str,
         output_formats: str | Sequence[str],
+        lookback_days: int = 3,
     ) -> "ResearchProfileInput":
         if base_profile not in main.REPORT_PROFILES:
             raise ValueError("base_profile must be an existing report profile")
@@ -128,6 +130,8 @@ class ResearchProfileInput:
             raise ValueError("research_topic is required")
         if not 1 <= max_items <= 50:
             raise ValueError("max_items must be between 1 and 50")
+        if isinstance(lookback_days, bool) or not isinstance(lookback_days, int) or not 1 <= lookback_days <= 60:
+            raise ValueError("lookback_days must be between 1 and 60")
 
         normalised_sources = _normalise_string_list(source_ids)
         invalid_sources = set(normalised_sources) - _SOURCE_IDS
@@ -167,6 +171,7 @@ class ResearchProfileInput:
             journal_ids=_normalise_string_list(journal_ids, casefold=False),
             content_preferences=normalised_preferences,
             max_items=max_items,
+            lookback_days=lookback_days,
             llm_provider=provider,
             llm_model=model,
             output_formats=normalised_formats,

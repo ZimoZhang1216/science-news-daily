@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS research_profiles (
     journal_ids_json TEXT NOT NULL,
     content_preferences_json TEXT NOT NULL,
     max_items INTEGER NOT NULL,
+    lookback_days INTEGER NOT NULL DEFAULT 3,
     llm_provider TEXT NOT NULL,
     llm_model TEXT NOT NULL,
     output_formats_json TEXT NOT NULL,

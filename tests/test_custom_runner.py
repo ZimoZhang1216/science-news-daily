@@ -1,7 +1,9 @@
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from unittest import mock
 
 import main
 from personalization.custom_runner import (
@@ -37,6 +39,7 @@ class CustomRunnerTests(unittest.TestCase):
             ScheduleInput.from_form("daily", None, "Asia/Shanghai", "07:30", True),
         )
         self.mailer_calls: list[Path] = []
+        self.generated_options: list[main.ReportGenerationOptions] = []
 
     def tearDown(self) -> None:
         self.repository.close()
@@ -49,6 +52,7 @@ class CustomRunnerTests(unittest.TestCase):
         history: dict[str, set[str]],
         item_filter,
     ) -> main.ReportGenerationResult:
+        self.generated_options.append(options)
         output_path = options.output_dir / "report.docx"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"docx")
@@ -143,6 +147,24 @@ class CustomRunnerTests(unittest.TestCase):
         self.assertEqual(exit_code, 4)
         self.assertEqual(delivery.status, "retryable_failed")
         self.assertEqual(delivery.error_stage, "pdf")
+
+    def test_preview_uses_the_saved_profile_lookback_window(self) -> None:
+        current = self.repository.get_current_profile(self.user_id).input
+        self.repository.save_profile_version(self.user_id, replace(current, lookback_days=60))
+        claim = self.repository.create_manual_preview(self.user_id, date(2026, 7, 28))
+        services = RunnerServices(
+            generator=self.successful_generator,
+            pdf_converter=self.successful_pdf,
+            mailer=self.fail_if_called,
+            github_run_id="123",
+            output_root=self.output_dir,
+        )
+
+        with mock.patch.dict("os.environ", {"CUSTOM_REPORT_DAYS": "1"}):
+            exit_code = generate_preview(self.repository, claim.delivery_id, services)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(self.generated_options[-1].days, 60)
 
     def test_preview_with_an_unsupported_saved_profile_becomes_retryable(self) -> None:
         """A profile introduced by a newer deployment must not leave a claimed preview stuck."""

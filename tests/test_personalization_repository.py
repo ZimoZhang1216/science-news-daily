@@ -30,7 +30,7 @@ class PersonalizationRepositoryTests(unittest.TestCase):
     def user(self) -> UserInput:
         return UserInput.from_form("Alice", "alice@example.test", "active")
 
-    def profile(self, keyword: str) -> ResearchProfileInput:
+    def profile(self, keyword: str, *, lookback_days: int = 3) -> ResearchProfileInput:
         return ResearchProfileInput.from_form(
             base_profile="chemistry",
             research_topic="Lithium metal batteries",
@@ -43,6 +43,7 @@ class PersonalizationRepositoryTests(unittest.TestCase):
             llm_provider="openai",
             llm_model="gpt-5.4-mini",
             output_formats=("docx", "pdf"),
+            lookback_days=lookback_days,
         )
 
     def daily_schedule(self) -> ScheduleInput:
@@ -69,7 +70,9 @@ class PersonalizationRepositoryTests(unittest.TestCase):
             self.user(), self.profile("battery"), self.daily_schedule()
         )
 
-        version_two = self.repository.save_profile_version(user_id, self.profile("solid electrolyte"))
+        version_two = self.repository.save_profile_version(
+            user_id, self.profile("solid electrolyte", lookback_days=60)
+        )
         current = self.repository.get_current_profile(user_id)
         versions = self.repository.list_profile_versions(user_id)
 
@@ -77,6 +80,29 @@ class PersonalizationRepositoryTests(unittest.TestCase):
         self.assertEqual(current.version, 2)
         self.assertEqual(versions[0].include_keywords, ("battery",))
         self.assertEqual(versions[1].include_keywords, ("solid electrolyte",))
+        self.assertEqual(versions[0].input.lookback_days, 3)
+        self.assertEqual(current.input.lookback_days, 60)
+
+    def test_initialize_adds_three_day_lookback_default_to_a_legacy_schema(self) -> None:
+        legacy_path = Path(self.tempdir.name) / "legacy.db"
+        legacy_schema = (Path(__file__).resolve().parents[1] / "personalization/schema.sql").read_text(
+            encoding="utf-8"
+        ).replace("    lookback_days INTEGER NOT NULL DEFAULT 3,\n", "")
+        legacy_connection = sqlite3.connect(legacy_path)
+        legacy_connection.executescript(legacy_schema)
+        legacy_connection.close()
+
+        legacy_repository = PersonalizationRepository.for_sqlite(legacy_path)
+        try:
+            legacy_repository.initialize()
+            columns = legacy_repository._table_columns("research_profiles")
+            self.assertIn("lookback_days", columns)
+            column = legacy_repository._fetchone(
+                "SELECT dflt_value FROM pragma_table_info('research_profiles') WHERE name = 'lookback_days'"
+            )
+            self.assertEqual(str(legacy_repository._value(column, "dflt_value")).strip("'\""), "3")
+        finally:
+            legacy_repository.close()
 
     def test_duplicate_automatic_claim_for_same_user_local_date_returns_existing_delivery(self) -> None:
         user_id = self.repository.create_user_with_profile(

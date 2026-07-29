@@ -249,6 +249,10 @@ class PersonalizationRepository:
             "CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
         )
         for column_name, definition in (
+            ("lookback_days", "INTEGER NOT NULL DEFAULT 3"),
+        ):
+            self._add_column_if_missing("research_profiles", column_name, definition)
+        for column_name, definition in (
             ("last_run_at", "TEXT NOT NULL DEFAULT ''"),
         ):
             self._add_column_if_missing("schedules", column_name, definition)
@@ -286,6 +290,10 @@ class PersonalizationRepository:
         self.connection.execute(
             "INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES (?, ?)",
             ("delivery_scheduler_v1", _timestamp()),
+        )
+        self.connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+            ("profile_lookback_window_v1", _timestamp()),
         )
 
     def close(self) -> None:
@@ -390,6 +398,7 @@ class PersonalizationRepository:
             journal_ids=_load_list(self._value(row, "journal_ids_json")),
             content_preferences=_load_list(self._value(row, "content_preferences_json")),
             max_items=int(self._value(row, "max_items")),
+            lookback_days=int(self._value(row, "lookback_days")),
             llm_provider=self._value(row, "llm_provider"),
             llm_model=self._value(row, "llm_model"),
             output_formats=_load_list(self._value(row, "output_formats_json")),
@@ -409,9 +418,9 @@ class PersonalizationRepository:
             INSERT INTO research_profiles (
                 id, user_id, version, is_current, base_profile, research_topic,
                 include_keywords_json, exclude_keywords_json, source_ids_json,
-                journal_ids_json, content_preferences_json, max_items, llm_provider,
-                llm_model, output_formats_json, created_at
-            ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                journal_ids_json, content_preferences_json, max_items, lookback_days,
+                llm_provider, llm_model, output_formats_json, created_at
+            ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 profile_id,
@@ -425,6 +434,7 @@ class PersonalizationRepository:
                 json.dumps(profile.journal_ids),
                 json.dumps(profile.content_preferences),
                 profile.max_items,
+                profile.lookback_days,
                 profile.llm_provider,
                 profile.llm_model,
                 json.dumps(profile.output_formats),
