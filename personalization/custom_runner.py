@@ -119,6 +119,8 @@ def _generate_claimed_report(
     claim: DeliveryClaim,
     services: RunnerServices,
     now_utc: datetime | None = None,
+    *,
+    require_pdf: bool = True,
 ) -> tuple[DeliveryExecutionContext, dict[str, Any], main.ReportGenerationResult, Path | None] | None:
     try:
         context = repository.get_delivery_execution_context(claim.delivery_id)
@@ -139,14 +141,16 @@ def _generate_claimed_report(
             claim.delivery_id, stage, f"{stage.title()} stage did not produce a deliverable report", now_utc
         )
         return None
-    try:
-        pdf_path = services.pdf_converter(result.output_path)
-    except Exception as exc:  # noqa: BLE001 - PDF conversion is a separately retryable stage.
-        repository.mark_retryable_failure(claim.delivery_id, "pdf", type(exc).__name__, now_utc)
-        return None
-    if pdf_path is None:
-        repository.mark_retryable_failure(claim.delivery_id, "pdf", "PDF conversion failed", now_utc)
-        return None
+    pdf_path: Path | None = None
+    if require_pdf:
+        try:
+            pdf_path = services.pdf_converter(result.output_path)
+        except Exception as exc:  # noqa: BLE001 - PDF conversion is a separately retryable stage.
+            repository.mark_retryable_failure(claim.delivery_id, "pdf", type(exc).__name__, now_utc)
+            return None
+        if pdf_path is None:
+            repository.mark_retryable_failure(claim.delivery_id, "pdf", "PDF conversion failed", now_utc)
+            return None
     repository.record_report_items(
         claim.report_run_id,
         claim.user_id,
@@ -167,7 +171,9 @@ def generate_preview(
     if claim.mode != "manual":
         repository.mark_retryable_failure(delivery_id, "Preview command requires a manual delivery")
         return 2
-    generated = _generate_claimed_report(repository, claim, services)
+    # A manual preview is a content-review artifact.  Requiring LibreOffice here
+    # delays review without improving the later PDF mail-delivery guarantee.
+    generated = _generate_claimed_report(repository, claim, services, require_pdf=False)
     if generated is None:
         return 4
     repository.mark_preview_ready(

@@ -43,10 +43,6 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install PDF export dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libreoffice-writer fonts-noto-cjk
       - name: Install Python dependencies
         run: pip install -r requirements.txt
       - name: Generate preview without sending email
@@ -74,10 +70,6 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install PDF export dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libreoffice-writer fonts-noto-cjk
       - name: Install Python dependencies
         run: pip install -r requirements.txt
       - name: Choose retry operation

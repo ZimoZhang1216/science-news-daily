@@ -124,6 +124,24 @@ class CustomRunnerTests(unittest.TestCase):
         self.assertEqual(delivery.status, "preview_ready")
         self.assertEqual(delivery.artifact_name, f"custom-report-{delivery.report_run_id}")
 
+    def test_preview_does_not_require_pdf_conversion(self) -> None:
+        """Manual review must remain available when the runner lacks LibreOffice."""
+
+        claim = self.repository.create_manual_preview(self.user_id, date(2026, 7, 28))
+        services = RunnerServices(
+            generator=self.successful_generator,
+            pdf_converter=self.fail_if_called,
+            mailer=self.fail_if_called,
+            github_run_id="123",
+            output_root=self.output_dir,
+        )
+
+        exit_code = generate_preview(self.repository, claim.delivery_id, services)
+        delivery = self.repository.get_delivery(claim.delivery_id)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(delivery.status, "preview_ready")
+
     def test_preview_with_an_unsupported_saved_profile_becomes_retryable(self) -> None:
         """A profile introduced by a newer deployment must not leave a claimed preview stuck."""
 
