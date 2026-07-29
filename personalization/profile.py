@@ -44,11 +44,10 @@ def compose_effective_profile(profile: ResearchProfileInput, user_id: str) -> di
         dict.fromkeys([*effective["relevance_terms"], *profile.include_keywords])
     )
     effective["enabled_source_ids"] = profile.source_ids
-    shared_query_terms = [
-        profile.research_topic,
-        *profile.include_keywords,
-        *effective["relevance_terms"],
-    ]
+    # Research topics can be long free-form instructions. External source
+    # queries use the structured keywords and bounded base-discipline terms
+    # instead, while the full topic remains available for the report title.
+    shared_query_terms = [*profile.include_keywords, *effective["relevance_terms"]]
     for field in ("arxiv_query_terms", "pubmed_query_terms", "openalex_query_terms", "community_query_terms"):
         effective[field] = list(dict.fromkeys([*effective.get(field, ()), *shared_query_terms]))
     effective["crossref_journals"] = [

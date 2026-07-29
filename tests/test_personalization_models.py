@@ -187,6 +187,7 @@ class PersonalizationProfileTests(unittest.TestCase):
         self.assertIn("cash transfer", effective["arxiv_query_terms"])
         self.assertIn("cash transfer", effective["openalex_query_terms"])
         self.assertIn("cash transfer", effective["community_query_terms"])
+        self.assertNotIn(profile.research_topic, effective["arxiv_query_terms"])
 
 
 class CapturingSmtp:
