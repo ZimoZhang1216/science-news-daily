@@ -44,11 +44,13 @@ def compose_effective_profile(profile: ResearchProfileInput, user_id: str) -> di
         dict.fromkeys([*effective["relevance_terms"], *profile.include_keywords])
     )
     effective["enabled_source_ids"] = profile.source_ids
-    effective["community_query_terms"] = list(
-        dict.fromkeys(
-            [*effective.get("community_query_terms", ()), *profile.include_keywords]
-        )
-    )
+    shared_query_terms = [
+        profile.research_topic,
+        *profile.include_keywords,
+        *effective["relevance_terms"],
+    ]
+    for field in ("arxiv_query_terms", "pubmed_query_terms", "openalex_query_terms", "community_query_terms"):
+        effective[field] = list(dict.fromkeys([*effective.get(field, ()), *shared_query_terms]))
     effective["crossref_journals"] = [
         journal
         for journal in effective["crossref_journals"]

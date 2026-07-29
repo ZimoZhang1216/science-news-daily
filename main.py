@@ -1253,6 +1253,9 @@ BUSINESS_MANAGEMENT_SOURCE_WEIGHTS = {
 ACADEMIC_SOURCE_IDS = ("arxiv", "pubmed", "crossref", "rss", "openalex")
 PUBLIC_SOURCE_IDS = ("official_rss", "hackernews", "github_releases")
 SUPPORTED_SOURCE_IDS = frozenset((*ACADEMIC_SOURCE_IDS, *PUBLIC_SOURCE_IDS))
+# These sources accept topic terms directly, so a user can opt into them even
+# when their base discipline has no pre-configured journal or feed catalogue.
+SHARED_USER_SOURCE_IDS = ("arxiv", "pubmed", "openalex", "hackernews")
 
 SOURCE_KIND_LABELS = {
     "academic": "学术研究",
@@ -2238,7 +2241,7 @@ def resolve_profile(profile_key: str) -> dict[str, Any]:
 
 
 def available_source_ids(profile_key: str | dict[str, Any]) -> tuple[str, ...]:
-    """Return the configured, user-selectable source IDs for one profile."""
+    """Return source IDs that can execute for one user research profile."""
 
     profile = resolve_profile(profile_key) if isinstance(profile_key, str) else profile_key
     configured = {
@@ -2251,7 +2254,11 @@ def available_source_ids(profile_key: str | dict[str, Any]) -> tuple[str, ...]:
         "hackernews": bool(profile.get("community_query_terms")),
         "github_releases": bool(profile.get("github_repositories")),
     }
-    return tuple(source_id for source_id in (*ACADEMIC_SOURCE_IDS, *PUBLIC_SOURCE_IDS) if configured[source_id])
+    return tuple(
+        source_id
+        for source_id in (*ACADEMIC_SOURCE_IDS, *PUBLIC_SOURCE_IDS)
+        if source_id in SHARED_USER_SOURCE_IDS or configured[source_id]
+    )
 
 
 def classify_field(title: str, abstract: str, profile: dict[str, Any]) -> str:

@@ -42,6 +42,7 @@ class MultidisciplinaryCatalogueTests(unittest.TestCase):
             main.available_source_ids("computer_science"),
             (
                 "arxiv",
+                "pubmed",
                 "crossref",
                 "rss",
                 "openalex",
@@ -49,6 +50,12 @@ class MultidisciplinaryCatalogueTests(unittest.TestCase):
                 "hackernews",
                 "github_releases",
             ),
+        )
+
+    def test_economics_exposes_shared_user_selectable_sources(self) -> None:
+        self.assertEqual(
+            main.available_source_ids("economics"),
+            ("arxiv", "pubmed", "openalex", "hackernews"),
         )
 
 

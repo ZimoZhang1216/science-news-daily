@@ -39,7 +39,7 @@ def invalid_journal_response() -> dict[str, object]:
     return response
 
 
-def unavailable_social_source_response() -> dict[str, object]:
+def shared_social_source_response() -> dict[str, object]:
     response = valid_response()
     response["source_ids"] = ["hackernews"]
     return response
@@ -83,14 +83,20 @@ class PersonalizationRecommenderTests(unittest.TestCase):
             with self.assertRaisesRegex(RecommendationError, "journal_ids"):
                 recommend_profile(valid_request(), request_json=lambda *_: invalid_journal_response())
 
-    def test_recommender_rejects_a_source_not_configured_for_the_selected_profile(self) -> None:
+    def test_recommender_allows_a_shared_source_outside_the_base_profile_catalogue(self) -> None:
         config = main.LLMConfig("deepseek", "deepseek-v4-flash", "", "DEEPSEEK_API_KEY")
 
         with patch.object(main, "resolve_llm_config", return_value=config):
-            with self.assertRaisesRegex(RecommendationError, "source_ids"):
-                recommend_profile(
-                    valid_request(), request_json=lambda *_: unavailable_social_source_response()
+            try:
+                recommendation = recommend_profile(
+                    valid_request(), request_json=lambda *_: shared_social_source_response()
                 )
+            except RecommendationError:
+                recommendation = None
+
+        self.assertIsNotNone(recommendation)
+        assert recommendation is not None
+        self.assertEqual(recommendation.profile.source_ids, ("hackernews",))
 
     def test_recommender_uses_profile_specific_source_catalogue_for_a_free_text_description(self) -> None:
         config = main.LLMConfig("deepseek", "deepseek-v4-flash", "", "DEEPSEEK_API_KEY")

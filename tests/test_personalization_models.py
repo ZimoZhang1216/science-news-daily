@@ -166,6 +166,28 @@ class PersonalizationProfileTests(unittest.TestCase):
         self.assertEqual([journal["source"] for journal in effective["crossref_journals"]], ["JACS"])
         self.assertIn("mechanism", effective["custom_preference_terms"])
 
+    def test_shared_sources_use_the_user_research_terms_for_an_academic_profile(self) -> None:
+        profile = ResearchProfileInput.from_form(
+            base_profile="economics",
+            research_topic="Causal inference in development economics",
+            include_keywords="cash transfer",
+            exclude_keywords="",
+            source_ids=("arxiv", "openalex", "hackernews"),
+            journal_ids=(),
+            content_preferences=(),
+            max_items=12,
+            llm_provider="openai",
+            llm_model="gpt-5.4-mini",
+            output_formats=("docx",),
+        )
+
+        effective = compose_effective_profile(profile, "usr_001")
+
+        self.assertEqual(effective["enabled_source_ids"], ("arxiv", "openalex", "hackernews"))
+        self.assertIn("cash transfer", effective["arxiv_query_terms"])
+        self.assertIn("cash transfer", effective["openalex_query_terms"])
+        self.assertIn("cash transfer", effective["community_query_terms"])
+
 
 class CapturingSmtp:
     def __init__(self) -> None:
