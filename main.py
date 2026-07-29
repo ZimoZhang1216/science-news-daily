@@ -5886,6 +5886,10 @@ class ReportGenerationResult:
     ai_generated: bool
     failure_exit_code: int | None
     failure_stage: str | None = None
+    matched_count: int = 0
+    deduplicated_count: int = 0
+    history_excluded_count: int = 0
+    profile_filter_fallback: bool = False
 
 
 def generate_report(
@@ -5907,12 +5911,16 @@ def generate_report(
     args = argparse.Namespace(source_limit=options.source_limit)
     collected, source_statuses = collect_items(args, since, now, profile)
     filtered = [item for item in collected if item_filter is None or item_filter(item)]
+    matched_count = len(filtered)
+    profile_filter_fallback = False
     if item_filter is not None and not filtered and collected:
         # Source collectors already enforce the base discipline profile.  A
         # strict user-keyword pass can otherwise turn a useful low-volume
         # daily into an empty report, so retain those base-relevant items.
         LOGGER.warning("No items matched the custom keyword filter; using base-profile results as a fallback.")
         filtered = collected
+        profile_filter_fallback = True
+    deduplicated_count = len(dedupe_items(filtered))
     prepared = prepare_items(
         filtered,
         options.max_items,
@@ -5922,6 +5930,13 @@ def generate_report(
         min_items=options.min_items,
     )
     ensure_item_ids(prepared)
+    unique_items = dedupe_items(filtered)
+    selected_item_ids = {id(item) for item in prepared}
+    history_excluded_count = sum(
+        1
+        for item in unique_items
+        if item.history_repetition == "exact" and id(item) not in selected_item_ids
+    )
     LOGGER.info("Prepared %d history-aware deduplicated items", len(prepared))
 
     if not prepared:
@@ -5945,10 +5960,14 @@ def generate_report(
             source_statuses=source_statuses,
             report_payload={},
             collected_count=len(collected),
+            matched_count=matched_count,
+            deduplicated_count=deduplicated_count,
+            history_excluded_count=history_excluded_count,
             selected_count=0,
             ai_generated=False,
             failure_exit_code=4 if options.require_ai else failure_exit_code,
             failure_stage="fetch",
+            profile_filter_fallback=profile_filter_fallback,
         )
 
     if options.no_openai:
@@ -5967,10 +5986,14 @@ def generate_report(
                 source_statuses=source_statuses,
                 report_payload={},
                 collected_count=len(collected),
+                matched_count=matched_count,
+                deduplicated_count=deduplicated_count,
+                history_excluded_count=history_excluded_count,
                 selected_count=len(prepared),
                 ai_generated=False,
                 failure_exit_code=4,
                 failure_stage="ai",
+                profile_filter_fallback=profile_filter_fallback,
             )
         report_payload = generate_ai_summaries(
             prepared,
@@ -5988,10 +6011,14 @@ def generate_report(
             source_statuses=source_statuses,
             report_payload=report_payload,
             collected_count=len(collected),
+            matched_count=matched_count,
+            deduplicated_count=deduplicated_count,
+            history_excluded_count=history_excluded_count,
             selected_count=len(prepared),
             ai_generated=False,
             failure_exit_code=4,
             failure_stage="ai",
+            profile_filter_fallback=profile_filter_fallback,
         )
 
     report_payload["notation_ai_generated"] = apply_ai_scientific_notation(
@@ -6020,10 +6047,14 @@ def generate_report(
             source_statuses=source_statuses,
             report_payload=report_payload,
             collected_count=len(collected),
+            matched_count=matched_count,
+            deduplicated_count=deduplicated_count,
+            history_excluded_count=history_excluded_count,
             selected_count=len(prepared),
             ai_generated=bool(report_payload.get("ai_generated")),
             failure_exit_code=5,
             failure_stage="word",
+            profile_filter_fallback=profile_filter_fallback,
         )
     return ReportGenerationResult(
         output_path=output_path,
@@ -6031,9 +6062,13 @@ def generate_report(
         source_statuses=source_statuses,
         report_payload=report_payload,
         collected_count=len(collected),
+        matched_count=matched_count,
+        deduplicated_count=deduplicated_count,
+        history_excluded_count=history_excluded_count,
         selected_count=len(prepared),
         ai_generated=bool(report_payload.get("ai_generated")),
         failure_exit_code=None,
+        profile_filter_fallback=profile_filter_fallback,
     )
 
 

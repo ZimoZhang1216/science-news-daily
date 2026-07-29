@@ -311,6 +311,36 @@ class DashboardSmokeTests(unittest.TestCase):
         finally:
             repository.close()
 
+    def test_delivery_page_renders_task_scoped_source_metrics(self) -> None:
+        delivery_id = self.create_queued_preview()
+        repository = PersonalizationRepository.for_sqlite(self.database_path)
+        try:
+            delivery = repository.get_delivery(delivery_id)
+            repository.record_generation_metrics(
+                delivery.report_run_id,
+                collected_count=8,
+                matched_count=6,
+                deduplicated_count=5,
+                history_excluded_count=1,
+                selected_count=4,
+                ai_generated=True,
+                profile_filter_fallback=False,
+                source_statuses=[main.SourceStatus("arXiv", True, 8)],
+            )
+        finally:
+            repository.close()
+
+        dashboard_app._open_repository.clear()
+        try:
+            app = self.local_dashboard_app()
+            app.sidebar.radio[0].set_value("日报与投递").run()
+        finally:
+            dashboard_app._open_repository.clear()
+
+        self.assertIn("任务详情", [expander.label for expander in app.expander])
+        self.assertIn("抓取原始条目", [metric.label for metric in app.metric])
+        self.assertTrue(any("arXiv" in dataframe.value.to_string() for dataframe in app.dataframe))
+
     def test_rendered_dashboard_injects_a_dark_system_theme(self) -> None:
         app = self.local_dashboard_app()
 

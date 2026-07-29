@@ -137,6 +137,17 @@ def _generate_claimed_report(
         repository.history_for_user(claim.user_id, claim.report_date, 10),
         lambda item: item_matches_research_profile(item, context.profile.input),
     )
+    repository.record_generation_metrics(
+        claim.report_run_id,
+        collected_count=result.collected_count,
+        matched_count=result.matched_count,
+        deduplicated_count=result.deduplicated_count,
+        history_excluded_count=result.history_excluded_count,
+        selected_count=result.selected_count,
+        ai_generated=result.ai_generated,
+        profile_filter_fallback=result.profile_filter_fallback,
+        source_statuses=result.source_statuses,
+    )
     if repository.is_delivery_cancelled(claim.delivery_id):
         return None
     if result.failure_exit_code is not None or not result.ai_generated or result.output_path is None:
@@ -164,7 +175,6 @@ def _generate_claimed_report(
         effective_profile,
         result.selected_items,
     )
-    repository.record_source_statuses(claim.report_run_id, result.source_statuses)
     return context, effective_profile, result, pdf_path
 
 

@@ -106,7 +106,11 @@ class PersonalizationRepositoryTests(unittest.TestCase):
             encoding="utf-8"
         ).replace("    lookback_days INTEGER NOT NULL DEFAULT 3,\n", "").replace(
             "    ccf_conference_tiers_json TEXT NOT NULL DEFAULT '[\"A\", \"B\"]',\n", ""
-        )
+        ).replace("    matched_count INTEGER NOT NULL DEFAULT 0,\n", "").replace(
+            "    deduplicated_count INTEGER NOT NULL DEFAULT 0,\n", ""
+        ).replace("    history_excluded_count INTEGER NOT NULL DEFAULT 0,\n", "").replace(
+            "    profile_filter_fallback INTEGER NOT NULL DEFAULT 0,\n", ""
+        ).replace("    metrics_recorded_at TEXT NOT NULL DEFAULT '',\n", "")
         legacy_connection = sqlite3.connect(legacy_path)
         legacy_connection.executescript(legacy_schema)
         legacy_connection.close()
@@ -128,6 +132,23 @@ class PersonalizationRepositoryTests(unittest.TestCase):
                 str(legacy_repository._value(tier_column, "dflt_value")).strip("'\""),
                 '["A", "B"]',
             )
+            report_run_columns = legacy_repository._table_columns("report_runs")
+            self.assertTrue(
+                {
+                    "matched_count",
+                    "deduplicated_count",
+                    "history_excluded_count",
+                    "profile_filter_fallback",
+                    "metrics_recorded_at",
+                }.issubset(report_run_columns)
+            )
+            user_id = legacy_repository.create_user_with_profile(
+                self.user(), self.profile("battery"), self.daily_schedule()
+            )
+            delivery = legacy_repository.create_manual_preview(user_id, date(2026, 7, 28))
+            metrics = legacy_repository.get_delivery_task_metrics(delivery.delivery_id)
+            self.assertEqual(metrics["recorded_at"], "")
+            self.assertEqual(metrics["sources"], [])
         finally:
             legacy_repository.close()
 
@@ -220,6 +241,49 @@ class PersonalizationRepositoryTests(unittest.TestCase):
         self.assertIn("doi:10.1000/test", history["identity_keys"])
         self.assertIn(main.title_fingerprint(item.title), history["title_keys"])
         self.assertIn(main.topic_signature(item, effective_profile), history["topic_keys"])
+
+    def test_delivery_task_metrics_are_scoped_to_the_delivery_report_run(self) -> None:
+        first_user = self.repository.create_user_with_profile(
+            self.user(), self.profile("battery"), self.daily_schedule()
+        )
+        second_user = self.repository.create_user_with_profile(
+            UserInput.from_form("Bob", "bob@example.test", "active"),
+            self.profile("cathode"),
+            self.daily_schedule(),
+        )
+        first = self.repository.create_manual_preview(first_user, date(2026, 7, 28))
+        second = self.repository.create_manual_preview(second_user, date(2026, 7, 28))
+        self.repository.record_generation_metrics(
+            first.report_run_id,
+            collected_count=7,
+            matched_count=5,
+            deduplicated_count=4,
+            history_excluded_count=1,
+            selected_count=3,
+            ai_generated=True,
+            profile_filter_fallback=False,
+            source_statuses=[main.SourceStatus("arXiv", True, 7)],
+        )
+        self.repository.record_generation_metrics(
+            second.report_run_id,
+            collected_count=9,
+            matched_count=9,
+            deduplicated_count=8,
+            history_excluded_count=0,
+            selected_count=5,
+            ai_generated=True,
+            profile_filter_fallback=False,
+            source_statuses=[main.SourceStatus("PubMed", False, 0, "timeout")],
+        )
+
+        metrics = self.repository.get_delivery_task_metrics(first.delivery_id)
+
+        self.assertEqual(metrics["collected_count"], 7)
+        self.assertEqual(metrics["matched_count"], 5)
+        self.assertEqual(metrics["deduplicated_count"], 4)
+        self.assertEqual(metrics["history_excluded_count"], 1)
+        self.assertEqual(metrics["selected_count"], 3)
+        self.assertEqual(metrics["sources"], [{"name": "arXiv", "success": True, "item_count": 7, "error": ""}])
 
     def test_operations_snapshot_and_pause_change_user_state(self) -> None:
         user_id = self.repository.create_user_with_profile(

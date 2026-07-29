@@ -254,6 +254,14 @@ class PersonalizationRepository:
         ):
             self._add_column_if_missing("research_profiles", column_name, definition)
         for column_name, definition in (
+            ("matched_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("deduplicated_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("history_excluded_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("profile_filter_fallback", "INTEGER NOT NULL DEFAULT 0"),
+            ("metrics_recorded_at", "TEXT NOT NULL DEFAULT ''"),
+        ):
+            self._add_column_if_missing("report_runs", column_name, definition)
+        for column_name, definition in (
             ("last_run_at", "TEXT NOT NULL DEFAULT ''"),
         ):
             self._add_column_if_missing("schedules", column_name, definition)
@@ -299,6 +307,10 @@ class PersonalizationRepository:
         self.connection.execute(
             "INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES (?, ?)",
             ("profile_ccf_conference_source_v1", _timestamp()),
+        )
+        self.connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+            ("delivery_task_metrics_v1", _timestamp()),
         )
 
     def close(self) -> None:
@@ -725,7 +737,7 @@ class PersonalizationRepository:
             """,
             (limit,),
         )
-        return [
+        deliveries = [
             {
                 "id": self._value(row, "id"),
                 "user_id": self._value(row, "user_id"),
@@ -737,10 +749,57 @@ class PersonalizationRepository:
                 "artifact_name": self._value(row, "artifact_name"),
                 "artifact_run_id": self._value(row, "artifact_run_id"),
                 "last_error": self._value(row, "last_error"),
+                "error_stage": self._value(row, "error_stage"),
+                "next_retry_at": self._value(row, "next_retry_at"),
                 "updated_at": self._value(row, "updated_at"),
             }
             for row in rows
         ]
+        for delivery in deliveries:
+            delivery["task_metrics"] = self.get_delivery_task_metrics(delivery["id"])
+        return deliveries
+
+    def get_delivery_task_metrics(self, delivery_id: str) -> dict[str, Any] | None:
+        row = self._fetchone(
+            """
+            SELECT report_runs.id, report_runs.candidate_count, report_runs.matched_count,
+                   report_runs.deduplicated_count, report_runs.history_excluded_count,
+                   report_runs.selected_count, report_runs.profile_filter_fallback,
+                   report_runs.metrics_recorded_at
+            FROM deliveries
+            JOIN report_runs ON report_runs.id = deliveries.report_run_id
+            WHERE deliveries.id = ?
+            """,
+            (delivery_id,),
+        )
+        if row is None:
+            return None
+        run_id = self._value(row, "id")
+        source_rows = self._fetchall(
+            """
+            SELECT source_name, success, item_count, error_summary
+            FROM source_metrics WHERE report_run_id = ? ORDER BY source_name ASC
+            """,
+            (run_id,),
+        )
+        return {
+            "recorded_at": self._value(row, "metrics_recorded_at"),
+            "collected_count": int(self._value(row, "candidate_count") or 0),
+            "matched_count": int(self._value(row, "matched_count") or 0),
+            "deduplicated_count": int(self._value(row, "deduplicated_count") or 0),
+            "history_excluded_count": int(self._value(row, "history_excluded_count") or 0),
+            "selected_count": int(self._value(row, "selected_count") or 0),
+            "profile_filter_fallback": bool(self._value(row, "profile_filter_fallback")),
+            "sources": [
+                {
+                    "name": self._value(source, "source_name"),
+                    "success": bool(self._value(source, "success")),
+                    "item_count": int(self._value(source, "item_count") or 0),
+                    "error": self._value(source, "error_summary"),
+                }
+                for source in source_rows
+            ],
+        }
 
     def list_recent_events(self, limit: int = 40) -> list[dict[str, str]]:
         rows = self._fetchall(
@@ -1554,23 +1613,62 @@ class PersonalizationRepository:
                     ),
                 )
 
+    def _replace_source_statuses(self, run_id: str, statuses: list[main.SourceStatus]) -> None:
+        self._execute("DELETE FROM source_metrics WHERE report_run_id = ?", (run_id,))
+        for status in statuses:
+            self._execute(
+                """
+                INSERT INTO source_metrics (
+                    id, report_run_id, source_name, success, item_count, error_summary, duration_ms, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+                """,
+                (
+                    _new_id("src"),
+                    run_id,
+                    status.name,
+                    int(status.success),
+                    status.item_count,
+                    status.error[:500],
+                    _timestamp(),
+                ),
+            )
+
+    def record_generation_metrics(
+        self,
+        run_id: str,
+        *,
+        collected_count: int,
+        matched_count: int,
+        deduplicated_count: int,
+        history_excluded_count: int,
+        selected_count: int,
+        ai_generated: bool,
+        profile_filter_fallback: bool,
+        source_statuses: list[main.SourceStatus],
+    ) -> None:
+        with self._transaction():
+            self._execute(
+                """
+                UPDATE report_runs
+                SET candidate_count = ?, matched_count = ?, deduplicated_count = ?,
+                    history_excluded_count = ?, selected_count = ?, ai_generated = ?,
+                    profile_filter_fallback = ?, metrics_recorded_at = ?
+                WHERE id = ?
+                """,
+                (
+                    max(0, collected_count),
+                    max(0, matched_count),
+                    max(0, deduplicated_count),
+                    max(0, history_excluded_count),
+                    max(0, selected_count),
+                    int(ai_generated),
+                    int(profile_filter_fallback),
+                    _timestamp(),
+                    run_id,
+                ),
+            )
+            self._replace_source_statuses(run_id, source_statuses)
+
     def record_source_statuses(self, run_id: str, statuses: list[main.SourceStatus]) -> None:
         with self._transaction():
-            self._execute("DELETE FROM source_metrics WHERE report_run_id = ?", (run_id,))
-            for status in statuses:
-                self._execute(
-                    """
-                    INSERT INTO source_metrics (
-                        id, report_run_id, source_name, success, item_count, error_summary, duration_ms, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, 0, ?)
-                    """,
-                    (
-                        _new_id("src"),
-                        run_id,
-                        status.name,
-                        int(status.success),
-                        status.item_count,
-                        status.error[:500],
-                        _timestamp(),
-                    ),
-                )
+            self._replace_source_statuses(run_id, statuses)

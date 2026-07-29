@@ -737,8 +737,54 @@ def render_reports(repository: PersonalizationRepository | None) -> None:
                         st.warning("任务状态已变化，无法安全终止。")
         elif delivery["status"] == "sending":
             st.caption("邮件正在发送，无法安全终止。")
+        _render_delivery_task_details(delivery)
         if delivery["last_error"]:
             st.caption(f"最近错误：{delivery['last_error']}")
+
+
+def _render_delivery_task_details(delivery: dict[str, object]) -> None:
+    """Render collection diagnostics for one delivery without mixing other runs' data."""
+
+    metrics = delivery.get("task_metrics")
+    with st.expander("任务详情", expanded=False):
+        if not isinstance(metrics, dict) or not metrics.get("recorded_at"):
+            st.caption("此任务创建时尚未记录抓取指标；后续新生成的任务会显示完整过程。")
+            return
+
+        counts = st.columns(5)
+        counts[0].metric("抓取原始条目", int(metrics["collected_count"]))
+        counts[1].metric("画像匹配", int(metrics["matched_count"]))
+        counts[2].metric("去重后", int(metrics["deduplicated_count"]))
+        counts[3].metric("历史重复未入选", int(metrics["history_excluded_count"]))
+        counts[4].metric("最终入选", int(metrics["selected_count"]))
+        if metrics.get("profile_filter_fallback"):
+            st.info("本次没有条目命中用户关键词，已按原有规则回退到所属学科的相关资讯。")
+
+        source_rows = metrics.get("sources", [])
+        if source_rows:
+            st.dataframe(
+                [
+                    {
+                        "数据源": source["name"],
+                        "状态": "成功" if source["success"] else "失败",
+                        "原始条目": source["item_count"],
+                        "失败原因": source["error"] or "—",
+                    }
+                    for source in source_rows
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.caption("本次生成没有返回可记录的数据源状态。")
+
+        error_stage = str(delivery.get("error_stage") or "")
+        last_error = str(delivery.get("last_error") or "")
+        if error_stage or last_error:
+            st.caption(f"失败阶段：{error_stage or '未分类'} · 原因：{last_error or '未记录'}")
+        next_retry_at = str(delivery.get("next_retry_at") or "")
+        if next_retry_at:
+            st.caption(f"下一次重试时间（UTC）：{next_retry_at}")
 
 
 def render_sources(repository: PersonalizationRepository | None) -> None:

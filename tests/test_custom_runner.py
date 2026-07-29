@@ -74,6 +74,9 @@ class CustomRunnerTests(unittest.TestCase):
             source_statuses=[main.SourceStatus("arXiv", True, 1)],
             report_payload={"ai_generated": True},
             collected_count=1,
+            matched_count=1,
+            deduplicated_count=1,
+            history_excluded_count=0,
             selected_count=1,
             ai_generated=True,
             failure_exit_code=None,
@@ -89,9 +92,12 @@ class CustomRunnerTests(unittest.TestCase):
         return main.ReportGenerationResult(
             output_path=None,
             selected_items=[],
-            source_statuses=[],
+            source_statuses=[main.SourceStatus("arXiv", False, 0, "timeout")],
             report_payload={},
             collected_count=0,
+            matched_count=0,
+            deduplicated_count=0,
+            history_excluded_count=0,
             selected_count=0,
             ai_generated=False,
             failure_exit_code=4,
@@ -128,6 +134,13 @@ class CustomRunnerTests(unittest.TestCase):
         self.assertEqual(delivery.status, "preview_ready")
         self.assertEqual(delivery.artifact_name, f"custom-report-{delivery.report_run_id}")
         self.assertTrue((self.output_dir / delivery.id / "report.pdf").is_file())
+        metrics = self.repository.get_delivery_task_metrics(delivery.id)
+        self.assertEqual(metrics["collected_count"], 1)
+        self.assertEqual(metrics["matched_count"], 1)
+        self.assertEqual(metrics["deduplicated_count"], 1)
+        self.assertEqual(metrics["history_excluded_count"], 0)
+        self.assertEqual(metrics["selected_count"], 1)
+        self.assertEqual(metrics["sources"], [{"name": "arXiv", "success": True, "item_count": 1, "error": ""}])
 
     def test_preview_becomes_retryable_when_pdf_conversion_fails(self) -> None:
         """A preview is not ready until its downloadable PDF has been created."""
@@ -219,6 +232,9 @@ class CustomRunnerTests(unittest.TestCase):
         delivery = self.repository.list_deliveries_for_user(self.user_id)[0]
         self.assertEqual(delivery.status, "failed")
         self.assertEqual(delivery.attempt_count, 3)
+        metrics = self.repository.get_delivery_task_metrics(delivery.id)
+        self.assertEqual(metrics["collected_count"], 0)
+        self.assertEqual(metrics["sources"], [{"name": "arXiv", "success": False, "item_count": 0, "error": "timeout"}])
 
     def test_expired_automatic_claim_waits_until_the_next_scan_before_retrying(self) -> None:
         due = self.repository.make_due_schedule(

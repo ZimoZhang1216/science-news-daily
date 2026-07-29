@@ -387,6 +387,8 @@ class ReportGenerationApiTests(unittest.TestCase):
 
         self.assertEqual(result.selected_count, 1)
         self.assertEqual(result.output_path, output_path)
+        self.assertEqual(result.matched_count, 0)
+        self.assertTrue(result.profile_filter_fallback)
 
     def test_send_report_email_uses_explicit_custom_recipient_without_profile_fallback(self) -> None:
         pdf_path = Path(self.tempdir.name) / "preview.pdf"
