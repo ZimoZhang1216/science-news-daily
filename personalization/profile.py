@@ -44,6 +44,11 @@ def compose_effective_profile(profile: ResearchProfileInput, user_id: str) -> di
         dict.fromkeys([*effective["relevance_terms"], *profile.include_keywords])
     )
     effective["enabled_source_ids"] = profile.source_ids
+    effective["community_query_terms"] = list(
+        dict.fromkeys(
+            [*effective.get("community_query_terms", ()), *profile.include_keywords]
+        )
+    )
     effective["crossref_journals"] = [
         journal
         for journal in effective["crossref_journals"]
@@ -70,4 +75,3 @@ def item_matches_research_profile(item: main.NewsItem, profile: ResearchProfileI
     return not profile.include_keywords or any(
         _matches_keyword(haystack, term) for term in profile.include_keywords
     )
-
