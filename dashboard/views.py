@@ -44,9 +44,15 @@ SOURCE_LABELS = {
     "crossref": "Crossref 期刊元数据",
     "rss": "期刊 / 学术 RSS",
     "openalex": "OpenAlex 学术索引",
+    "ccf_conferences": "CCF 推荐会议（DBLP 新收录）",
     "official_rss": "官方 RSS",
     "hackernews": "Hacker News 社区信号",
     "github_releases": "GitHub Releases 社区信号",
+}
+CCF_TIER_OPTIONS = {
+    "A": ("A",),
+    "A + B": ("A", "B"),
+    "A + B + C": ("A", "B", "C"),
 }
 EVENT_TYPE_LABELS = {
     "delivery_queued": "自动投递已进入队列",
@@ -79,6 +85,9 @@ VALIDATION_ERROR_LABELS = {
     "max_items must be between 1 and 50": "每份日报条目数需要在 1 到 50 之间。",
     "llm_model is required": "请填写模型名称。",
     "local_send_time must use HH:MM": "发送时间请使用 HH:MM 格式，例如 07:30。",
+    "ccf_conference_tiers must be a non-empty subset of A, B, and C": "CCF 会议等级需要选择 A、A + B 或 A + B + C。",
+    "ccf_conference_tiers must be ordered without duplicates": "CCF 会议等级配置无效，请重新选择。",
+    "ccf_conferences is only available for computer_science": "CCF 推荐会议仅适用于计算机科学画像。",
 }
 
 def _label(mapping: dict[str, str], value: str) -> str:
@@ -128,6 +137,7 @@ _ONBOARDING_SUGGESTION_KEYS = (
     "onboarding_weekday",
     "onboarding_timezone",
     "onboarding_local_send_time",
+    "onboarding_ccf_conference_tiers",
 )
 
 
@@ -150,6 +160,13 @@ def _clear_completed_onboarding() -> None:
 def _format_local_next_run(next_run_at: datetime, timezone_name: str) -> str:
     local_time = next_run_at.astimezone(ZoneInfo(timezone_name))
     return f"{local_time:%Y年%m月%d日 %H:%M}（{timezone_name}）"
+
+
+def _ccf_tier_label(tiers: tuple[str, ...]) -> str:
+    for label, value in CCF_TIER_OPTIONS.items():
+        if tiers == value:
+            return label
+    return "A + B"
 
 
 def render_operations(repository: PersonalizationRepository | None) -> None:
@@ -278,6 +295,19 @@ def _profile_form(repository: PersonalizationRepository) -> None:
             format_func=lambda value: _label(SOURCE_LABELS, value),
             key="onboarding_source_ids",
         )
+        ccf_conference_tiers = profile_recommendation.ccf_conference_tiers
+        if base_profile == "computer_science":
+            ccf_tier_label = st.selectbox(
+                "CCF 会议等级",
+                list(CCF_TIER_OPTIONS),
+                index=list(CCF_TIER_OPTIONS).index(_ccf_tier_label(ccf_conference_tiers)),
+                help=(
+                    "启用 CCF 推荐会议后，默认收录 A+B。资讯时间窗口按 DBLP 新收录时间计算；"
+                    "CCF 分级是选会参考，不代表单篇论文质量。"
+                ),
+                key="onboarding_ccf_conference_tiers",
+            )
+            ccf_conference_tiers = CCF_TIER_OPTIONS[ccf_tier_label]
         journal_options = sorted(
             {
                 issn
@@ -380,6 +410,7 @@ def _profile_form(repository: PersonalizationRepository) -> None:
             content_preferences=preferences,
             max_items=max_items,
             lookback_days=lookback_days,
+            ccf_conference_tiers=ccf_conference_tiers,
             llm_provider=provider,
             llm_model=model,
             output_formats=output_formats,
@@ -441,6 +472,19 @@ def _edit_profile_form(repository: PersonalizationRepository, user_id: str, disp
                 default=list(current.source_ids),
                 format_func=lambda value: _label(SOURCE_LABELS, value),
             )
+            ccf_conference_tiers = current.ccf_conference_tiers
+            if current.base_profile == "computer_science":
+                ccf_tier_label = st.selectbox(
+                    "CCF 会议等级",
+                    list(CCF_TIER_OPTIONS),
+                    index=list(CCF_TIER_OPTIONS).index(_ccf_tier_label(ccf_conference_tiers)),
+                    help=(
+                        "启用 CCF 推荐会议后，默认收录 A+B。资讯时间窗口按 DBLP 新收录时间计算；"
+                        "CCF 分级是选会参考，不代表单篇论文质量。"
+                    ),
+                    key=f"ccf-tiers-{user_id}",
+                )
+                ccf_conference_tiers = CCF_TIER_OPTIONS[ccf_tier_label]
             journal_ids = st.text_area(
                 "指定期刊 ISSN", value="; ".join(current.journal_ids)
             )
@@ -500,6 +544,7 @@ def _edit_profile_form(repository: PersonalizationRepository, user_id: str, disp
                 content_preferences=preferences,
                 max_items=max_items,
                 lookback_days=lookback_days,
+                ccf_conference_tiers=ccf_conference_tiers,
                 llm_provider=provider,
                 llm_model=model,
                 output_formats=output_formats,

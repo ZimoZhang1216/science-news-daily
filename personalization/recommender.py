@@ -161,6 +161,15 @@ def _build_recommendation(
             f"source_ids contain unsupported values for {base_profile}: "
             f"{', '.join(sorted(invalid_sources))}"
         )
+    resolved_source_ids = list(source_ids)
+    if (
+        base_profile == "computer_science"
+        and "ccf_conferences" in main.available_source_ids(base_profile)
+        and "ccf_conferences" not in resolved_source_ids
+    ):
+        # Tier selection is an operator control, so the model only picks the
+        # source. The shared input default provides the agreed A+B scope.
+        resolved_source_ids.append("ccf_conferences")
 
     journal_ids = response["journal_ids"]
     assert isinstance(journal_ids, list)
@@ -176,7 +185,7 @@ def _build_recommendation(
             research_topic=_normalise_research_focus(research_focus, request.research_topic),
             include_keywords=response["include_keywords"],
             exclude_keywords=response["exclude_keywords"],
-            source_ids=response["source_ids"],
+            source_ids=resolved_source_ids,
             journal_ids=journal_ids,
             content_preferences=response["content_preferences"],
             max_items=response["max_items"],

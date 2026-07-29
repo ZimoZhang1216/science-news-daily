@@ -18,7 +18,9 @@ from personalization.profile import compose_effective_profile, item_matches_rese
 
 
 class PersonalizationModelTests(unittest.TestCase):
-    def valid_profile(self, *, lookback_days: int = 3) -> ResearchProfileInput:
+    def valid_profile(
+        self, *, lookback_days: int = 3, ccf_conference_tiers: tuple[str, ...] = ("A", "B")
+    ) -> ResearchProfileInput:
         return ResearchProfileInput.from_form(
             base_profile="chemistry",
             research_topic="Lithium metal batteries",
@@ -32,6 +34,7 @@ class PersonalizationModelTests(unittest.TestCase):
             llm_model="gpt-5.4-mini",
             output_formats=("docx",),
             lookback_days=lookback_days,
+            ccf_conference_tiers=ccf_conference_tiers,
         )
 
     def test_recommendation_request_requires_the_three_operator_inputs(self) -> None:
@@ -99,6 +102,33 @@ class PersonalizationModelTests(unittest.TestCase):
             self.valid_profile(lookback_days=0)
         with self.assertRaisesRegex(ValueError, "lookback_days"):
             self.valid_profile(lookback_days=61)
+
+    def test_profile_input_defaults_to_ccf_a_and_b_and_validates_tiers(self) -> None:
+        self.assertEqual(self.valid_profile().ccf_conference_tiers, ("A", "B"))
+        self.assertEqual(
+            self.valid_profile(ccf_conference_tiers=("A", "B", "C")).ccf_conference_tiers,
+            ("A", "B", "C"),
+        )
+        with self.assertRaisesRegex(ValueError, "ccf_conference_tiers"):
+            self.valid_profile(ccf_conference_tiers=("B", "A"))
+        with self.assertRaisesRegex(ValueError, "ccf_conference_tiers"):
+            self.valid_profile(ccf_conference_tiers=())
+
+    def test_ccf_source_requires_the_computer_science_profile(self) -> None:
+        with self.assertRaisesRegex(ValueError, "ccf_conferences"):
+            ResearchProfileInput.from_form(
+                base_profile="chemistry",
+                research_topic="Lithium metal batteries",
+                include_keywords="",
+                exclude_keywords="",
+                source_ids=("ccf_conferences",),
+                journal_ids=(),
+                content_preferences=(),
+                max_items=12,
+                llm_provider="openai",
+                llm_model="gpt-5.4-mini",
+                output_formats=("docx",),
+            )
 
     def test_weekly_schedule_requires_a_weekday_and_valid_timezone(self) -> None:
         with self.assertRaisesRegex(ValueError, "weekday"):
@@ -180,6 +210,26 @@ class PersonalizationProfileTests(unittest.TestCase):
         self.assertEqual(effective["enabled_source_ids"], ("pubmed",))
         self.assertEqual([journal["source"] for journal in effective["crossref_journals"]], ["JACS"])
         self.assertIn("mechanism", effective["custom_preference_terms"])
+
+    def test_effective_computer_science_profile_carries_the_selected_ccf_tiers(self) -> None:
+        profile = ResearchProfileInput.from_form(
+            base_profile="computer_science",
+            research_topic="AI agents and evaluation",
+            include_keywords="agent",
+            exclude_keywords="",
+            source_ids=("ccf_conferences",),
+            journal_ids=(),
+            content_preferences=(),
+            max_items=12,
+            llm_provider="openai",
+            llm_model="gpt-5.4-mini",
+            output_formats=("docx",),
+            ccf_conference_tiers=("A", "C"),
+        )
+
+        effective = compose_effective_profile(profile, "usr_001")
+
+        self.assertEqual(effective["ccf_conference_tiers"], ("A", "C"))
 
     def test_shared_sources_use_the_user_research_terms_for_an_academic_profile(self) -> None:
         profile = ResearchProfileInput.from_form(

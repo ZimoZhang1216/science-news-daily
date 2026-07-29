@@ -30,7 +30,13 @@ class PersonalizationRepositoryTests(unittest.TestCase):
     def user(self) -> UserInput:
         return UserInput.from_form("Alice", "alice@example.test", "active")
 
-    def profile(self, keyword: str, *, lookback_days: int = 3) -> ResearchProfileInput:
+    def profile(
+        self,
+        keyword: str,
+        *,
+        lookback_days: int = 3,
+        ccf_conference_tiers: tuple[str, ...] = ("A", "B"),
+    ) -> ResearchProfileInput:
         return ResearchProfileInput.from_form(
             base_profile="chemistry",
             research_topic="Lithium metal batteries",
@@ -44,6 +50,7 @@ class PersonalizationRepositoryTests(unittest.TestCase):
             llm_model="gpt-5.4-mini",
             output_formats=("docx", "pdf"),
             lookback_days=lookback_days,
+            ccf_conference_tiers=ccf_conference_tiers,
         )
 
     def daily_schedule(self) -> ScheduleInput:
@@ -82,12 +89,24 @@ class PersonalizationRepositoryTests(unittest.TestCase):
         self.assertEqual(versions[1].include_keywords, ("solid electrolyte",))
         self.assertEqual(versions[0].input.lookback_days, 3)
         self.assertEqual(current.input.lookback_days, 60)
+        self.assertEqual(current.input.ccf_conference_tiers, ("A", "B"))
+
+    def test_profile_versions_round_trip_the_ccf_tier_scope(self) -> None:
+        user_id = self.repository.create_user_with_profile(
+            self.user(), self.profile("battery", ccf_conference_tiers=("A", "B", "C")), self.daily_schedule()
+        )
+
+        current = self.repository.get_current_profile(user_id)
+
+        self.assertEqual(current.input.ccf_conference_tiers, ("A", "B", "C"))
 
     def test_initialize_adds_three_day_lookback_default_to_a_legacy_schema(self) -> None:
         legacy_path = Path(self.tempdir.name) / "legacy.db"
         legacy_schema = (Path(__file__).resolve().parents[1] / "personalization/schema.sql").read_text(
             encoding="utf-8"
-        ).replace("    lookback_days INTEGER NOT NULL DEFAULT 3,\n", "")
+        ).replace("    lookback_days INTEGER NOT NULL DEFAULT 3,\n", "").replace(
+            "    ccf_conference_tiers_json TEXT NOT NULL DEFAULT '[\"A\", \"B\"]',\n", ""
+        )
         legacy_connection = sqlite3.connect(legacy_path)
         legacy_connection.executescript(legacy_schema)
         legacy_connection.close()
@@ -97,10 +116,18 @@ class PersonalizationRepositoryTests(unittest.TestCase):
             legacy_repository.initialize()
             columns = legacy_repository._table_columns("research_profiles")
             self.assertIn("lookback_days", columns)
+            self.assertIn("ccf_conference_tiers_json", columns)
             column = legacy_repository._fetchone(
                 "SELECT dflt_value FROM pragma_table_info('research_profiles') WHERE name = 'lookback_days'"
             )
             self.assertEqual(str(legacy_repository._value(column, "dflt_value")).strip("'\""), "3")
+            tier_column = legacy_repository._fetchone(
+                "SELECT dflt_value FROM pragma_table_info('research_profiles') WHERE name = 'ccf_conference_tiers_json'"
+            )
+            self.assertEqual(
+                str(legacy_repository._value(tier_column, "dflt_value")).strip("'\""),
+                '["A", "B"]',
+            )
         finally:
             legacy_repository.close()
 
@@ -114,10 +141,12 @@ class PersonalizationRepositoryTests(unittest.TestCase):
             )
         )
         row.pop("lookback_days")
+        row.pop("ccf_conference_tiers_json")
 
         profile = self.repository._profile_from_row(row)
 
         self.assertEqual(profile.input.lookback_days, 3)
+        self.assertEqual(profile.input.ccf_conference_tiers, ("A", "B"))
 
     def test_duplicate_automatic_claim_for_same_user_local_date_returns_existing_delivery(self) -> None:
         user_id = self.repository.create_user_with_profile(

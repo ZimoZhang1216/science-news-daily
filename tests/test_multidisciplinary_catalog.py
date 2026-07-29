@@ -46,6 +46,7 @@ class MultidisciplinaryCatalogueTests(unittest.TestCase):
                 "crossref",
                 "rss",
                 "openalex",
+                "ccf_conferences",
                 "official_rss",
                 "hackernews",
                 "github_releases",

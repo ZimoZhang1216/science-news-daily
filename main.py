@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
+from personalization.ccf_catalogue import CcfConference, conferences_for_tiers
+
 MISSING_DEPENDENCIES: list[str] = []
 
 try:
@@ -1250,7 +1252,7 @@ BUSINESS_MANAGEMENT_SOURCE_WEIGHTS = {
     "arXiv": 48,
 }
 
-ACADEMIC_SOURCE_IDS = ("arxiv", "pubmed", "crossref", "rss", "openalex")
+ACADEMIC_SOURCE_IDS = ("arxiv", "pubmed", "crossref", "rss", "openalex", "ccf_conferences")
 PUBLIC_SOURCE_IDS = ("official_rss", "hackernews", "github_releases")
 SUPPORTED_SOURCE_IDS = frozenset((*ACADEMIC_SOURCE_IDS, *PUBLIC_SOURCE_IDS))
 # These sources accept topic terms directly, so a user can opt into them even
@@ -1289,6 +1291,7 @@ PROFILE_LABELS = {
 GENERIC_ACADEMIC_SOURCE_WEIGHTS = {
     "Crossref": 62,
     "OpenAlex": 58,
+    "CCF": 76,
     "arXiv": 52,
     "PubMed": 58,
     "RSS": 42,
@@ -1640,6 +1643,7 @@ REPORT_PROFILES.update(
             "official_rss_feeds": COMPUTER_SCIENCE_OFFICIAL_RSS_FEEDS,
             "community_query_terms": ["artificial intelligence", "AI agent", "data engineering", "database"],
             "github_repositories": COMPUTER_SCIENCE_GITHUB_REPOSITORIES,
+            "ccf_conference_tiers": ("A", "B"),
             "source_weights": GENERIC_ACADEMIC_SOURCE_WEIGHTS,
         },
     }
@@ -2250,6 +2254,7 @@ def available_source_ids(profile_key: str | dict[str, Any]) -> tuple[str, ...]:
         "crossref": bool(profile.get("crossref_journals")),
         "rss": bool(profile.get("rss_feeds")),
         "openalex": bool(profile.get("openalex_query_terms")),
+        "ccf_conferences": bool(profile.get("ccf_conference_tiers")),
         "official_rss": bool(profile.get("official_rss_feeds")),
         "hackernews": bool(profile.get("community_query_terms")),
         "github_releases": bool(profile.get("github_repositories")),
@@ -2732,6 +2737,172 @@ def fetch_openalex(
             if is_profile_relevant(item, profile):
                 items.append(item)
                 seen.add(identity)
+    return items
+
+
+DBLP_UPDATE_FEED_URL = "https://dblp.org/feed/new.rss"
+_DBLP_NON_MAIN_PROCEEDING_PATTERN = re.compile(
+    r"\b(workshops?|companion|demo|short\s+papers?|doctoral\s+consortium|posters?)\b",
+    flags=re.IGNORECASE,
+)
+_DBLP_NON_PAPER_TITLE_PATTERN = re.compile(
+    r"\b(front\s+matter|table\s+of\s+contents|preface|conference\s+organization)\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _dblp_feed_timestamp(entry: Any) -> datetime | None:
+    """Read DBLP's feed update time without treating it as publisher metadata."""
+
+    parsed = getattr(entry, "published_parsed", None) or getattr(entry, "updated_parsed", None)
+    if parsed is not None:
+        try:
+            return datetime(*parsed[:6], tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            pass
+    return parse_datetime(getattr(entry, "published", None) or getattr(entry, "updated", None))
+
+
+def _conference_for_dblp_feed_entry(
+    link: str, title: str, tiers: tuple[str, ...]
+) -> CcfConference | None:
+    path = urlparse(link).path
+    venue_path = path.rstrip("/") + "/"
+    candidates = [
+        conference
+        for conference in conferences_for_tiers(tiers)
+        if venue_path.startswith(conference.dblp_path)
+    ]
+    if not candidates:
+        return None
+
+    record_stem = path.rsplit("/", 1)[-1].removesuffix(".html").casefold()
+    normalized_title = clean_text(title).casefold()
+    for conference in sorted(candidates, key=lambda item: len(item.abbreviation), reverse=True):
+        venue_slug = conference.dblp_path.rstrip("/").rsplit("/", 1)[-1].casefold()
+        abbreviation_key = re.sub(r"[^a-z0-9]", "", conference.abbreviation.casefold())
+        if record_stem.startswith(venue_slug) or (
+            abbreviation_key and record_stem.startswith(abbreviation_key)
+        ):
+            return conference
+
+        abbreviation = conference.abbreviation.casefold()
+        if re.search(
+            rf"^{re.escape(abbreviation)}\s*(?:\(\d+\)\s*)?\d{{4}}\b", normalized_title
+        ):
+            return conference
+
+    # DBLP groups independent tracks below a shared conference directory. When
+    # the record key and title cannot establish a main-proceedings match, skip
+    # it instead of labelling a satellite track as a CCF main conference.
+    return None
+
+
+def _dblp_page_items(
+    html_text: str,
+    proceeding_link: str,
+    indexed_at: datetime,
+    conference: CcfConference,
+    profile: dict[str, Any],
+) -> list[NewsItem]:
+    if BeautifulSoup is None:
+        raise RuntimeError("beautifulsoup4 is required for DBLP conference pages")
+    soup = BeautifulSoup(html_text, "html.parser")
+    items: list[NewsItem] = []
+    for entry in soup.select("li.entry.inproceedings"):
+        title_node = entry.select_one(".title[itemprop='name'], span.title")
+        title = clean_text(title_node.get_text(" ", strip=True) if title_node else "")
+        if not title or _DBLP_NON_PAPER_TITLE_PATTERN.search(title):
+            continue
+        link_node = entry.select_one("a[itemprop='url'][href]") or entry.select_one("a[href]")
+        link = clean_text(link_node.get("href", "") if link_node else "") or proceeding_link
+        authors = [
+            clean_text(author.get_text(" ", strip=True))
+            for author in entry.select("[itemprop='author'] [itemprop='name']")
+        ]
+        source = f"CCF {conference.tier} conference · {conference.abbreviation}"
+        item = NewsItem(
+            title=title,
+            source=source,
+            published=indexed_at,
+            link=link,
+            abstract=(
+                "DBLP 新收录的 CCF 推荐会议论文；日期为 DBLP 收录时间，"
+                "不是出版社的正式发表日期。请通过链接核对原文摘要和版本。"
+            ),
+            doi=extract_doi(link),
+            authors=list(dict.fromkeys(author for author in authors if author)),
+            source_kind="academic",
+        )
+        item.field_name = classify_field(item.title, item.abstract, profile)
+        if is_profile_relevant(item, profile):
+            items.append(item)
+    return items
+
+
+def fetch_ccf_conferences(
+    session: requests.Session,
+    since: datetime,
+    until: datetime,
+    max_items: int,
+    profile: dict[str, Any],
+) -> list[NewsItem]:
+    """Collect bounded, newly indexed CCF conference papers from DBLP.
+
+    DBLP's update feed reports indexing time. It is deliberately used as the
+    time-window boundary because many proceedings only expose a publication
+    year, not a reliable paper-level publication timestamp.
+    """
+
+    if feedparser is None:
+        raise RuntimeError("feedparser is required for DBLP conference updates")
+    tiers = tuple(profile.get("ccf_conference_tiers", ("A", "B")))
+    response = session.get(DBLP_UPDATE_FEED_URL, timeout=30)
+    response.raise_for_status()
+    feed = feedparser.parse(response.content)
+    proceedings: list[tuple[str, datetime, CcfConference]] = []
+    seen_proceedings: set[str] = set()
+    page_limit = max(1, min(max_items, 8))
+    for entry in getattr(feed, "entries", []):
+        title = clean_text(getattr(entry, "title", ""))
+        link = clean_text(getattr(entry, "link", ""))
+        indexed_at = _dblp_feed_timestamp(entry)
+        if not title or not link or indexed_at is None or not since <= indexed_at <= until:
+            continue
+        if _DBLP_NON_MAIN_PROCEEDING_PATTERN.search(title):
+            continue
+        conference = _conference_for_dblp_feed_entry(link, title, tiers)
+        if conference is None or link in seen_proceedings:
+            continue
+        proceedings.append((link, indexed_at, conference))
+        seen_proceedings.add(link)
+        if len(proceedings) >= page_limit:
+            break
+
+    items: list[NewsItem] = []
+    seen_items: set[str] = set()
+    for proceeding_link, indexed_at, conference in proceedings:
+        try:
+            page_response = session.get(proceeding_link, timeout=30)
+            page_response.raise_for_status()
+            page_items = _dblp_page_items(
+                page_response.text, proceeding_link, indexed_at, conference, profile
+            )
+        except requests.RequestException as exc:
+            LOGGER.warning(
+                "CCF proceedings page failed and was skipped (%s): %s",
+                conference.abbreviation,
+                type(exc).__name__,
+            )
+            continue
+        for item in page_items:
+            identity = normalize_doi(item.doi) or canonical_url_key(item.link) or title_fingerprint(item.title)
+            if not identity or identity in seen_items:
+                continue
+            items.append(item)
+            seen_items.add(identity)
+            if len(items) >= max_items:
+                return items
     return items
 
 
@@ -5496,6 +5667,14 @@ def collect_items(
     ):
         supplementary_fetchers.append(
             ("OpenAlex", "openalex", lambda: fetch_openalex(session, since, until, args.source_limit, profile))
+        )
+    if profile.get("ccf_conference_tiers") and "ccf_conferences" in enabled_source_ids:
+        supplementary_fetchers.append(
+            (
+                "CCF conferences (DBLP)",
+                "ccf_conferences",
+                lambda: fetch_ccf_conferences(session, since, until, args.source_limit, profile),
+            )
         )
     if profile.get("official_rss_feeds") and (
         not enabled_source_ids or "official_rss" in enabled_source_ids

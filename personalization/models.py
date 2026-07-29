@@ -21,6 +21,7 @@ _SOURCE_IDS = main.SUPPORTED_SOURCE_IDS
 _CONTENT_PREFERENCES = frozenset({"review", "mechanism", "methodology", "experiment"})
 _OUTPUT_FORMATS = frozenset({"docx", "pdf"})
 _LLM_PROVIDERS = frozenset({"openai", "deepseek"})
+_CCF_TIER_ORDER = {"A": 0, "B": 1, "C": 2}
 
 
 def _normalise_string_list(value: str | Sequence[str], *, casefold: bool = True) -> tuple[str, ...]:
@@ -41,6 +42,20 @@ def _normalise_string_list(value: str | Sequence[str], *, casefold: bool = True)
         seen.add(comparison_value)
         normalised.append(comparison_value)
     return tuple(normalised)
+
+
+def _normalise_ccf_conference_tiers(value: str | Sequence[str]) -> tuple[str, ...]:
+    if isinstance(value, str):
+        raw_values = re.split(r"[,;\n]", value)
+    else:
+        raw_values = [str(item) for item in value]
+
+    tiers = tuple(raw_value.strip().upper() for raw_value in raw_values if raw_value.strip())
+    if not tiers or any(tier not in _CCF_TIER_ORDER for tier in tiers):
+        raise ValueError("ccf_conference_tiers must be a non-empty subset of A, B, and C")
+    if len(set(tiers)) != len(tiers) or tuple(sorted(tiers, key=_CCF_TIER_ORDER.__getitem__)) != tiers:
+        raise ValueError("ccf_conference_tiers must be ordered without duplicates")
+    return tiers
 
 
 def validate_timezone(value: str) -> str:
@@ -102,6 +117,7 @@ class ResearchProfileInput:
     content_preferences: tuple[str, ...]
     max_items: int
     lookback_days: int
+    ccf_conference_tiers: tuple[str, ...]
     llm_provider: str
     llm_model: str
     output_formats: tuple[str, ...]
@@ -122,6 +138,7 @@ class ResearchProfileInput:
         llm_model: str,
         output_formats: str | Sequence[str],
         lookback_days: int = 3,
+        ccf_conference_tiers: str | Sequence[str] = ("A", "B"),
     ) -> "ResearchProfileInput":
         if base_profile not in main.REPORT_PROFILES:
             raise ValueError("base_profile must be an existing report profile")
@@ -137,6 +154,8 @@ class ResearchProfileInput:
         invalid_sources = set(normalised_sources) - _SOURCE_IDS
         if invalid_sources:
             raise ValueError(f"source_ids contain unsupported values: {', '.join(sorted(invalid_sources))}")
+        if "ccf_conferences" in normalised_sources and base_profile != "computer_science":
+            raise ValueError("ccf_conferences is only available for computer_science")
 
         normalised_preferences = _normalise_string_list(content_preferences)
         invalid_preferences = set(normalised_preferences) - _CONTENT_PREFERENCES
@@ -172,6 +191,7 @@ class ResearchProfileInput:
             content_preferences=normalised_preferences,
             max_items=max_items,
             lookback_days=lookback_days,
+            ccf_conference_tiers=_normalise_ccf_conference_tiers(ccf_conference_tiers),
             llm_provider=provider,
             llm_model=model,
             output_formats=normalised_formats,

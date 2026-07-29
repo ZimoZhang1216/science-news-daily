@@ -43,6 +43,7 @@ def compose_effective_profile(profile: ResearchProfileInput, user_id: str) -> di
         dict.fromkeys([*effective["relevance_terms"], *profile.include_keywords])
     )
     effective["enabled_source_ids"] = profile.source_ids
+    effective["ccf_conference_tiers"] = profile.ccf_conference_tiers
     # Research topics can be long free-form instructions. External source
     # queries use the structured keywords and bounded base-discipline terms
     # instead, while the full topic remains available for the report title.

@@ -111,6 +111,16 @@ class DashboardSmokeTests(unittest.TestCase):
 
         self.assertIn("PAGE_RENDERERS", module_globals)
 
+    def test_user_profile_forms_expose_constrained_ccf_tier_selection_for_computer_science(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "dashboard" / "views.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('"CCF 会议等级"', source)
+        self.assertIn('"A + B + C"', source)
+        self.assertIn('base_profile == "computer_science"', source)
+        self.assertIn('current.base_profile == "computer_science"', source)
+
     def test_cached_local_repository_initializes_only_once_per_database_path(self) -> None:
         repository = unittest.mock.Mock()
         dashboard_app._open_repository.clear()

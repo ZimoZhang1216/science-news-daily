@@ -121,8 +121,9 @@ class PersonalizationRecommenderTests(unittest.TestCase):
         self.assertEqual(recommendation.profile.base_profile, "computer_science")
         self.assertEqual(
             recommendation.profile.source_ids,
-            ("arxiv", "openalex", "hackernews", "github_releases"),
+            ("arxiv", "openalex", "hackernews", "github_releases", "ccf_conferences"),
         )
+        self.assertEqual(recommendation.profile.ccf_conference_tiers, ("A", "B"))
         source_catalogue = captured_prompt["supported_source_ids_by_profile"]
         self.assertEqual(
             source_catalogue["computer_science"],

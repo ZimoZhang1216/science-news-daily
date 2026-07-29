@@ -250,6 +250,7 @@ class PersonalizationRepository:
         )
         for column_name, definition in (
             ("lookback_days", "INTEGER NOT NULL DEFAULT 3"),
+            ("ccf_conference_tiers_json", "TEXT NOT NULL DEFAULT '[\"A\", \"B\"]'"),
         ):
             self._add_column_if_missing("research_profiles", column_name, definition)
         for column_name, definition in (
@@ -294,6 +295,10 @@ class PersonalizationRepository:
         self.connection.execute(
             "INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES (?, ?)",
             ("profile_lookback_window_v1", _timestamp()),
+        )
+        self.connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+            ("profile_ccf_conference_source_v1", _timestamp()),
         )
 
     def close(self) -> None:
@@ -395,6 +400,12 @@ class PersonalizationRepository:
             # An embedded replica can temporarily lag an additive primary-schema
             # migration; preserve legacy three-day behaviour until its next sync.
             lookback_days = 3
+        try:
+            ccf_conference_tiers = _load_list(self._value(row, "ccf_conference_tiers_json"))
+        except (AttributeError, KeyError, TypeError, ValueError):
+            # A local read replica can temporarily lag this additive schema
+            # migration; preserve the default tier scope until it catches up.
+            ccf_conference_tiers = ("A", "B")
         input_profile = ResearchProfileInput.from_form(
             base_profile=self._value(row, "base_profile"),
             research_topic=self._value(row, "research_topic"),
@@ -405,6 +416,7 @@ class PersonalizationRepository:
             content_preferences=_load_list(self._value(row, "content_preferences_json")),
             max_items=int(self._value(row, "max_items")),
             lookback_days=lookback_days,
+            ccf_conference_tiers=ccf_conference_tiers,
             llm_provider=self._value(row, "llm_provider"),
             llm_model=self._value(row, "llm_model"),
             output_formats=_load_list(self._value(row, "output_formats_json")),
@@ -425,8 +437,9 @@ class PersonalizationRepository:
                 id, user_id, version, is_current, base_profile, research_topic,
                 include_keywords_json, exclude_keywords_json, source_ids_json,
                 journal_ids_json, content_preferences_json, max_items, lookback_days,
+                ccf_conference_tiers_json,
                 llm_provider, llm_model, output_formats_json, created_at
-            ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 profile_id,
@@ -441,6 +454,7 @@ class PersonalizationRepository:
                 json.dumps(profile.content_preferences),
                 profile.max_items,
                 profile.lookback_days,
+                json.dumps(profile.ccf_conference_tiers),
                 profile.llm_provider,
                 profile.llm_model,
                 json.dumps(profile.output_formats),
