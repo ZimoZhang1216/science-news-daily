@@ -477,6 +477,54 @@ class PersonalizationRepositoryTests(unittest.TestCase):
 
         self.assertIsNone(self.repository.retry_delivery(delivery.delivery_id))
 
+    def test_cancelling_a_claimed_delivery_keeps_it_terminal_and_skips_the_period(self) -> None:
+        user_id = self.repository.create_user_with_profile(
+            self.user(), self.profile("battery"), self.daily_schedule()
+        )
+        due_at = datetime(2026, 7, 27, 23, 30, tzinfo=timezone.utc)
+        due = self.repository.make_due_schedule(user_id, date(2026, 7, 28), due_at)
+        self.repository.set_schedule_next_run(due.schedule_id, due_at)
+        delivery = self.repository.enqueue_automatic_delivery(due, due_at)
+        self.assertIsNotNone(self.repository.claim_delivery(delivery.delivery_id, "worker-a", due_at))
+
+        cancelled = self.repository.cancel_delivery(
+            delivery.delivery_id, datetime(2026, 7, 28, 0, 0, tzinfo=timezone.utc)
+        )
+
+        record = self.repository.get_delivery(delivery.delivery_id)
+        report_run = self.repository._fetchone(
+            "SELECT status, error_summary FROM report_runs WHERE id = ?", (delivery.report_run_id,)
+        )
+        self.assertTrue(cancelled)
+        self.assertEqual(record.status, "cancelled")
+        self.assertEqual(record.execution_id, "")
+        self.assertEqual(record.next_retry_at, "")
+        self.assertIsNone(self.repository.claim_delivery(delivery.delivery_id, "worker-b"))
+        self.assertEqual(self.repository._value(report_run, "status"), "failed")
+        self.assertEqual(self.repository._value(report_run, "error_summary"), "Cancelled by operator")
+        self.assertEqual(
+            self.repository.get_schedule(user_id).next_run_at,
+            datetime(2026, 7, 28, 23, 30, tzinfo=timezone.utc),
+        )
+
+    def test_cancelling_a_claimed_preview_prevents_it_from_becoming_ready(self) -> None:
+        user_id = self.repository.create_user_with_profile(
+            self.user(), self.profile("battery"), self.disabled_daily_schedule()
+        )
+        preview = self.repository.create_manual_preview(user_id, date(2026, 7, 28))
+        self.assertIsNotNone(self.repository.claim_delivery(preview.delivery_id))
+        self.assertTrue(self.repository.cancel_delivery(preview.delivery_id))
+
+        self.repository.mark_preview_ready(
+            preview.delivery_id, preview.report_run_id, "preview-artifact", "preview-run"
+        )
+
+        self.assertEqual(self.repository.get_delivery(preview.delivery_id).status, "cancelled")
+        report_run = self.repository._fetchone(
+            "SELECT status FROM report_runs WHERE id = ?", (preview.report_run_id,)
+        )
+        self.assertEqual(self.repository._value(report_run, "status"), "failed")
+
     @unittest.skipUnless(importlib.util.find_spec("libsql"), "libsql is not installed")
     def test_real_libsql_tuple_rows_are_read_by_column_name(self) -> None:
         import libsql

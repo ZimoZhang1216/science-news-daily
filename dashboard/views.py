@@ -57,6 +57,7 @@ EVENT_TYPE_LABELS = {
     "delivery_failed": "投递失败",
     "delivery_retry_queued": "已进入重试队列",
     "delivery_lease_expired": "执行超时，等待重试",
+    "delivery_cancelled": "任务已终止",
 }
 EVENT_MESSAGE_LABELS = {
     "Automatic delivery queued": "自动投递任务已进入队列",
@@ -67,6 +68,7 @@ EVENT_MESSAGE_LABELS = {
     "Preview generated": "日报预览已生成",
     "Email delivered": "邮件已成功发送",
     "Retry queued for preview": "已进入预览重试队列",
+    "Cancelled by operator": "任务已终止",
 }
 VALIDATION_ERROR_LABELS = {
     "timezone must be a valid IANA timezone": "时区无效，请使用 IANA 时区名称，例如 Asia/Shanghai。",
@@ -635,6 +637,19 @@ def render_reports(repository: PersonalizationRepository | None) -> None:
                         st.error(f"重试任务已进入队列，但 GitHub Actions 触发失败：{type(exc).__name__}")
                     else:
                         st.success("已开始重新执行。")
+        if delivery["status"] in {"queued", "claimed", "retryable_failed"}:
+            if st.button("终止任务", key=f"cancel-{delivery['id']}"):
+                try:
+                    cancelled = repository.cancel_delivery(delivery["id"], datetime.now(UTC))
+                except Exception:
+                    st.error("终止任务失败，请检查网络后重试。")
+                else:
+                    if cancelled:
+                        st.success("任务已终止；面板状态将在下次同步后刷新。")
+                    else:
+                        st.warning("任务状态已变化，无法安全终止。")
+        elif delivery["status"] == "sending":
+            st.caption("邮件正在发送，无法安全终止。")
         if delivery["last_error"]:
             st.caption(f"最近错误：{delivery['last_error']}")
 

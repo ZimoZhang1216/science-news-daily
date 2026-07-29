@@ -122,6 +122,8 @@ def _generate_claimed_report(
     *,
     require_pdf: bool = True,
 ) -> tuple[DeliveryExecutionContext, dict[str, Any], main.ReportGenerationResult, Path | None] | None:
+    if repository.is_delivery_cancelled(claim.delivery_id):
+        return None
     try:
         context = repository.get_delivery_execution_context(claim.delivery_id)
     except ValueError as exc:
@@ -135,6 +137,8 @@ def _generate_claimed_report(
         repository.history_for_user(claim.user_id, claim.report_date, 10),
         lambda item: item_matches_research_profile(item, context.profile.input),
     )
+    if repository.is_delivery_cancelled(claim.delivery_id):
+        return None
     if result.failure_exit_code is not None or not result.ai_generated or result.output_path is None:
         stage = result.failure_stage or ("fetch" if result.failure_exit_code is not None else "ai")
         repository.mark_retryable_failure(
@@ -150,6 +154,8 @@ def _generate_claimed_report(
             return None
         if pdf_path is None:
             repository.mark_retryable_failure(claim.delivery_id, "pdf", "PDF conversion failed", now_utc)
+            return None
+        if repository.is_delivery_cancelled(claim.delivery_id):
             return None
     repository.record_report_items(
         claim.report_run_id,
@@ -175,14 +181,14 @@ def generate_preview(
     # delays review without improving the later PDF mail-delivery guarantee.
     generated = _generate_claimed_report(repository, claim, services, require_pdf=False)
     if generated is None:
-        return 4
-    repository.mark_preview_ready(
+        return 0 if repository.is_delivery_cancelled(delivery_id) else 4
+    saved = repository.mark_preview_ready(
         delivery_id,
         claim.report_run_id,
         f"custom-report-{claim.report_run_id}",
         services.github_run_id,
     )
-    return 0
+    return 0 if saved or repository.is_delivery_cancelled(delivery_id) else 4
 
 
 def _send_automatic_claim(
@@ -193,11 +199,12 @@ def _send_automatic_claim(
 ) -> int:
     generated = _generate_claimed_report(repository, claim, services, now_utc)
     if generated is None:
-        return 4
+        return 2 if repository.is_delivery_cancelled(claim.delivery_id) else 4
     context, effective_profile, _, pdf_path = generated
     assert pdf_path is not None
     repository.mark_email_prepared(claim.delivery_id, now_utc)
-    repository.mark_email_sending(claim.delivery_id, now_utc)
+    if not repository.mark_email_sending(claim.delivery_id, now_utc):
+        return 2 if repository.is_delivery_cancelled(claim.delivery_id) else 4
     try:
         accepted = services.mailer(pdf_path, claim.report_date, effective_profile, [context.email])
     except Exception as exc:  # noqa: BLE001 - mail transport must not stop the batch.
@@ -246,10 +253,15 @@ def run_due_deliveries(
         try:
             result = _send_automatic_claim(repository, claim, services, now_utc)
         except Exception as exc:  # noqa: BLE001 - record then keep the batch moving.
-            repository.mark_retryable_failure(claim.delivery_id, "database", type(exc).__name__, now_utc)
-            result = 1
+            if repository.is_delivery_cancelled(claim.delivery_id):
+                result = 2
+            else:
+                repository.mark_retryable_failure(claim.delivery_id, "database", type(exc).__name__, now_utc)
+                result = 1
         if result == 0:
             sent += 1
+        elif result == 2:
+            skipped += 1
         else:
             failed += 1
 

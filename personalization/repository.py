@@ -947,6 +947,68 @@ class PersonalizationRepository:
             email_sending_at=self._value(row, "email_sending_at"),
         )
 
+    def is_delivery_cancelled(self, delivery_id: str) -> bool:
+        row = self._fetchone("SELECT status FROM deliveries WHERE id = ?", (delivery_id,))
+        return row is not None and self._value(row, "status") == "cancelled"
+
+    def cancel_delivery(
+        self, delivery_id: str, now_utc: datetime | None = None
+    ) -> bool:
+        """Atomically terminate work that has not entered the SMTP send boundary."""
+
+        now_utc = (now_utc or _utc_now()).astimezone(UTC)
+        timestamp = _timestamp(now_utc)
+        with self._transaction():
+            cursor = self._execute(
+                """
+                UPDATE deliveries
+                SET status = 'cancelled', last_error = '', error_stage = 'cancelled',
+                    next_retry_at = '', locked_at = '', locked_by = '', execution_id = '',
+                    email_prepared_at = '', updated_at = ?
+                WHERE id = ? AND status IN ('queued', 'claimed', 'retryable_failed')
+                RETURNING *
+                """,
+                (timestamp, delivery_id),
+            )
+            cancelled = self._normalise_row(cursor, cursor.fetchone())
+            if cancelled is None:
+                return False
+
+            run_id = self._value(cancelled, "report_run_id")
+            self._execute(
+                """
+                UPDATE report_runs
+                SET status = 'failed', error_summary = 'Cancelled by operator', finished_at = ?
+                WHERE id = ?
+                """,
+                (timestamp, run_id),
+            )
+            schedule_id = self._value(cancelled, "schedule_id")
+            if schedule_id:
+                schedule_row = self._fetchone("SELECT * FROM schedules WHERE id = ?", (schedule_id,))
+                if schedule_row is not None and bool(self._value(schedule_row, "enabled")):
+                    schedule = ScheduleInput.from_form(
+                        frequency=self._value(schedule_row, "frequency"),
+                        weekday=self._value(schedule_row, "weekday"),
+                        timezone=self._value(schedule_row, "timezone"),
+                        local_send_time=self._value(schedule_row, "local_send_time"),
+                        enabled=True,
+                    )
+                    self._execute(
+                        """
+                        UPDATE schedules SET next_run_at = ?, updated_at = ?
+                        WHERE id = ? AND enabled = 1 AND next_run_at <= ?
+                        """,
+                        (
+                            _timestamp(compute_next_run(schedule, now_utc)),
+                            timestamp,
+                            schedule_id,
+                            timestamp,
+                        ),
+                    )
+            self._append_event(run_id, delivery_id, "delivery_cancelled", "Cancelled by operator")
+            return True
+
     def get_delivery_execution_context(self, delivery_id: str) -> DeliveryExecutionContext:
         delivery_row = self._fetchone("SELECT * FROM deliveries WHERE id = ?", (delivery_id,))
         if delivery_row is None:
@@ -1145,25 +1207,32 @@ class PersonalizationRepository:
 
     def mark_preview_ready(
         self, delivery_id: str, run_id: str, artifact_name: str, github_run_id: str
-    ) -> None:
+    ) -> bool:
         with self._transaction():
-            self._execute(
+            cursor = self._execute(
                 """
                 UPDATE deliveries
                 SET status = 'preview_ready', artifact_name = ?, artifact_run_id = ?, updated_at = ?
                 WHERE id = ? AND status = 'claimed'
+                RETURNING *
                 """,
                 (artifact_name, github_run_id, _timestamp(), delivery_id),
             )
+            updated = self._normalise_row(cursor, cursor.fetchone())
+            if updated is None:
+                return False
             self._execute(
                 """
                 UPDATE report_runs
                 SET status = 'preview_ready', artifact_name = ?, github_run_id = ?, finished_at = ?
                 WHERE id = ?
                 """,
-                (artifact_name, github_run_id, _timestamp(), run_id),
+                (artifact_name, github_run_id, _timestamp(), self._value(updated, "report_run_id")),
             )
-            self._append_event(run_id, delivery_id, "preview_ready", "Preview generated")
+            self._append_event(
+                self._value(updated, "report_run_id"), delivery_id, "preview_ready", "Preview generated"
+            )
+            return True
 
     def queue_preview_delivery(self, delivery_id: str) -> DeliveryClaim | None:
         with self._transaction():
@@ -1208,23 +1277,25 @@ class PersonalizationRepository:
                 (timestamp, timestamp, delivery_id),
             )
 
-    def mark_email_sending(self, delivery_id: str, now_utc: datetime | None = None) -> None:
+    def mark_email_sending(self, delivery_id: str, now_utc: datetime | None = None) -> bool:
         timestamp = _timestamp(now_utc or _utc_now())
         with self._transaction():
-            row = self._fetchone("SELECT report_run_id FROM deliveries WHERE id = ? AND status = 'claimed'", (delivery_id,))
-            if row is None:
-                return
-            self._execute(
+            cursor = self._execute(
                 """
                 UPDATE deliveries
                 SET status = 'sending', email_sending_at = ?, updated_at = ?
                 WHERE id = ? AND status = 'claimed'
+                RETURNING *
                 """,
                 (timestamp, timestamp, delivery_id),
             )
+            row = self._normalise_row(cursor, cursor.fetchone())
+            if row is None:
+                return False
             self._append_event(
                 self._value(row, "report_run_id"), delivery_id, "delivery_sending", "SMTP send started"
             )
+            return True
 
     def mark_email_outcome_unknown(
         self,
@@ -1328,7 +1399,7 @@ class PersonalizationRepository:
         timestamp = _timestamp(now_utc or _utc_now())
         with self._transaction():
             row = self._fetchone("SELECT * FROM deliveries WHERE id = ?", (delivery_id,))
-            if row is None:
+            if row is None or self._value(row, "status") not in {"claimed", "sending"}:
                 return
             attempt_count = int(self._value(row, "attempt_count"))
             retry_exhausted = attempt_count >= 3
@@ -1338,12 +1409,13 @@ class PersonalizationRepository:
                     (now_utc or _utc_now()).astimezone(UTC)
                     + timedelta(minutes=30 * (2 ** max(0, attempt_count - 1)))
                 )
-            self._execute(
+            cursor = self._execute(
                 """
                 UPDATE deliveries
                 SET status = ?, last_error = ?, error_stage = ?, next_retry_at = ?,
                     locked_at = '', locked_by = '', execution_id = '', updated_at = ?
-                WHERE id = ?
+                WHERE id = ? AND status IN ('claimed', 'sending')
+                RETURNING *
                 """,
                 (
                     "failed" if retry_exhausted else "retryable_failed",
@@ -1354,12 +1426,15 @@ class PersonalizationRepository:
                     delivery_id,
                 ),
             )
+            updated = self._normalise_row(cursor, cursor.fetchone())
+            if updated is None:
+                return
             self._execute(
                 "UPDATE report_runs SET status = 'failed', error_summary = ?, finished_at = ? WHERE id = ?",
-                (error_summary[:500], timestamp, self._value(row, "report_run_id")),
+                (error_summary[:500], timestamp, self._value(updated, "report_run_id")),
             )
             self._append_event(
-                self._value(row, "report_run_id"),
+                self._value(updated, "report_run_id"),
                 delivery_id,
                 "retry_exhausted" if retry_exhausted else "delivery_failed",
                 "Retry limit reached" if retry_exhausted else error_summary,

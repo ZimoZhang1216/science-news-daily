@@ -316,6 +316,41 @@ class UnifiedSchedulerRunnerTests(unittest.TestCase):
         self.assertEqual(calls, ["sent"])
         self.assertEqual(len(self.repository.list_deliveries_for_user(user_id)), 1)
 
+    def test_cancelling_during_generation_prevents_the_email_from_sending(self) -> None:
+        user_id = self._user("Alice")
+        mail_attempts: list[str] = []
+
+        def generator(options, profile, history, item_filter):
+            delivery = self.repository.list_deliveries_for_user(user_id)[0]
+            self.assertTrue(self.repository.cancel_delivery(delivery.id, self.now))
+            return self._generator(options, profile, history, item_filter)
+
+        services = self._services()
+        services = RunnerServices(
+            generator=generator,
+            pdf_converter=services.pdf_converter,
+            mailer=lambda *_args: mail_attempts.append("sent") or True,
+            github_run_id=services.github_run_id,
+            output_root=services.output_root,
+        )
+
+        summary = run_due_deliveries(
+            self.repository,
+            self.now,
+            services,
+            max_jobs=1,
+            deadline=datetime.now(UTC) + timedelta(minutes=10),
+            execution_id="worker-a",
+        )
+
+        delivery = self.repository.list_deliveries_for_user(user_id)[0]
+        self.assertEqual(summary.claimed, 1)
+        self.assertEqual(summary.sent, 0)
+        self.assertEqual(summary.skipped, 1)
+        self.assertEqual(summary.failed, 0)
+        self.assertEqual(mail_attempts, [])
+        self.assertEqual(delivery.status, "cancelled")
+
     def test_failed_user_does_not_stop_later_user_delivery(self) -> None:
         failing_user = self._user("Alice")
         successful_user = self._user("Bob")

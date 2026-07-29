@@ -428,7 +428,7 @@ streamlit run dashboard/app.py
 
 启用统一调度前，把数据库、模型和 SMTP 变量作为 GitHub Actions secrets 配置，并额外加入 `TURSO_DATABASE_URL` 与 `TURSO_AUTH_TOKEN`。可将 `MAX_JOBS_PER_RUN`、`MAX_RUNTIME_MINUTES` 和 `CUSTOM_DELIVERY_LEASE_MINUTES` 配置为 GitHub Actions repository variables。运行摘要只输出任务数量，不输出邮箱、SMTP 密码、API Key 或 Turso Token。
 
-操作建议：编辑正在服务的客户前先在 Users 页面暂停该客户；保存后会创建新的画像版本，下一次新建报告才使用新版。手动预览 artifact 在 GitHub Actions 中保留 14 天；过期后需要重新生成预览。用户的发送时间在界面按其 IANA 时区显示，数据库保存 UTC；夏令时歧义时间取第一次出现，不存在的本地时间向前顺延。自动投递失败最多自动重试 3 次，且不会在同一轮扫描立即再次发送。
+操作建议：编辑正在服务的客户前先在 Users 页面暂停该客户；保存后会创建新的画像版本，下一次新建报告才使用新版。手动预览 artifact 在 GitHub Actions 中保留 14 天；过期后需要重新生成预览。日报与投递页面可终止“等待执行”“执行中”或“等待重试”的任务：数据库会原子地取消该任务，正在生成的 workflow 不会再进入邮件发送；自动计划会跳过当前周期并计算下一次运行。SMTP 已开始发送时不能安全撤回，因此只会显示状态说明。用户的发送时间在界面按其 IANA 时区显示，数据库保存 UTC；夏令时歧义时间取第一次出现，不存在的本地时间向前顺延。自动投递失败最多自动重试 3 次，且不会在同一轮扫描立即再次发送。
 
 ## 输出结构
 

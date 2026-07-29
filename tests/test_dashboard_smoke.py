@@ -64,6 +64,31 @@ class DashboardSmokeTests(unittest.TestCase):
         finally:
             repository.close()
 
+    def create_queued_preview(self) -> str:
+        repository = PersonalizationRepository.for_sqlite(self.database_path)
+        repository.initialize()
+        try:
+            user_id = repository.create_user_with_profile(
+                UserInput.from_form("Alice", "alice@example.test", "active"),
+                ResearchProfileInput.from_form(
+                    base_profile="chemistry",
+                    research_topic="Lithium metal batteries",
+                    include_keywords="battery",
+                    exclude_keywords="",
+                    source_ids=("arxiv",),
+                    journal_ids=(),
+                    content_preferences=("mechanism",),
+                    max_items=12,
+                    llm_provider="deepseek",
+                    llm_model="deepseek-v4-flash",
+                    output_formats=("docx", "pdf"),
+                ),
+                ScheduleInput.from_form("daily", None, "Asia/Shanghai", "07:30", False),
+            )
+            return repository.create_manual_preview(user_id, date(2026, 7, 28)).delivery_id
+        finally:
+            repository.close()
+
     def test_entrypoint_imports_when_streamlit_executes_the_script_directly(self) -> None:
         root = Path(__file__).resolve().parents[1]
         dashboard_directory = root / "dashboard"
@@ -257,6 +282,24 @@ class DashboardSmokeTests(unittest.TestCase):
 
         self.assertIn('.stButton > button:not([kind="primary"])', stylesheet)
         self.assertIn("color: var(--ink) !important;", stylesheet)
+
+    def test_terminate_button_cancels_a_queued_delivery(self) -> None:
+        delivery_id = self.create_queued_preview()
+        dashboard_app._open_repository.clear()
+        try:
+            app = self.local_dashboard_app()
+            navigation = next(radio for radio in app.radio if radio.label == "功能导航")
+            navigation.set_value("日报与投递").run()
+            terminate = next(button for button in app.button if button.label == "终止任务")
+            terminate.click().run()
+        finally:
+            dashboard_app._open_repository.clear()
+
+        repository = PersonalizationRepository.for_sqlite(self.database_path)
+        try:
+            self.assertEqual(repository.get_delivery(delivery_id).status, "cancelled")
+        finally:
+            repository.close()
 
     def test_rendered_dashboard_injects_a_dark_system_theme(self) -> None:
         app = self.local_dashboard_app()
