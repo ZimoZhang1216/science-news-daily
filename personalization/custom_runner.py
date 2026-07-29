@@ -120,7 +120,11 @@ def _generate_claimed_report(
     services: RunnerServices,
     now_utc: datetime | None = None,
 ) -> tuple[DeliveryExecutionContext, dict[str, Any], main.ReportGenerationResult, Path | None] | None:
-    context = repository.get_delivery_execution_context(claim.delivery_id)
+    try:
+        context = repository.get_delivery_execution_context(claim.delivery_id)
+    except ValueError as exc:
+        repository.mark_retryable_failure(claim.delivery_id, "profile", str(exc), now_utc)
+        return None
     effective_profile = compose_effective_profile(context.profile.input, claim.user_id)
     options = _generation_options(context, services.output_root)
     result = services.generator(
