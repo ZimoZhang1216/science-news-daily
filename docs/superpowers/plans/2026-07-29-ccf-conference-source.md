@@ -225,7 +225,7 @@ Expected: all tests and compilation succeed, and the diff has no whitespace erro
 
 Restart the existing 8501 dashboard service, open a computer-science profile editor, and verify the source label and tier selector render with A+B selected. Do not save a test profile or expose credential-bearing logs.
 
-- [ ] **Step 4: Commit and push the implementation**
+- [x] **Step 4: Commit and push the implementation**
 
 ```bash
 git add main.py personalization dashboard tests README.md docs/superpowers
