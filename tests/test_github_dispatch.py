@@ -29,6 +29,16 @@ class GitHubDispatchTests(unittest.TestCase):
         self.assertNotIn("steps.cronjob_marker.outputs.cache-hit", scheduler_section)
         self.assertIn("scheduler_summary", scheduler_section)
 
+    def test_manual_preview_and_retry_jobs_install_pdf_export_dependencies(self) -> None:
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/custom-user-daily.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertEqual(
+            workflow.count("sudo apt-get install -y libreoffice-writer fonts-noto-cjk"),
+            2,
+        )
+
     def test_command_parser_rejects_unknown_dispatch_command(self) -> None:
         with self.assertRaises(SystemExit):
             custom_user_daily.build_parser().parse_args(["not-a-command"])

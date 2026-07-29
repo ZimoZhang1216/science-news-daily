@@ -106,7 +106,7 @@ class CustomRunnerTests(unittest.TestCase):
         self.assertEqual(recipients, ["alice@example.test"])
         return True
 
-    def test_preview_never_calls_the_mailer(self) -> None:
+    def test_preview_generates_pdf_without_sending_email(self) -> None:
         claim = self.repository.create_manual_preview(self.user_id, date(2026, 7, 28))
         services = RunnerServices(
             generator=self.successful_generator,
@@ -123,9 +123,10 @@ class CustomRunnerTests(unittest.TestCase):
         self.assertEqual(self.mailer_calls, [])
         self.assertEqual(delivery.status, "preview_ready")
         self.assertEqual(delivery.artifact_name, f"custom-report-{delivery.report_run_id}")
+        self.assertTrue((self.output_dir / delivery.id / "report.pdf").is_file())
 
-    def test_preview_does_not_require_pdf_conversion(self) -> None:
-        """Manual review must remain available when the runner lacks LibreOffice."""
+    def test_preview_becomes_retryable_when_pdf_conversion_fails(self) -> None:
+        """A preview is not ready until its downloadable PDF has been created."""
 
         claim = self.repository.create_manual_preview(self.user_id, date(2026, 7, 28))
         services = RunnerServices(
@@ -139,8 +140,9 @@ class CustomRunnerTests(unittest.TestCase):
         exit_code = generate_preview(self.repository, claim.delivery_id, services)
         delivery = self.repository.get_delivery(claim.delivery_id)
 
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(delivery.status, "preview_ready")
+        self.assertEqual(exit_code, 4)
+        self.assertEqual(delivery.status, "retryable_failed")
+        self.assertEqual(delivery.error_stage, "pdf")
 
     def test_preview_with_an_unsupported_saved_profile_becomes_retryable(self) -> None:
         """A profile introduced by a newer deployment must not leave a claimed preview stuck."""

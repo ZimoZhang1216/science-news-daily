@@ -177,9 +177,9 @@ def generate_preview(
     if claim.mode != "manual":
         repository.mark_retryable_failure(delivery_id, "Preview command requires a manual delivery")
         return 2
-    # A manual preview is a content-review artifact.  Requiring LibreOffice here
-    # delays review without improving the later PDF mail-delivery guarantee.
-    generated = _generate_claimed_report(repository, claim, services, require_pdf=False)
+    # A manual preview is a review artifact, so it must contain the same PDF the
+    # recipient would receive later.  It still never invokes the mailer.
+    generated = _generate_claimed_report(repository, claim, services)
     if generated is None:
         return 0 if repository.is_delivery_cancelled(delivery_id) else 4
     saved = repository.mark_preview_ready(
