@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -23,6 +24,7 @@ class RecommendationError(RuntimeError):
 _RESPONSE_FIELDS = frozenset(
     {
         "base_profile",
+        "research_focus",
         "include_keywords",
         "exclude_keywords",
         "source_ids",
@@ -72,6 +74,8 @@ def _prompt(request: RecommendationRequest) -> tuple[str, str]:
         "你是科研资讯日报的配置推荐助手。请充分分析用户研究方向，但不要输出分析过程、"
         "推理步骤或链式思维。只返回一个严格 JSON object，不要 Markdown、代码块或额外文字。"
         "推荐必须只使用提供的 profile、source、content preference 和 ISSN。"
+        "research_focus 必须是 8 到 28 个字符的中文研究聚焦短语：概括研究对象或信息主题，"
+        "不能逐字复述用户原文，不能包含“偏好”“信息来源”“优先级”“我想”或冒号。"
         "rationale 与 uncertainty 必须是简短中文说明。"
     )
     payload = {
@@ -82,6 +86,7 @@ def _prompt(request: RecommendationRequest) -> tuple[str, str]:
         "allowed_journal_issns_by_profile": journal_catalogue,
         "response_schema": {
             "base_profile": "one supported profile ID",
+            "research_focus": "concise Chinese research focus, 8-28 characters, not copied user instructions",
             "include_keywords": ["strings"],
             "exclude_keywords": ["strings"],
             "source_ids": ["source IDs allowed for base_profile"],
@@ -112,12 +117,30 @@ def _require_response_shape(response: dict[str, object]) -> None:
             raise RecommendationError(f"malformed model output: {field} must be a list of strings")
     if isinstance(response["max_items"], bool) or not isinstance(response["max_items"], int):
         raise RecommendationError("malformed model output: max_items must be an integer")
-    for field in ("frequency", "timezone", "local_send_time", "rationale", "uncertainty"):
+    for field in (
+        "research_focus",
+        "frequency",
+        "timezone",
+        "local_send_time",
+        "rationale",
+        "uncertainty",
+    ):
         if not isinstance(response[field], str):
             raise RecommendationError(f"malformed model output: {field} must be a string")
     weekday = response["weekday"]
     if weekday is not None and (isinstance(weekday, bool) or not isinstance(weekday, int)):
         raise RecommendationError("malformed model output: weekday must be an integer or null")
+
+
+def _normalise_research_focus(value: str, original_topic: str) -> str:
+    focus = re.sub(r"\s+", " ", value).strip(" ：:；;。")
+    if not 4 <= len(focus) <= 40:
+        raise RecommendationError("malformed model output: research_focus must be concise")
+    if focus.casefold() == original_topic.strip().casefold():
+        raise RecommendationError("malformed model output: research_focus copied the user description")
+    if any(marker in focus for marker in ("偏好", "信息来源", "优先级", "我想", "：", ":")):
+        raise RecommendationError("malformed model output: research_focus contains configuration text")
+    return focus
 
 
 def _build_recommendation(
@@ -128,6 +151,8 @@ def _build_recommendation(
     assert isinstance(base_profile, str)
     if base_profile not in main.REPORT_PROFILES:
         raise RecommendationError("base_profile must be an existing report profile")
+    research_focus = response["research_focus"]
+    assert isinstance(research_focus, str)
 
     source_ids = response["source_ids"]
     assert isinstance(source_ids, list)
@@ -148,7 +173,7 @@ def _build_recommendation(
     try:
         profile = ResearchProfileInput.from_form(
             base_profile=base_profile,
-            research_topic=request.research_topic,
+            research_topic=_normalise_research_focus(research_focus, request.research_topic),
             include_keywords=response["include_keywords"],
             exclude_keywords=response["exclude_keywords"],
             source_ids=response["source_ids"],

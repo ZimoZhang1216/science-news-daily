@@ -15,6 +15,7 @@ from personalization.custom_runner import (
     generate_preview,
     run_due_deliveries,
 )
+from personalization.normalization import normalize_existing_profiles
 from personalization.repository import PersonalizationRepository
 
 
@@ -26,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
             "scan",
             "preview",
             "artifact-metadata",
+            "normalize-profiles",
             "retry",
         ),
     )
@@ -76,6 +78,10 @@ def main() -> int:
         _emit_output("artifact_name", delivery.artifact_name)
         _emit_output("artifact_run_id", delivery.artifact_run_id)
         return 0
+    if args.command == "normalize-profiles":
+        summary = normalize_existing_profiles(repository)
+        print(f"profile_normalization_summary={json.dumps(summary.as_dict(), sort_keys=True)}")
+        return 1 if summary.failed else 0
     if args.command == "retry":
         delivery_id = _require_delivery_id(parser, args.delivery_id)
         if repository.retry_delivery(delivery_id) is None:

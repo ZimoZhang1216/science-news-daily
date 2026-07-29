@@ -17,6 +17,7 @@ def valid_request() -> RecommendationRequest:
 def valid_response() -> dict[str, object]:
     return {
         "base_profile": "chemistry",
+        "research_focus": "固态电池界面离子传导机制",
         "include_keywords": ["solid electrolyte", "SEI"],
         "exclude_keywords": ["editorial"],
         "source_ids": ["arxiv", "pubmed", "crossref"],
@@ -74,6 +75,8 @@ class PersonalizationRecommenderTests(unittest.TestCase):
 
         self.assertEqual(recommendation.profile.llm_provider, "deepseek")
         self.assertEqual(recommendation.profile.llm_model, "deepseek-v4-flash")
+        self.assertEqual(recommendation.profile.research_topic, "固态电池界面离子传导机制")
+        self.assertNotEqual(recommendation.profile.research_topic, valid_request().research_topic)
         self.assertFalse(recommendation.schedule.enabled)
 
     def test_recommender_rejects_a_journal_outside_the_selected_profile(self) -> None:
