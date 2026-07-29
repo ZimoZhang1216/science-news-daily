@@ -13,6 +13,7 @@ import streamlit as st
 import main
 from personalization.github import DispatchSettings, dispatch_command
 from personalization.models import RecommendationRequest, ResearchProfileInput, ScheduleInput, UserInput
+from personalization.normalization import normalize_existing_profiles
 from personalization.recommender import RecommendationError, recommend_profile
 from personalization.repository import PersonalizationRepository
 
@@ -517,6 +518,28 @@ def render_users(repository: PersonalizationRepository | None) -> None:
     if not users:
         st.caption("暂时还没有用户科研画像。")
         return
+    normalization_completion = st.session_state.pop("profile_normalization_completion", None)
+    if normalization_completion:
+        level, message = normalization_completion
+        getattr(st, level)(message)
+    if st.button("用 AI 统一优化已有用户", type="primary"):
+        with st.spinner("正在提炼研究聚焦、关键词与信源…"):
+            try:
+                summary = normalize_existing_profiles(repository)
+            except Exception:
+                st.error("AI 统一优化暂时失败，请检查模型和数据库连接后重试。")
+            else:
+                if summary.failed:
+                    st.session_state["profile_normalization_completion"] = (
+                        "warning",
+                        f"已优化 {summary.normalized} 位用户；{summary.failed} 位未完成，可稍后重试。",
+                    )
+                else:
+                    st.session_state["profile_normalization_completion"] = (
+                        "success",
+                        f"已用 AI 统一优化 {summary.normalized} 位用户画像。",
+                    )
+                st.rerun()
     pending_deletion_id = st.session_state.get("pending_user_deletion_id")
     for user in users:
         left, middle, right = st.columns([4, 3, 2])

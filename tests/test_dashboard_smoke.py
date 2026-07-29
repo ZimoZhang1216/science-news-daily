@@ -363,6 +363,13 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertIn("必须填写", rendered)
         self.assertIn("生成建议", [element.label for element in app.button])
 
+    def test_user_page_offers_ai_normalization_for_legacy_profiles(self) -> None:
+        self.create_queued_preview()
+        app = self.local_dashboard_app()
+        app.sidebar.radio[0].set_value("用户画像").run()
+
+        self.assertIn("用 AI 统一优化已有用户", [element.label for element in app.button])
+
     def test_user_profile_ui_explains_ai_description_and_new_source_layers(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "dashboard/views.py").read_text(
             encoding="utf-8"
