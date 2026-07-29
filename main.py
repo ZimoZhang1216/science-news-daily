@@ -1250,6 +1250,118 @@ BUSINESS_MANAGEMENT_SOURCE_WEIGHTS = {
     "arXiv": 48,
 }
 
+ACADEMIC_SOURCE_IDS = ("arxiv", "pubmed", "crossref", "rss", "openalex")
+PUBLIC_SOURCE_IDS = ("official_rss", "hackernews", "github_releases")
+SUPPORTED_SOURCE_IDS = frozenset((*ACADEMIC_SOURCE_IDS, *PUBLIC_SOURCE_IDS))
+
+SOURCE_KIND_LABELS = {
+    "academic": "学术研究",
+    "official": "官方发布",
+    "community": "社区信号",
+}
+
+PROFILE_LABELS = {
+    "chemistry": "化学（专业）",
+    "organic_chemistry": "有机化学（专业）",
+    "biology": "生物学（专业）",
+    "statistics": "统计学（专业）",
+    "business_management": "工商管理（专业）",
+    "philosophy": "哲学",
+    "economics": "经济学",
+    "law": "法学",
+    "education": "教育学",
+    "literature": "文学",
+    "history": "历史学",
+    "natural_sciences": "理学",
+    "engineering": "工学",
+    "agriculture": "农学",
+    "medicine": "医学",
+    "management": "管理学",
+    "arts": "艺术学",
+    "interdisciplinary_studies": "交叉学科",
+    "military_science": "军事学",
+    "computer_science": "计算机科学（工学专业）",
+}
+
+GENERIC_ACADEMIC_SOURCE_WEIGHTS = {
+    "Crossref": 62,
+    "OpenAlex": 58,
+    "arXiv": 52,
+    "PubMed": 58,
+    "RSS": 42,
+    "Hacker News": 24,
+    "GitHub Release": 28,
+}
+
+COMPUTER_SCIENCE_FIELD_KEYWORDS = {
+    "人工智能与智能体": ["artificial intelligence", "machine learning", "large language model", "llm", "agent", "reasoning", "retrieval"],
+    "数据管理与时空数据": ["data cleaning", "data repair", "data quality", "data management", "database", "spatial data", "spatio-temporal", "trajectory"],
+    "系统与软件工程": ["distributed system", "operating system", "software engineering", "programming language", "compiler", "security"],
+    "图形与人机交互": ["computer graphics", "visualization", "human-computer interaction", "virtual reality"],
+}
+COMPUTER_SCIENCE_TERMS = tuple(
+    dict.fromkeys(keyword.lower() for keywords in COMPUTER_SCIENCE_FIELD_KEYWORDS.values() for keyword in keywords)
+)
+COMPUTER_SCIENCE_CROSSREF_JOURNALS = [
+    {"source": "ACM Computing Surveys", "issns": ["0360-0300", "1557-7341"], "broad": True},
+    {"source": "ACM Transactions on Database Systems", "issns": ["0362-5915", "1557-4643"], "broad": False},
+    {"source": "The VLDB Journal", "issns": ["1066-8888", "0949-877X"], "broad": False},
+    {"source": "IEEE Transactions on Knowledge and Data Engineering", "issns": ["1041-4347", "1558-2191"], "broad": False},
+]
+COMPUTER_SCIENCE_RSS_FEEDS = [
+    {"source": "ACM Computing Surveys", "url": "https://dl.acm.org/action/showFeed?type=etoc&feed=rss&jc=csur", "broad": True},
+]
+COMPUTER_SCIENCE_OFFICIAL_RSS_FEEDS = [
+    {"source": "GitHub Blog", "url": "https://github.blog/feed/", "broad": True},
+]
+COMPUTER_SCIENCE_GITHUB_REPOSITORIES = [
+    "huggingface/transformers",
+    "pytorch/pytorch",
+    "langchain-ai/langchain",
+]
+
+
+def _academic_profile(
+    *,
+    key: str,
+    title: str,
+    meta_fields: str,
+    default_field: str,
+    keywords: list[str],
+) -> dict[str, Any]:
+    """Build a conservative first-level discipline profile around OpenAlex."""
+
+    field_keywords = {default_field: keywords}
+    return {
+        "key": key,
+        "title": title,
+        "failure_title": f"{title}运行失败报告",
+        "output_prefix": key,
+        "header_label": f"{key.upper()} NEWS DAILY",
+        "meta_fields": meta_fields,
+        "field_keywords": field_keywords,
+        "relevance_terms": keywords,
+        "arxiv_query_terms": [],
+        "pubmed_query_terms": [],
+        "crossref_journals": [],
+        "rss_feeds": [],
+        "openalex_query_terms": keywords,
+        "official_rss_feeds": [],
+        "community_query_terms": [],
+        "github_repositories": [],
+        "source_weights": GENERIC_ACADEMIC_SOURCE_WEIGHTS,
+        "default_field": default_field,
+        "ai_role": f"{title}科研编辑",
+        "ai_task": f"生成{title}科研资讯日报摘要",
+        "title_style": (
+            "标题必须基于题名或摘要中的可核对对象、方法、数据或证据边界；"
+            "不得使用夸张、悬念或营销表达，也不得补写未出现的结论。"
+        ),
+        "email_env": "CUSTOM_REPORT_EMAIL_TO",
+        "default_email_to": "",
+        "allow_default_email_fallback": False,
+    }
+
 REPORT_PROFILES: dict[str, dict[str, Any]] = {
     "chemistry": {
         "key": "chemistry",
@@ -1409,6 +1521,127 @@ REPORT_PROFILES: dict[str, dict[str, Any]] = {
     },
 }
 
+REPORT_PROFILES.update(
+    {
+        "philosophy": _academic_profile(
+            key="philosophy",
+            title="哲学科研资讯日报",
+            meta_fields="伦理学、认识论、逻辑学、科学哲学、政治哲学",
+            default_field="哲学",
+            keywords=["philosophy", "ethics", "epistemology", "logic", "metaphysics"],
+        ),
+        "economics": _academic_profile(
+            key="economics",
+            title="经济学科研资讯日报",
+            meta_fields="微观、宏观、计量、发展、劳动、公共经济",
+            default_field="经济学",
+            keywords=["economics", "econometrics", "microeconomics", "macroeconomics", "development economics"],
+        ),
+        "law": _academic_profile(
+            key="law",
+            title="法学科研资讯日报",
+            meta_fields="法理、宪法、民商、刑法、国际法、数字法治",
+            default_field="法学",
+            keywords=["law", "legal", "jurisprudence", "constitutional law", "international law"],
+        ),
+        "education": _academic_profile(
+            key="education",
+            title="教育学科研资讯日报",
+            meta_fields="学习科学、课程与教学、教育技术、教育评估、高等教育",
+            default_field="教育学",
+            keywords=["education", "learning science", "pedagogy", "educational technology", "education policy"],
+        ),
+        "literature": _academic_profile(
+            key="literature",
+            title="文学科研资讯日报",
+            meta_fields="比较文学、文艺理论、语言文学、数字人文、文本研究",
+            default_field="文学",
+            keywords=["literature", "literary studies", "comparative literature", "literary theory", "digital humanities"],
+        ),
+        "history": _academic_profile(
+            key="history",
+            title="历史学科研资讯日报",
+            meta_fields="史学理论、中国史、世界史、考古、数字史学",
+            default_field="历史学",
+            keywords=["history", "historiography", "archaeology", "historical research", "digital history"],
+        ),
+        "natural_sciences": _academic_profile(
+            key="natural_sciences",
+            title="理学科研资讯日报",
+            meta_fields="数学、物理、天文、地球科学、化学、生命科学",
+            default_field="理学",
+            keywords=["mathematics", "physics", "astronomy", "earth science", "natural science"],
+        ),
+        "engineering": _academic_profile(
+            key="engineering",
+            title="工学科研资讯日报",
+            meta_fields="机械、电子、信息、材料、土木、能源、环境",
+            default_field="工学",
+            keywords=["engineering", "materials engineering", "electrical engineering", "mechanical engineering", "environmental engineering"],
+        ),
+        "agriculture": _academic_profile(
+            key="agriculture",
+            title="农学科研资讯日报",
+            meta_fields="作物、园艺、植物保护、畜牧、食品、农业资源与环境",
+            default_field="农学",
+            keywords=["agriculture", "crop science", "plant science", "animal science", "food science"],
+        ),
+        "medicine": _academic_profile(
+            key="medicine",
+            title="医学科研资讯日报",
+            meta_fields="临床医学、基础医学、公共卫生、药学、护理、精准医学",
+            default_field="医学",
+            keywords=["medicine", "clinical research", "public health", "biomedical", "precision medicine"],
+        ),
+        "management": _academic_profile(
+            key="management",
+            title="管理学科研资讯日报",
+            meta_fields="组织、战略、运营、信息系统、公共管理、图情档案",
+            default_field="管理学",
+            keywords=["management", "organization", "operations management", "information systems", "public administration"],
+        ),
+        "arts": _academic_profile(
+            key="arts",
+            title="艺术学科研资讯日报",
+            meta_fields="艺术理论、音乐、戏剧影视、美术设计、文化遗产",
+            default_field="艺术学",
+            keywords=["arts", "art history", "musicology", "film studies", "design research"],
+        ),
+        "interdisciplinary_studies": _academic_profile(
+            key="interdisciplinary_studies",
+            title="交叉学科科研资讯日报",
+            meta_fields="计算社会科学、数字人文、复杂系统、科学技术与社会、交叉方法",
+            default_field="交叉学科",
+            keywords=["interdisciplinary", "computational social science", "complex systems", "digital humanities", "science and technology studies"],
+        ),
+        "military_science": _academic_profile(
+            key="military_science",
+            title="军事学科研资讯日报",
+            meta_fields="战略研究、国防管理、安全研究、军事技术史",
+            default_field="军事学",
+            keywords=["military science", "security studies", "defense studies", "strategic studies", "defence policy"],
+        ),
+        "computer_science": {
+            **_academic_profile(
+                key="computer_science",
+                title="计算机科学科研资讯日报",
+                meta_fields="AI与智能体、数据管理与时空数据、系统软件、图形与人机交互",
+                default_field="综合计算机科学",
+                keywords=list(COMPUTER_SCIENCE_TERMS),
+            ),
+            "field_keywords": COMPUTER_SCIENCE_FIELD_KEYWORDS,
+            "relevance_terms": COMPUTER_SCIENCE_TERMS,
+            "arxiv_query_terms": ["cat:cs.AI", "cat:cs.DB", "cat:cs.SE", "cat:cs.DC", "cat:cs.HC"],
+            "crossref_journals": COMPUTER_SCIENCE_CROSSREF_JOURNALS,
+            "rss_feeds": COMPUTER_SCIENCE_RSS_FEEDS,
+            "official_rss_feeds": COMPUTER_SCIENCE_OFFICIAL_RSS_FEEDS,
+            "community_query_terms": ["artificial intelligence", "AI agent", "data engineering", "database"],
+            "github_repositories": COMPUTER_SCIENCE_GITHUB_REPOSITORIES,
+            "source_weights": GENERIC_ACADEMIC_SOURCE_WEIGHTS,
+        },
+    }
+)
+
 
 @dataclass
 class NewsItem:
@@ -1419,6 +1652,7 @@ class NewsItem:
     abstract: str = ""
     doi: str = ""
     authors: list[str] = field(default_factory=list)
+    source_kind: str = "academic"
     field_name: str = "综合化学"
     item_id: str = ""
     attractive_title: str = ""
@@ -2003,6 +2237,23 @@ def resolve_profile(profile_key: str) -> dict[str, Any]:
     return profile
 
 
+def available_source_ids(profile_key: str | dict[str, Any]) -> tuple[str, ...]:
+    """Return the configured, user-selectable source IDs for one profile."""
+
+    profile = resolve_profile(profile_key) if isinstance(profile_key, str) else profile_key
+    configured = {
+        "arxiv": bool(profile.get("arxiv_query_terms")),
+        "pubmed": bool(profile.get("pubmed_query_terms")),
+        "crossref": bool(profile.get("crossref_journals")),
+        "rss": bool(profile.get("rss_feeds")),
+        "openalex": bool(profile.get("openalex_query_terms")),
+        "official_rss": bool(profile.get("official_rss_feeds")),
+        "hackernews": bool(profile.get("community_query_terms")),
+        "github_releases": bool(profile.get("github_repositories")),
+    }
+    return tuple(source_id for source_id in (*ACADEMIC_SOURCE_IDS, *PUBLIC_SOURCE_IDS) if configured[source_id])
+
+
 def classify_field(title: str, abstract: str, profile: dict[str, Any]) -> str:
     haystack = f"{title} {abstract}".lower()
     scores: dict[str, int] = {}
@@ -2382,6 +2633,215 @@ def fetch_crossref(
     return items, statuses
 
 
+def openalex_abstract(value: Any) -> str:
+    """Reconstruct OpenAlex's inverted-index abstract representation."""
+
+    if not isinstance(value, dict):
+        return ""
+    positioned_terms: list[tuple[int, str]] = []
+    for term, positions in value.items():
+        if not isinstance(term, str) or not isinstance(positions, list):
+            continue
+        for position in positions:
+            if isinstance(position, int):
+                positioned_terms.append((position, term))
+    return clean_text(" ".join(term for _, term in sorted(positioned_terms)))
+
+
+def fetch_openalex(
+    session: requests.Session,
+    since: datetime,
+    until: datetime,
+    max_items: int,
+    profile: dict[str, Any],
+) -> list[NewsItem]:
+    """Fetch a bounded set of recent scholarly works for broad disciplines."""
+
+    terms = list(dict.fromkeys(profile.get("openalex_query_terms", ())))[:3]
+    if not terms:
+        return []
+    per_query = max(5, min(30, max_items // len(terms) + 3))
+    items: list[NewsItem] = []
+    seen: set[str] = set()
+    for term in terms:
+        params: dict[str, Any] = {
+            "search": term,
+            "filter": (
+                f"from_publication_date:{since.date().isoformat()},"
+                f"to_publication_date:{until.date().isoformat()},type:article"
+            ),
+            "sort": "publication_date:desc",
+            "per_page": per_query,
+        }
+        api_key = os.getenv("OPENALEX_API_KEY", "").strip()
+        if api_key:
+            params["api_key"] = api_key
+        response = session.get("https://api.openalex.org/works", params=params, timeout=30)
+        response.raise_for_status()
+        works = response.json().get("results", [])
+        if not isinstance(works, list):
+            continue
+        for work in works:
+            if not isinstance(work, dict) or work.get("type") != "article":
+                continue
+            published = parse_datetime(work.get("publication_date"))
+            if published and not (since <= published <= until):
+                continue
+            title = clean_text(work.get("display_name", "") or work.get("title", ""))
+            doi = clean_text(work.get("doi", "")).removeprefix("https://doi.org/")
+            work_id = clean_text(work.get("id", ""))
+            identity = doi.lower() or work_id.lower() or title.lower()
+            if not title or not identity or identity in seen:
+                continue
+            primary_location = work.get("primary_location")
+            location = primary_location if isinstance(primary_location, dict) else {}
+            source_info = location.get("source")
+            source_record = source_info if isinstance(source_info, dict) else {}
+            venue = clean_text(source_record.get("display_name", "")) or "Scholarly index"
+            link = clean_text(location.get("landing_page_url", "")) or (
+                f"https://doi.org/{doi}" if doi else work_id
+            )
+            authors = []
+            for authorship in work.get("authorships", [])[:8]:
+                if not isinstance(authorship, dict):
+                    continue
+                author = authorship.get("author")
+                if isinstance(author, dict):
+                    name = clean_text(author.get("display_name", ""))
+                    if name:
+                        authors.append(name)
+            item = NewsItem(
+                title=title,
+                source=f"OpenAlex: {venue}",
+                published=published,
+                link=link,
+                abstract=openalex_abstract(work.get("abstract_inverted_index"))
+                or "OpenAlex 元数据未提供摘要；请通过链接查看原文。",
+                doi=doi,
+                authors=authors,
+                source_kind="academic",
+            )
+            item.field_name = classify_field(item.title, item.abstract, profile)
+            if is_profile_relevant(item, profile):
+                items.append(item)
+                seen.add(identity)
+    return items
+
+
+def fetch_hackernews(
+    session: requests.Session,
+    since: datetime,
+    until: datetime,
+    max_items: int,
+    profile: dict[str, Any],
+) -> list[NewsItem]:
+    """Fetch recent public Hacker News stories as explicitly non-academic signals."""
+
+    terms = list(dict.fromkeys(profile.get("community_query_terms", ())))[:3]
+    if not terms:
+        return []
+    per_query = max(5, min(30, max_items // len(terms) + 3))
+    items: list[NewsItem] = []
+    seen: set[str] = set()
+    for term in terms:
+        response = session.get(
+            "https://hn.algolia.com/api/v1/search_by_date",
+            params={"query": term, "tags": "story", "hitsPerPage": per_query},
+            timeout=30,
+        )
+        response.raise_for_status()
+        hits = response.json().get("hits", [])
+        if not isinstance(hits, list):
+            continue
+        for hit in hits:
+            if not isinstance(hit, dict):
+                continue
+            created_at = parse_datetime(hit.get("created_at"))
+            if created_at and not (since <= created_at <= until):
+                continue
+            title = clean_text(hit.get("title", "") or hit.get("story_title", ""))
+            story_id = clean_text(hit.get("objectID", ""))
+            if not title or not story_id or story_id in seen:
+                continue
+            link = clean_text(hit.get("url", "") or hit.get("story_url", ""))
+            if not link:
+                link = f"https://news.ycombinator.com/item?id={story_id}"
+            author = clean_text(hit.get("author", ""))
+            item = NewsItem(
+                title=title,
+                source="Hacker News",
+                published=created_at,
+                link=link,
+                abstract="公开社区讨论信号；请以链接中的原始资料为准。",
+                authors=[author] if author else [],
+                source_kind="community",
+            )
+            item.field_name = classify_field(item.title, item.abstract, profile)
+            if is_profile_relevant(item, profile):
+                items.append(item)
+                seen.add(story_id)
+    return items
+
+
+def fetch_github_releases(
+    session: requests.Session,
+    since: datetime,
+    until: datetime,
+    max_items: int,
+    profile: dict[str, Any],
+) -> list[NewsItem]:
+    """Fetch releases from a small profile-owned repository allowlist."""
+
+    repositories = list(dict.fromkeys(profile.get("github_repositories", ())))[:5]
+    if not repositories:
+        return []
+    per_repository = max(3, min(15, max_items // len(repositories) + 2))
+    items: list[NewsItem] = []
+    for repository in repositories:
+        request_kwargs: dict[str, Any] = {
+            "params": {"per_page": per_repository},
+            "timeout": 30,
+        }
+        token = os.getenv("GITHUB_SOURCE_TOKEN", "").strip()
+        if token:
+            request_kwargs["headers"] = {
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {token}",
+            }
+        response = session.get(
+            f"https://api.github.com/repos/{repository}/releases", **request_kwargs
+        )
+        response.raise_for_status()
+        releases = response.json()
+        if not isinstance(releases, list):
+            continue
+        for release in releases:
+            if not isinstance(release, dict) or release.get("draft") or release.get("prerelease"):
+                continue
+            published = parse_datetime(release.get("published_at"))
+            if published and not (since <= published <= until):
+                continue
+            title = clean_text(release.get("name", "") or release.get("tag_name", ""))
+            link = clean_text(release.get("html_url", ""))
+            if not title or not link:
+                continue
+            author_info = release.get("author")
+            author = clean_text(author_info.get("login", "")) if isinstance(author_info, dict) else ""
+            item = NewsItem(
+                title=title,
+                source=f"GitHub Release: {repository}",
+                published=published,
+                link=link,
+                abstract=clean_text(release.get("body", "")) or "项目公开发布说明未提供详情。",
+                authors=[author] if author else [],
+                source_kind="community",
+            )
+            item.field_name = classify_field(item.title, item.abstract, profile)
+            if is_profile_relevant(item, profile):
+                items.append(item)
+    return items
+
+
 def fetch_rss(
     session: requests.Session, since: datetime, until: datetime, max_items: int, profile: dict[str, Any]
 ) -> tuple[list[NewsItem], list[SourceStatus]]:
@@ -2414,6 +2874,7 @@ def fetch_rss(
                     published=published,
                     link=link,
                     abstract=abstract or "RSS 未提供摘要；请通过链接查看详情。",
+                    source_kind=feed_config.get("source_kind", "official"),
                 )
                 item.field_name = classify_field(item.title, item.abstract, profile)
                 if not feed_config.get("broad") or is_profile_relevant(item, profile):
@@ -2628,6 +3089,7 @@ def rank_item(item: NewsItem, now: datetime, profile: dict[str, Any]) -> float:
     abstract_bonus = min(len(item.abstract) / 450, 6)
     title_bonus = 4 if any(term in item.title.lower() for term in LEARNING_VALUE_TERMS) else 0
     metadata_penalty = 5 if "未提供摘要" in item.abstract or not item.abstract else 0
+    source_kind_penalty = {"official": 6, "community": 18}.get(item.source_kind, 0)
     recency_bonus = 0.0
     if item.published:
         age_hours = max((now - item.published).total_seconds() / 3600, 0)
@@ -2641,6 +3103,7 @@ def rank_item(item: NewsItem, now: datetime, profile: dict[str, Any]) -> float:
         + abstract_bonus
         + recency_bonus
         - metadata_penalty
+        - source_kind_penalty
     )
 
 
@@ -4302,7 +4765,10 @@ def add_top_item_block(document: Document, item: NewsItem, index: int) -> None:
     meta = document.add_paragraph()
     meta.paragraph_format.space_before = Pt(0)
     meta.paragraph_format.space_after = Pt(1)
-    run = meta.add_run(f"{item.field_name}  |  {item.source}  |  {format_date(item.published)}")
+    source_kind = SOURCE_KIND_LABELS.get(item.source_kind, SOURCE_KIND_LABELS["academic"])
+    run = meta.add_run(
+        f"{source_kind}  |  {item.field_name}  |  {item.source}  |  {format_date(item.published)}"
+    )
     set_run_font(run, size=8.5, color=RGBColor(107, 114, 128))
 
     comment = document.add_paragraph()
@@ -4327,7 +4793,10 @@ def add_item_block(document: Document, item: NewsItem) -> None:
     meta = document.add_paragraph()
     meta.paragraph_format.space_before = Pt(0)
     meta.paragraph_format.space_after = Pt(2)
-    run = meta.add_run(f"{item.source}  |  {format_date(item.published)}  |  {item.field_name}")
+    source_kind = SOURCE_KIND_LABELS.get(item.source_kind, SOURCE_KIND_LABELS["academic"])
+    run = meta.add_run(
+        f"{source_kind}  |  {item.source}  |  {format_date(item.published)}  |  {item.field_name}"
+    )
     set_run_font(run, size=8.5, color=RGBColor(107, 114, 128))
 
     english = document.add_paragraph()
@@ -4429,17 +4898,24 @@ def create_document(
     add_source_note(document, len(items))
 
     by_id = {item.item_id: item for item in items}
+    academic_items = [item for item in items if item.source_kind == "academic"]
+    highlight_candidates = academic_items or items
+    highlight_candidate_ids = {item.item_id for item in highlight_candidates}
     top_items: list[NewsItem] = []
     selected_top_ids: set[str] = set()
     for item_id in report_payload.get("top_ids", []):
-        if item_id not in by_id or item_id in selected_top_ids:
+        if (
+            item_id not in by_id
+            or item_id not in highlight_candidate_ids
+            or item_id in selected_top_ids
+        ):
             continue
         top_items.append(by_id[item_id])
         selected_top_ids.add(item_id)
         if len(top_items) == 5:
             break
     if len(top_items) < 5:
-        for item in items:
+        for item in highlight_candidates:
             if item.item_id in selected_top_ids:
                 continue
             top_items.append(item)
@@ -4960,6 +5436,49 @@ def collect_items(
                     error=f"{type(exc).__name__}: {exc}",
                 )
             )
+
+    supplementary_fetchers: list[tuple[str, str, Callable[[], list[NewsItem]]]] = []
+    if profile.get("openalex_query_terms") and (
+        not enabled_source_ids or "openalex" in enabled_source_ids
+    ):
+        supplementary_fetchers.append(
+            ("OpenAlex", "openalex", lambda: fetch_openalex(session, since, until, args.source_limit, profile))
+        )
+    if profile.get("official_rss_feeds") and (
+        not enabled_source_ids or "official_rss" in enabled_source_ids
+    ):
+        official_profile = {**profile, "rss_feeds": profile["official_rss_feeds"]}
+        supplementary_fetchers.append(
+            ("Official RSS", "official_rss", lambda: fetch_rss(session, since, until, args.source_limit, official_profile)[0])
+        )
+    if profile.get("community_query_terms") and (
+        not enabled_source_ids or "hackernews" in enabled_source_ids
+    ):
+        supplementary_fetchers.append(
+            ("Hacker News", "hackernews", lambda: fetch_hackernews(session, since, until, args.source_limit, profile))
+        )
+    if profile.get("github_repositories") and (
+        not enabled_source_ids or "github_releases" in enabled_source_ids
+    ):
+        supplementary_fetchers.append(
+            ("GitHub Releases", "github_releases", lambda: fetch_github_releases(session, since, until, args.source_limit, profile))
+        )
+
+    for source_name, _, fetcher in supplementary_fetchers:
+        try:
+            items = fetcher()
+            LOGGER.info("%s returned %d items", source_name, len(items))
+            all_items.extend(items)
+            statuses.append(SourceStatus(name=source_name, success=True, item_count=len(items)))
+        except Exception as exc:  # noqa: BLE001 - optional sources must not block a daily.
+            LOGGER.exception("%s failed and was skipped: %s", source_name, exc)
+            statuses.append(
+                SourceStatus(
+                    name=source_name,
+                    success=False,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+            )
     return all_items, statuses
 
 
@@ -4969,7 +5488,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--profile",
         choices=sorted(REPORT_PROFILES),
         default=os.getenv("REPORT_PROFILE", "chemistry"),
-        help="Report profile to run: chemistry, organic_chemistry, biology, statistics, or business_management. Default: chemistry.",
+        help=(
+            "Report profile to run. Choices: "
+            f"{', '.join(sorted(REPORT_PROFILES))}. Default: chemistry."
+        ),
     )
     parser.add_argument(
         "--days",

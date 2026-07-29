@@ -11,6 +11,8 @@ from unittest.mock import patch
 from streamlit.testing.v1 import AppTest
 
 import dashboard.app as dashboard_app
+from dashboard import views
+import main
 from personalization.models import ResearchProfileInput, ScheduleInput, UserInput
 from personalization.repository import PersonalizationRepository
 
@@ -272,6 +274,17 @@ class DashboardSmokeTests(unittest.TestCase):
         rendered = " ".join(element.value for element in app.markdown)
         self.assertIn("必须填写", rendered)
         self.assertIn("生成建议", [element.label for element in app.button])
+
+    def test_user_profile_ui_explains_ai_description_and_new_source_layers(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "dashboard/views.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("用一段话描述用户想追踪的研究兴趣", source)
+        self.assertEqual(views.BASE_PROFILE_LABELS, main.PROFILE_LABELS)
+        self.assertEqual(views.SOURCE_LABELS["openalex"], "OpenAlex 学术索引")
+        self.assertEqual(views.SOURCE_LABELS["hackernews"], "Hacker News 社区信号")
+        self.assertEqual(views.SOURCE_LABELS["github_releases"], "GitHub Releases 社区信号")
 
     def test_preview_ready_copy_never_offers_manual_email_send(self) -> None:
         self.create_preview_ready_user_with_disabled_schedule()

@@ -17,7 +17,7 @@ Frequency = Literal["daily", "weekdays", "weekly"]
 
 _EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 _TIME_PATTERN = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
-_SOURCE_IDS = frozenset({"arxiv", "pubmed", "crossref", "rss"})
+_SOURCE_IDS = main.SUPPORTED_SOURCE_IDS
 _CONTENT_PREFERENCES = frozenset({"review", "mechanism", "methodology", "experiment"})
 _OUTPUT_FORMATS = frozenset({"docx", "pdf"})
 _LLM_PROVIDERS = frozenset({"openai", "deepseek"})

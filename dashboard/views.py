@@ -17,13 +17,7 @@ from personalization.recommender import RecommendationError, recommend_profile
 from personalization.repository import PersonalizationRepository
 
 
-BASE_PROFILE_LABELS = {
-    "chemistry": "化学",
-    "organic_chemistry": "有机化学",
-    "biology": "生物学",
-    "statistics": "统计学",
-    "business_management": "工商管理",
-}
+BASE_PROFILE_LABELS = main.PROFILE_LABELS
 USER_STATUS_LABELS = {"active": "已启用", "paused": "已暂停", "expired": "已到期"}
 DELIVERY_STATUS_LABELS = {
     "queued": "等待执行",
@@ -43,7 +37,16 @@ PREFERENCE_LABELS = {
     "experiment": "实验研究",
 }
 WEEKDAY_LABELS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-SOURCE_LABELS = {"arxiv": "arXiv", "pubmed": "PubMed", "crossref": "Crossref", "rss": "RSS"}
+SOURCE_LABELS = {
+    "arxiv": "arXiv 预印本",
+    "pubmed": "PubMed",
+    "crossref": "Crossref 期刊元数据",
+    "rss": "期刊 / 学术 RSS",
+    "openalex": "OpenAlex 学术索引",
+    "official_rss": "官方 RSS",
+    "hackernews": "Hacker News 社区信号",
+    "github_releases": "GitHub Releases 社区信号",
+}
 EVENT_TYPE_LABELS = {
     "delivery_queued": "自动投递已进入队列",
     "preview_queued": "手动预览已进入队列",
@@ -214,12 +217,15 @@ def _profile_form(repository: PersonalizationRepository) -> None:
         level, message = completion
         getattr(st, level)(message)
     st.markdown("#### 必须填写")
-    st.caption("先填写接收人和研究课题，系统会据此生成一份可继续修改的配置建议。")
+    st.caption(
+        "先填写接收人；再用一段话描述用户想追踪的研究兴趣。AI 会提炼学科、关键词和信源建议，"
+        "但不会自动保存或发送。"
+    )
     with st.form("recommend-profile"):
         left, right = st.columns(2)
         display_name = left.text_input("用户名称", key="onboarding_display_name")
         email = right.text_input("日报接收邮箱", key="onboarding_email")
-        topic = st.text_input("研究方向或当前课题", key="onboarding_topic")
+        topic = st.text_area("用一段话描述用户想追踪的研究兴趣", key="onboarding_topic")
         recommend_submitted = st.form_submit_button("生成建议", type="primary")
 
     if recommend_submitted:
@@ -239,14 +245,15 @@ def _profile_form(repository: PersonalizationRepository) -> None:
     st.markdown("#### 可修改的系统建议")
     st.caption(profile_recommendation.research_topic)
     st.info(f"推荐理由：{recommendation.rationale}\n\n不确定性：{recommendation.uncertainty}")
+    base_profile = st.selectbox(
+        "基础学科",
+        sorted(main.REPORT_PROFILES),
+        index=sorted(main.REPORT_PROFILES).index(profile_recommendation.base_profile),
+        format_func=lambda value: _label(BASE_PROFILE_LABELS, value),
+        key="onboarding_base_profile",
+    )
+    available_sources = list(main.available_source_ids(base_profile))
     with st.form("save-recommended-profile"):
-        base_profile = st.selectbox(
-            "基础学科",
-            sorted(main.REPORT_PROFILES),
-            index=sorted(main.REPORT_PROFILES).index(profile_recommendation.base_profile),
-            format_func=lambda value: _label(BASE_PROFILE_LABELS, value),
-            key="onboarding_base_profile",
-        )
         include_keywords = st.text_area(
             "包含关键词",
             value="; ".join(profile_recommendation.include_keywords),
@@ -259,8 +266,12 @@ def _profile_form(repository: PersonalizationRepository) -> None:
         )
         source_ids = st.multiselect(
             "数据来源",
-            ["arxiv", "pubmed", "crossref", "rss"],
-            default=list(profile_recommendation.source_ids),
+            available_sources,
+            default=[
+                source_id
+                for source_id in profile_recommendation.source_ids
+                if source_id in available_sources
+            ],
             format_func=lambda value: _label(SOURCE_LABELS, value),
             key="onboarding_source_ids",
         )
@@ -397,7 +408,7 @@ def _profile_form(repository: PersonalizationRepository) -> None:
 def _edit_profile_form(repository: PersonalizationRepository, user_id: str, display_name: str) -> None:
     current = repository.get_current_profile(user_id).input
     schedule = repository.get_schedule(user_id)
-    all_sources = ["arxiv", "pubmed", "crossref", "rss"]
+    all_sources = list(main.available_source_ids(current.base_profile))
     preference_options = ["review", "mechanism", "methodology", "experiment"]
     with st.expander(f"编辑科研画像：{display_name}"):
         st.caption(

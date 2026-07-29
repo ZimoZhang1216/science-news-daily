@@ -1,6 +1,6 @@
 # 科研资讯日报自动化项目
 
-这个项目会从 arXiv、PubMed、Crossref 期刊元数据和 RSS 源检索近 24 小时到 3 天内的前沿论文/科研资讯，调用 OpenAI 或 DeepSeek 生成中文标题、简短中文摘要和分领域摘要，并输出 Word 文档。化学、有机化学、生物、统计学和工商管理日报统一使用严谨的学术亮点标题，突出可核对的研究对象、方法、机制、模型或证据边界。当前支持五套日报；配置 SMTP 后，本地仍保存 `.docx`，邮件附件会自动转换为 `.pdf`。
+这个项目会从 arXiv、PubMed、Crossref 期刊元数据、OpenAlex 学术索引和公开 RSS 源检索近 24 小时到 3 天内的前沿论文/科研资讯，调用 OpenAI 或 DeepSeek 生成中文标题、简短中文摘要和分领域摘要，并输出 Word 文档。固定日报仍保留化学、有机化学、生物、统计学和工商管理五套；用户专属日报则支持完整学科目录和可编辑研究画像。配置 SMTP 后，本地仍保存 `.docx`，邮件附件会自动转换为 `.pdf`。
 
 默认输出：
 
@@ -16,11 +16,23 @@
 
 ## 支持学科与来源
 
+固定日报继续使用原有五个专业 profile，不受用户专属画像扩展影响：
+
 - 化学：arXiv、PubMed、JACS、Angewandte Chemie、Nature Chemistry、Science、ACS、RSC 和 Chemistry World。
 - 有机化学：Organic Letters、The Journal of Organic Chemistry、JACS、Angewandte Chemie、Nature Chemistry、Chemical Science、ACS Catalysis、arXiv/PubMed 有机合成与药物化学关键词、Chemistry World。
 - 生物：arXiv q-bio、PubMed、Nature、Science、Cell、Nature Biotechnology、Nature Methods、Nature Genetics、Nature Medicine、PLOS Biology、eLife 等。
 - 统计学：arXiv stat/math.ST、PubMed 生物统计关键词、Annals of Statistics、Biometrika、JASA、JRSS B、Statistical Science、Bayesian Analysis、Bernoulli、JMLR 等。
 - 工商管理：arXiv 管理研究关键词，以及 Crossref 中 36 本已核验 ISSN 的英文管理学、组织行为、人力资源、营销、创新创业、运营、信息系统和公司治理期刊。
+
+用户专属日报在上述专业 profile 外，提供以下 14 个一级学科入口：哲学、经济学、法学、教育学、文学、历史学、理学、工学、农学、医学、管理学、艺术学、交叉学科、军事学。每个入口可再由用户主题、包含/排除关键词和来源偏好细化。计算机科学是工学下的专门入口，覆盖 AI/智能体、数据管理与时空数据、系统软件和人机交互。
+
+信息来源按证据层级分开标记：
+
+- `学术研究`：arXiv、PubMed、Crossref 和 OpenAlex。OpenAlex 用于跨学科发现，属于学术索引，不等同于同行评议结论。
+- `官方发布`：期刊、学会、实验室和项目所有者的公开 RSS。
+- `社区信号`：公开 Hacker News 故事和计算机科学 profile 的白名单 GitHub Release。它们只用于发现新线索，不作为学术证据；同批有学术条目时不会进入“今日重点”。
+
+不接入需要登录、身份难核验或接口不稳定的平台，例如 X、微信、小红书、私有群组。用户不能让系统抓取任意账号或任意 URL。
 
 说明：出版商页面经常有访问限制或反爬策略，因此脚本优先使用 Crossref/RSS/API 等稳定接口。某个来源失败时会记录日志并跳过，不会中断整份日报。
 
@@ -66,7 +78,9 @@ export DEEPSEEK_MODEL="deepseek-v4-flash"
 export NCBI_EMAIL="you@example.com"
 export NCBI_API_KEY="你的 NCBI API Key"
 export CROSSREF_MAILTO="you@example.com"
-export REPORT_PROFILE="chemistry"  # 可选：chemistry、organic_chemistry、biology、statistics、business_management
+export OPENALEX_API_KEY="你的 OpenAlex API Key"
+export GITHUB_SOURCE_TOKEN="可选的 GitHub token，仅用于公开 release 查询"
+export REPORT_PROFILE="chemistry"  # 可选 profile 由 `python main.py --help` 列出
 export CHEM_NEWS_DAYS="3"
 export CHEM_NEWS_MAX_ITEMS="30"
 export SCIENCE_NEWS_MIN_ITEMS="15"
@@ -75,7 +89,7 @@ export SCIENCE_NEWS_HISTORY_DIR=".report-history"
 export CHEM_NEWS_MAX_AI_ITEMS="30"
 ```
 
-`NCBI_EMAIL` 和 `CROSSREF_MAILTO` 不是必需项，但建议填写，便于遵守 PubMed/Crossref 的礼貌访问规范。
+`NCBI_EMAIL` 和 `CROSSREF_MAILTO` 不是必需项，但建议填写，便于遵守 PubMed/Crossref 的礼貌访问规范。启用 OpenAlex 来源时需要设置 `OPENALEX_API_KEY`；可以在 [OpenAlex Settings](https://openalex.org/settings/api) 创建免费 key。`GITHUB_SOURCE_TOKEN` 为可选项，只会随 GitHub Release 请求发送，用于提高公开 GitHub API 的限额；不会发送给其他来源，也绝不能提交到仓库。
 
 如果对应供应商的 API Key 存在，脚本会调用模型 API 生成中文标题、今日重点、分领域摘要和简短中文摘要。如果没有配置 API Key，默认本地运行会自动使用规则模板生成标题和 fallback summaries，不会因为缺少 Key 直接崩溃。所有学科标题都会优先突出研究对象、方法、材料/体系、机制、模型、数据类型或证据边界，避免营销号式反问和悬念表达。
 
@@ -134,13 +148,14 @@ EMAIL_ENABLED=true
 python main.py
 ```
 
-生成有机化学、生物、统计学或工商管理日报：
+生成有机化学、生物、统计学、工商管理或计算机科学日报：
 
 ```bash
 python main.py --profile organic_chemistry
 python main.py --profile biology
 python main.py --profile statistics
 python main.py --profile business_management
+python main.py --profile computer_science
 ```
 
 只看最近 24 小时：
@@ -163,6 +178,7 @@ python main.py --profile organic_chemistry --output-dir ./output --no-email
 python main.py --profile biology --output-dir ./output --no-email
 python main.py --profile statistics --output-dir ./output --no-email
 python main.py --profile business_management --output-dir ./output --no-email
+python main.py --profile computer_science --output-dir ./output --no-email
 ```
 
 指定输出目录：
@@ -360,7 +376,7 @@ GitHub Actions 只调用公开 API/RSS/元数据接口和你配置的模型 API�
 
 仓库新增了一个本地 Streamlit 运营面板，用于维护客户级科研日报。它不会替换现有的 5 套固定学科画像和 11 个 workflow；专属日报仍复用既有的抓取、排序、AI、DOCX、PDF 和 SMTP 路径，只是按保存的客户画像筛选与发送。
 
-面板支持创建和版本化客户科研画像：研究主题、包含/排除词、来源、期刊 ISSN、内容偏好、条目上限、模型、输出格式和发送计划。保存新版画像不会改写已经生成的历史日报配置。
+面板支持创建和版本化客户科研画像：基础学科、研究主题、包含/排除词、来源、期刊 ISSN、内容偏好、条目上限、模型、输出格式和发送计划。创建时可以用一段自然语言描述客户想追踪的研究兴趣；AI 只会生成可编辑的学科、关键词和信源建议，不能自动保存、发信或使用未在系统白名单中的来源。保存新版画像不会改写已经生成的历史日报配置。
 
 ### 新用户开通与预览确认
 
@@ -371,7 +387,7 @@ GitHub Actions 只调用公开 API/RSS/元数据接口和你配置的模型 API�
 → 启用计划 → 下一个固定发送时间自动邮件
 ```
 
-先填写姓名、收件邮箱和研究方向，再由面板生成可编辑的研究画像与计划建议；保存画像后只会创建预览任务。预览会生成并上传 DOCX/PDF artifact，绝不会向收件人发邮件。确认预览内容后，点击“启用固定频率计划”才会启用计划；系统会重新计算严格晚于启用时刻的下一次固定发送时间，并由统一 `Cronjob Daily Research News` workflow 的 30 分钟唤醒在该时间后自动发送。
+先填写姓名、收件邮箱和一段研究兴趣描述，再由面板生成可编辑的研究画像与计划建议；保存画像后只会创建预览任务。预览会生成并上传 DOCX/PDF artifact，绝不会向收件人发邮件。确认预览内容后，点击“启用固定频率计划”才会启用计划；系统会重新计算严格晚于启用时刻的下一次固定发送时间，并由统一 `Cronjob Daily Research News` workflow 的 30 分钟唤醒在该时间后自动发送。
 
 面板的“系统建议”与日报 runner 共用当前配置的模型供应商和凭据：使用 `LLM_PROVIDER` 选择 `openai` 或 `deepseek`，并配置对应的 `OPENAI_API_KEY` 或 `DEEPSEEK_API_KEY`（以及可选模型名）。若当前 provider 缺少或无法使用模型 Key，面板不会静默使用规则模板或其他 fallback 生成建议；它会保留必填信息并提示修正模型配置后重试。
 

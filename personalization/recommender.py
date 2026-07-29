@@ -65,6 +65,9 @@ def _prompt(request: RecommendationRequest) -> tuple[str, str]:
     journal_catalogue = {
         profile: sorted(allowed_journal_ids(profile)) for profile in supported_profiles
     }
+    source_catalogue = {
+        profile: list(main.available_source_ids(profile)) for profile in supported_profiles
+    }
     instructions = (
         "你是科研资讯日报的配置推荐助手。请充分分析用户研究方向，但不要输出分析过程、"
         "推理步骤或链式思维。只返回一个严格 JSON object，不要 Markdown、代码块或额外文字。"
@@ -74,14 +77,14 @@ def _prompt(request: RecommendationRequest) -> tuple[str, str]:
     payload = {
         "research_topic": request.research_topic,
         "supported_profile_ids": supported_profiles,
-        "supported_source_ids": ["arxiv", "pubmed", "crossref", "rss"],
+        "supported_source_ids_by_profile": source_catalogue,
         "supported_content_preferences": ["review", "mechanism", "methodology", "experiment"],
         "allowed_journal_issns_by_profile": journal_catalogue,
         "response_schema": {
             "base_profile": "one supported profile ID",
             "include_keywords": ["strings"],
             "exclude_keywords": ["strings"],
-            "source_ids": ["supported source IDs"],
+            "source_ids": ["source IDs allowed for base_profile"],
             "journal_ids": ["ISSNs allowed for base_profile"],
             "content_preferences": ["supported content preferences"],
             "max_items": "integer from 1 to 50",
@@ -125,6 +128,14 @@ def _build_recommendation(
     assert isinstance(base_profile, str)
     if base_profile not in main.REPORT_PROFILES:
         raise RecommendationError("base_profile must be an existing report profile")
+
+    source_ids = response["source_ids"]
+    assert isinstance(source_ids, list)
+    if invalid_sources := set(source_ids) - set(main.available_source_ids(base_profile)):
+        raise RecommendationError(
+            f"source_ids contain unsupported values for {base_profile}: "
+            f"{', '.join(sorted(invalid_sources))}"
+        )
 
     journal_ids = response["journal_ids"]
     assert isinstance(journal_ids, list)
