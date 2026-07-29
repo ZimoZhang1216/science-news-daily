@@ -258,6 +258,51 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertIn('.stButton > button:not([kind="primary"])', stylesheet)
         self.assertIn("color: var(--ink) !important;", stylesheet)
 
+    def test_rendered_dashboard_injects_a_dark_system_theme(self) -> None:
+        app = self.local_dashboard_app()
+
+        styles = " ".join(
+            markdown.value for markdown in app.markdown if "<style>" in markdown.value
+        )
+
+        self.assertIn("prefers-color-scheme: dark", styles)
+        self.assertIn("--ink: #f5f5f7", styles)
+        self.assertIn("--input-surface: #2c2c2e", styles)
+
+    def test_user_page_requires_confirmation_before_permanent_deletion(self) -> None:
+        self.create_preview_ready_user_with_disabled_schedule()
+        app = self.local_dashboard_app()
+        app.sidebar.radio[0].set_value("用户画像").run()
+
+        delete_button = next(button for button in app.button if button.label == "删除用户")
+        delete_button.click().run()
+
+        button_labels = [button.label for button in app.button]
+        warning_text = " ".join(element.value for element in app.warning)
+        self.assertIn("确认永久删除", button_labels)
+        self.assertIn("取消", button_labels)
+        self.assertIn("画像、计划、预览和投递历史", warning_text)
+
+        repository = PersonalizationRepository.for_sqlite(self.database_path)
+        try:
+            self.assertEqual([user.display_name for user in repository.list_users()], ["Alice"])
+        finally:
+            repository.close()
+
+        cancel_button = next(button for button in app.button if button.label == "取消")
+        cancel_button.click().run()
+        self.assertNotIn("确认永久删除", [button.label for button in app.button])
+
+        delete_button = next(button for button in app.button if button.label == "删除用户")
+        delete_button.click().run()
+        confirm_button = next(button for button in app.button if button.label == "确认永久删除")
+        confirm_button.click().run()
+        repository = PersonalizationRepository.for_sqlite(self.database_path)
+        try:
+            self.assertEqual(repository.list_users(), [])
+        finally:
+            repository.close()
+
     def test_missing_database_configuration_is_explained_without_secret_values(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "dashboard/app.py"))

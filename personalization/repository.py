@@ -654,6 +654,16 @@ class PersonalizationRepository:
                 (int(status == "active"), next_run_at, next_run_at, _timestamp(now), user_id),
             )
 
+    def delete_user(self, user_id: str) -> bool:
+        """Permanently delete one user and all records owned through schema cascades."""
+
+        with self._transaction():
+            existing = self._fetchone("SELECT id FROM users WHERE id = ?", (user_id,))
+            if existing is None:
+                return False
+            self._execute("DELETE FROM users WHERE id = ?", (user_id,))
+        return True
+
     def operations_snapshot(self) -> dict[str, int]:
         user_count = self._fetchone("SELECT COUNT(*) AS count FROM users")
         delivery_counts = self._fetchone(

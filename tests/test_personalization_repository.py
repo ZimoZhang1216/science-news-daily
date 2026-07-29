@@ -164,6 +164,50 @@ class PersonalizationRepositoryTests(unittest.TestCase):
         self.assertEqual(users[0].status, "paused")
         self.assertFalse(users[0].schedule_enabled)
 
+    def test_delete_user_cascades_owned_records_and_stops_future_delivery(self) -> None:
+        user_id, delivery_id = self.create_user_and_mark_preview_ready(schedule_enabled=True)
+        delivery = self.repository.get_delivery(delivery_id)
+        item = main.NewsItem(
+            title="Battery interface transport",
+            source="arXiv",
+            published=datetime(2026, 7, 28, tzinfo=timezone.utc),
+            link="https://example.test/battery",
+            doi="10.1000/test",
+            field_name="综合化学",
+            score=12.5,
+            base_score=12.5,
+        )
+        self.repository.record_report_items(
+            delivery.report_run_id,
+            user_id,
+            date(2026, 7, 28),
+            main.resolve_profile("chemistry"),
+            [item],
+        )
+        self.repository.record_source_statuses(
+            delivery.report_run_id, [main.SourceStatus("arXiv", True, 1)]
+        )
+
+        self.assertTrue(self.repository.delete_user(user_id))
+        self.assertEqual(self.repository.list_users(), [])
+        self.assertIsNone(
+            self.repository._fetchone("SELECT id FROM schedules WHERE user_id = ?", (user_id,))
+        )
+        for table in (
+            "research_profiles",
+            "report_runs",
+            "deliveries",
+            "report_items",
+            "run_events",
+            "source_metrics",
+        ):
+            self.assertEqual(
+                self.repository._fetchone(f"SELECT COUNT(*) AS count FROM {table}")["count"],
+                0,
+            )
+        self.assertEqual(self.repository.list_due_schedules(datetime.now(timezone.utc)), [])
+        self.assertFalse(self.repository.delete_user(user_id))
+
     def test_schedule_can_be_updated_without_rewriting_delivery_history(self) -> None:
         user_id = self.repository.create_user_with_profile(
             self.user(), self.profile("battery"), self.daily_schedule()

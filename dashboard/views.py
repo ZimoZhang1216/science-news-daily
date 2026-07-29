@@ -506,12 +506,16 @@ def render_users(repository: PersonalizationRepository | None) -> None:
     if repository is None:
         st.info("尚未配置 Turso 连接，暂时无法保存用户科研画像。")
         return
+    deletion_completion = st.session_state.pop("user_deletion_completion", None)
+    if deletion_completion:
+        st.success(deletion_completion)
     _profile_form(repository)
     st.subheader("已有用户")
     users = repository.list_users()
     if not users:
         st.caption("暂时还没有用户科研画像。")
         return
+    pending_deletion_id = st.session_state.get("pending_user_deletion_id")
     for user in users:
         left, middle, right = st.columns([4, 3, 2])
         left.markdown(f"**{user.display_name}** · {user.research_topic}")
@@ -527,6 +531,31 @@ def render_users(repository: PersonalizationRepository | None) -> None:
                 st.error("更新用户状态失败，请检查网络后重试。")
             else:
                 st.rerun()
+        if right.button("删除用户", key=f"delete-{user.id}"):
+            st.session_state["pending_user_deletion_id"] = user.id
+            st.rerun()
+        if pending_deletion_id != user.id:
+            continue
+
+        st.warning(
+            f"确认永久删除“{user.display_name}”：其画像、计划、预览和投递历史将无法恢复。"
+        )
+        confirm_column, cancel_column = st.columns(2)
+        if confirm_column.button("确认永久删除", key=f"confirm-delete-{user.id}", type="primary"):
+            try:
+                deleted = repository.delete_user(user.id)
+            except Exception:
+                st.error("删除用户失败，请检查网络后重试。")
+            else:
+                st.session_state.pop("pending_user_deletion_id", None)
+                if deleted:
+                    st.session_state["user_deletion_completion"] = f"已永久删除用户“{user.display_name}”。"
+                else:
+                    st.session_state["user_deletion_completion"] = "该用户已不存在，面板已刷新。"
+                st.rerun()
+        if cancel_column.button("取消", key=f"cancel-delete-{user.id}"):
+            st.session_state.pop("pending_user_deletion_id", None)
+            st.rerun()
     selected_user = st.selectbox(
         "选择要编辑的用户", users, format_func=lambda user: user.display_name
     )
