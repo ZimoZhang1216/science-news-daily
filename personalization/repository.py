@@ -389,6 +389,12 @@ class PersonalizationRepository:
             return getattr(row, key)
 
     def _profile_from_row(self, row: Any) -> StoredResearchProfile:
+        try:
+            lookback_days = int(self._value(row, "lookback_days"))
+        except (AttributeError, KeyError, TypeError, ValueError):
+            # An embedded replica can temporarily lag an additive primary-schema
+            # migration; preserve legacy three-day behaviour until its next sync.
+            lookback_days = 3
         input_profile = ResearchProfileInput.from_form(
             base_profile=self._value(row, "base_profile"),
             research_topic=self._value(row, "research_topic"),
@@ -398,7 +404,7 @@ class PersonalizationRepository:
             journal_ids=_load_list(self._value(row, "journal_ids_json")),
             content_preferences=_load_list(self._value(row, "content_preferences_json")),
             max_items=int(self._value(row, "max_items")),
-            lookback_days=int(self._value(row, "lookback_days")),
+            lookback_days=lookback_days,
             llm_provider=self._value(row, "llm_provider"),
             llm_model=self._value(row, "llm_model"),
             output_formats=_load_list(self._value(row, "output_formats_json")),

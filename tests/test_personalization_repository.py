@@ -104,6 +104,21 @@ class PersonalizationRepositoryTests(unittest.TestCase):
         finally:
             legacy_repository.close()
 
+    def test_stale_local_replica_profile_defaults_missing_lookback_column_to_three_days(self) -> None:
+        user_id = self.repository.create_user_with_profile(
+            self.user(), self.profile("battery"), self.daily_schedule()
+        )
+        row = dict(
+            self.repository._fetchone(
+                "SELECT * FROM research_profiles WHERE user_id = ? AND is_current = 1", (user_id,)
+            )
+        )
+        row.pop("lookback_days")
+
+        profile = self.repository._profile_from_row(row)
+
+        self.assertEqual(profile.input.lookback_days, 3)
+
     def test_duplicate_automatic_claim_for_same_user_local_date_returns_existing_delivery(self) -> None:
         user_id = self.repository.create_user_with_profile(
             self.user(), self.profile("battery"), self.daily_schedule()
