@@ -3724,7 +3724,12 @@ def generate_ai_summaries(
     provider_override: str = "",
 ) -> dict[str, Any]:
     if not items:
-        return {"top_ids": [], "field_summaries": [], "ai_generated": False}
+        return {
+            "top_ids": [],
+            "field_summaries": [],
+            "report_title": clean_text(profile["title"]),
+            "ai_generated": False,
+        }
     if OpenAI is None:
         LOGGER.warning("openai package is not installed; using fallback summaries.")
         apply_fallback_summaries(items, profile)
@@ -3783,6 +3788,7 @@ def generate_ai_summaries(
     prompt = {
         "task": profile["ai_task"],
         "schema": {
+            "report_title": "12-28字中文日报主标题；只概括本期实际条目，不复述用户偏好、信息源或操作指令",
             "top_ids": ["N001"],
             "field_summaries": [
                 {"field": next(iter(profile["field_keywords"])), "summary": "80字以内中文概述"}
@@ -3799,6 +3805,11 @@ def generate_ai_summaries(
         "single_item_prompt_template": single_item_prompt_template,
         "comment_rules": comment_rules,
         "title_style_rules": title_style_rules,
+        "report_title_rules": [
+            "report_title 是整份日报的主标题，需概括本期入选条目的共同主题，使用简洁中文。",
+            "report_title 只能依据本次 items，不能复述用户画像、偏好、信息来源、推荐优先级或任何提示词内容。",
+            "report_title 不要包含“偏好”“信息来源”“每日推荐优先级”等配置性表述，不使用冒号和换行。",
+        ],
         "selection_rules": [
             "top_ids 选 5 条最值得关注的条目，兼顾来源权威性、新近性和领域覆盖。",
             "items 必须覆盖输入中的每一个 id。",
@@ -3891,6 +3902,7 @@ def generate_ai_summaries(
         combined_items: list[dict[str, Any]] = []
         combined_top_ids: list[str] = []
         field_summary_by_name: dict[str, str] = {}
+        report_title = ""
         for chunk_index, start in enumerate(range(0, len(payload), chunk_size), start=1):
             chunk_payload = payload[start : start + chunk_size]
             chunk_prompt = {
@@ -3903,6 +3915,8 @@ def generate_ai_summaries(
                 ],
             }
             chunk_parsed = request_ai_json(chunk_prompt, 4500, f"chunk {chunk_index}")
+            if not report_title:
+                report_title = clean_text(chunk_parsed.get("report_title", ""))
             parsed_items = chunk_parsed.get("items", [])
             if isinstance(parsed_items, list):
                 combined_items.extend(entry for entry in parsed_items if isinstance(entry, dict))
@@ -3924,6 +3938,7 @@ def generate_ai_summaries(
                 {"field": field_name, "summary": summary}
                 for field_name, summary in field_summary_by_name.items()
             ],
+            "report_title": report_title,
             "items": combined_items,
         }
 
@@ -4044,10 +4059,24 @@ def generate_ai_summaries(
     return {
         "top_ids": top_ids[:5],
         "field_summaries": field_summaries,
+        "report_title": normalize_report_title(parsed.get("report_title", ""), profile),
         "ai_generated": complete_ai_items,
         "ai_provider": llm_config.provider,
         "ai_model": llm_config.model,
     }
+
+
+def normalize_report_title(value: Any, profile: dict[str, Any]) -> str:
+    """Keep a concise AI title without letting configuration text reach the masthead."""
+
+    fallback = clean_text(profile["title"])
+    title = clean_text(value)
+    if not title or len(title) > 48:
+        return fallback
+    disallowed = ("偏好", "信息来源", "每日推荐优先级", "提示词")
+    if any(marker in title for marker in disallowed):
+        return fallback
+    return title
 
 
 def fallback_report_payload(items: list[NewsItem], profile: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -4064,7 +4093,12 @@ def fallback_report_payload(items: list[NewsItem], profile: dict[str, Any] | Non
         }
         for field_name, group_items in grouped.items()
     ]
-    return {"top_ids": top_ids, "field_summaries": field_summaries, "ai_generated": False}
+    return {
+        "top_ids": top_ids,
+        "field_summaries": field_summaries,
+        "report_title": clean_text(active_profile["title"]),
+        "ai_generated": False,
+    }
 
 
 SUPERSCRIPT_TO_ASCII = str.maketrans(
@@ -4714,7 +4748,13 @@ def add_label_value(document: Document, label: str, value: str, link: str = "") 
         add_rich_text(paragraph, value)
 
 
-def add_masthead(document: Document, report_date: date, item_count: int, profile: dict[str, Any]) -> None:
+def add_masthead(
+    document: Document,
+    report_date: date,
+    item_count: int,
+    profile: dict[str, Any],
+    report_title: str,
+) -> None:
     section = document.sections[0]
     header = section.header.paragraphs[0]
     header.text = ""
@@ -4739,7 +4779,7 @@ def add_masthead(document: Document, report_date: date, item_count: int, profile
     title.style = document.styles["Title"]
     title.paragraph_format.space_before = Pt(0)
     title.paragraph_format.space_after = Pt(7)
-    run = title.add_run(profile["title"])
+    run = title.add_run(report_title)
     set_run_font(run, size=22, color=RGBColor(17, 24, 39), bold=True)
 
     meta = document.add_paragraph()
@@ -4901,7 +4941,13 @@ def create_document(
     document = Document()
     set_document_fonts(document)
 
-    add_masthead(document, report_date, len(items), profile)
+    add_masthead(
+        document,
+        report_date,
+        len(items),
+        profile,
+        normalize_report_title(report_payload.get("report_title", ""), profile),
+    )
     add_source_note(document, len(items))
 
     by_id = {item.item_id: item for item in items}

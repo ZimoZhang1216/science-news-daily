@@ -35,7 +35,6 @@ def compose_effective_profile(profile: ResearchProfileInput, user_id: str) -> di
 
     effective = copy.deepcopy(main.resolve_profile(profile.base_profile))
     effective["custom_user_id"] = user_id
-    effective["title"] = f"{profile.research_topic} 科研资讯日报"
     effective["output_prefix"] = f"custom_{_safe_output_component(user_id)}"
     effective["email_env"] = "CUSTOM_REPORT_EMAIL_TO"
     effective["default_email_to"] = ""

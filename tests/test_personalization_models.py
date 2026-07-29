@@ -4,6 +4,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from docx import Document
+
 import main
 from personalization.models import (
     ProfileRecommendation,
@@ -123,13 +125,14 @@ class PersonalizationProfileTests(unittest.TestCase):
             output_formats=("docx", "pdf"),
         )
 
-    def test_effective_profile_is_a_copy_with_a_personal_title(self) -> None:
+    def test_effective_profile_keeps_the_base_title_out_of_the_user_prompt(self) -> None:
         profile = self.make_profile(include_keywords="solid electrolyte", exclude_keywords="review")
 
         effective = compose_effective_profile(profile, "usr_001")
         base = main.resolve_profile("chemistry")
 
-        self.assertEqual(effective["title"], "Lithium metal batteries 科研资讯日报")
+        self.assertEqual(effective["title"], base["title"])
+        self.assertNotIn(profile.research_topic, effective["title"])
         self.assertIn("solid electrolyte", effective["relevance_terms"])
         self.assertNotIn("solid electrolyte", base["relevance_terms"])
 
@@ -221,6 +224,33 @@ class ReportGenerationApiTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tempdir.cleanup()
+
+    def test_document_uses_the_ai_report_title_instead_of_the_profile_title(self) -> None:
+        item = main.NewsItem(
+            "Economic policy evidence",
+            "OpenAlex",
+            datetime(2026, 7, 28, tzinfo=timezone.utc),
+            "https://e.test/economics",
+            abstract="Recent economics research.",
+            item_id="N001",
+        )
+        profile = {**main.resolve_profile("economics"), "title": "经济学科研资讯日报"}
+        output_path = main.create_document(
+            [item],
+            {
+                "top_ids": [item.item_id],
+                "field_summaries": [],
+                "report_title": "全球不确定性下的外商投资观察",
+            },
+            date(2026, 7, 28),
+            Path(self.tempdir.name),
+            profile,
+        )
+
+        titles = [paragraph.text for paragraph in Document(output_path).paragraphs]
+
+        self.assertIn("全球不确定性下的外商投资观察", titles)
+        self.assertNotIn(profile["title"], titles)
 
     def test_generate_report_applies_user_filter_after_existing_collection(self) -> None:
         item = main.NewsItem(
