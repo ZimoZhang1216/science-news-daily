@@ -40,5 +40,5 @@
 - [x] Document the per-task observability path and compatibility behaviour.
 - [x] Run the complete test suite, Python compilation, and diff check.
 - [x] Apply the additive migration to the configured Turso database if the new columns are absent; do not read or print credentials.
-- [ ] Restart the local Streamlit service on port 8501 from this latest worktree and perform a visual dashboard check.
-- [ ] Commit and push the reviewed change to the latest `main` branch.
+- [x] Restart the local Streamlit service on port 8501 from this latest worktree and perform a visual dashboard check.
+- [x] Commit and push the reviewed change to the latest `main` branch.
