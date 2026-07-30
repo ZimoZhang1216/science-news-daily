@@ -979,6 +979,57 @@ class PersonalizationRepository:
             self._append_event(run_id, delivery_id, "delivery_queued", "Automatic delivery queued")
             return self._claim_from_row(row, created=True)
 
+    def create_manual_send(self, user_id: str, now_utc: datetime) -> DeliveryClaim:
+        """Create or reuse today's immediate delivery in the user's local time zone."""
+
+        now_utc = now_utc.astimezone(UTC)
+        with self._transaction():
+            user = self._fetchone(
+                """
+                SELECT schedules.timezone, research_profiles.version AS profile_version
+                FROM users
+                JOIN schedules ON schedules.user_id = users.id
+                JOIN research_profiles
+                  ON research_profiles.user_id = users.id AND research_profiles.is_current = 1
+                WHERE users.id = ? AND users.status = 'active'
+                """,
+                (user_id,),
+            )
+            if user is None:
+                raise ValueError("manual delivery requires an active user")
+
+            report_date = now_utc.astimezone(ZoneInfo(self._value(user, "timezone"))).date()
+            profile_version = int(self._value(user, "profile_version"))
+            key = f"manual_send:{user_id}:{report_date.isoformat()}:email"
+            run_id = self._create_report_run(user_id, profile_version, report_date, "manual")
+            delivery_id = _new_id("dlv")
+            self._execute(
+                """
+                INSERT INTO deliveries (
+                    id, user_id, report_run_id, profile_version, report_date, channel, mode,
+                    status, idempotency_key, schedule_id, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 'email', 'manual', 'queued', ?, '', ?, ?)
+                ON CONFLICT(idempotency_key) DO NOTHING
+                """,
+                (
+                    delivery_id,
+                    user_id,
+                    run_id,
+                    profile_version,
+                    report_date.isoformat(),
+                    key,
+                    _timestamp(),
+                    _timestamp(),
+                ),
+            )
+            row = self._fetchone("SELECT * FROM deliveries WHERE idempotency_key = ?", (key,))
+            assert row is not None
+            if self._value(row, "id") != delivery_id:
+                self._execute("DELETE FROM report_runs WHERE id = ?", (run_id,))
+                return self._claim_from_row(row, created=False)
+            self._append_event(run_id, delivery_id, "manual_send_queued", "Manual send queued")
+            return self._claim_from_row(row, created=True)
+
     def create_manual_preview(self, user_id: str, report_date: date) -> DeliveryClaim:
         profile = self.get_current_profile(user_id)
         with self._transaction():

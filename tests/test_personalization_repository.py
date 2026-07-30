@@ -194,6 +194,67 @@ class PersonalizationRepositoryTests(unittest.TestCase):
         self.assertFalse(repaired.created)
         self.assertEqual(self.repository.get_schedule(user_id).next_run_at, due.due_at)
 
+    def test_manual_send_uses_the_users_local_date(self) -> None:
+        user_id = self.repository.create_user_with_profile(
+            self.user(), self.profile("battery"), self.daily_schedule()
+        )
+
+        delivery = self.repository.create_manual_send(
+            user_id, datetime(2026, 7, 27, 16, 30, tzinfo=timezone.utc)
+        )
+
+        self.assertEqual(delivery.report_date, date(2026, 7, 28))
+        row = self.repository._fetchone(
+            "SELECT idempotency_key FROM deliveries WHERE id = ?", (delivery.delivery_id,)
+        )
+        self.assertEqual(
+            self.repository._value(row, "idempotency_key"),
+            f"manual_send:{user_id}:2026-07-28:email",
+        )
+
+    def test_manual_send_has_no_schedule_id(self) -> None:
+        user_id = self.repository.create_user_with_profile(
+            self.user(), self.profile("battery"), self.daily_schedule()
+        )
+
+        delivery = self.repository.create_manual_send(
+            user_id, datetime(2026, 7, 27, 16, 30, tzinfo=timezone.utc)
+        )
+
+        self.assertEqual(delivery.schedule_id, "")
+
+    def test_manual_send_reuses_the_existing_delivery_for_a_repeated_same_day_click(self) -> None:
+        user_id = self.repository.create_user_with_profile(
+            self.user(), self.profile("battery"), self.daily_schedule()
+        )
+
+        first = self.repository.create_manual_send(
+            user_id, datetime(2026, 7, 27, 16, 30, tzinfo=timezone.utc)
+        )
+        second = self.repository.create_manual_send(
+            user_id, datetime(2026, 7, 28, 15, 59, tzinfo=timezone.utc)
+        )
+
+        self.assertTrue(first.created)
+        self.assertFalse(second.created)
+        self.assertEqual(first.delivery_id, second.delivery_id)
+        self.assertEqual(first.report_run_id, second.report_run_id)
+        self.assertEqual(len(self.repository.list_deliveries_for_user(user_id)), 1)
+        self.assertEqual(len(self.repository._fetchall("SELECT id FROM report_runs")), 1)
+
+    def test_manual_send_rejects_a_paused_user(self) -> None:
+        user_id = self.repository.create_user_with_profile(
+            self.user(), self.profile("battery"), self.daily_schedule()
+        )
+        self.repository.set_user_status(user_id, "paused")
+
+        with self.assertRaisesRegex(ValueError, "active"):
+            self.repository.create_manual_send(
+                user_id, datetime(2026, 7, 27, 16, 30, tzinfo=timezone.utc)
+            )
+
+        self.assertEqual(self.repository.list_deliveries_for_user(user_id), [])
+
     def test_successful_automatic_delivery_advances_next_run(self) -> None:
         user_id = self.repository.create_user_with_profile(
             self.user(), self.profile("battery"), self.daily_schedule()
