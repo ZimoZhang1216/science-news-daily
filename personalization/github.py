@@ -8,7 +8,7 @@ from typing import Literal
 import requests
 
 
-DispatchCommand = Literal["preview", "retry"]
+DispatchCommand = Literal["preview", "deliver", "retry"]
 
 
 @dataclass(frozen=True)
@@ -35,8 +35,8 @@ def build_dispatch_request(
         raise ValueError("GitHub dispatch token is required")
     if not delivery_id.strip():
         raise ValueError("delivery_id is required")
-    if command not in {"preview", "retry"}:
-        raise ValueError("command must be preview or retry")
+    if command not in {"preview", "deliver", "retry"}:
+        raise ValueError("command must be preview, deliver, or retry")
     return DispatchRequest(
         url=f"https://api.github.com/repos/{repository}/dispatches",
         headers={

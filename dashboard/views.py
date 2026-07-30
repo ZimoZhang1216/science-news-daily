@@ -604,6 +604,8 @@ def render_users(repository: PersonalizationRepository | None) -> None:
                         f"已用 AI 统一优化 {summary.normalized} 位用户画像。",
                     )
                 st.rerun()
+    settings = _dispatch_settings_or_none()
+    pending_manual_send_id = st.session_state.get("pending_manual_send_user_id")
     pending_deletion_id = st.session_state.get("pending_user_deletion_id")
     for user in users:
         left, middle, right = st.columns([4, 3, 2])
@@ -619,10 +621,54 @@ def render_users(repository: PersonalizationRepository | None) -> None:
             except Exception:
                 st.error("更新用户状态失败，请检查网络后重试。")
             else:
+                st.session_state.pop("pending_manual_send_user_id", None)
                 st.rerun()
+        if user.status == "active" and right.button("手动发报", key=f"manual-send-{user.id}"):
+            st.session_state["pending_manual_send_user_id"] = user.id
+            st.session_state.pop("pending_user_deletion_id", None)
+            st.rerun()
         if right.button("删除用户", key=f"delete-{user.id}"):
             st.session_state["pending_user_deletion_id"] = user.id
+            st.session_state.pop("pending_manual_send_user_id", None)
             st.rerun()
+
+        if user.status == "active" and pending_manual_send_id == user.id:
+            st.warning("确认立即生成一份新的 PDF 日报并通过邮件发送？")
+            confirm_column, cancel_column = st.columns(2)
+            if confirm_column.button(
+                "确认立即发送", key=f"confirm-manual-send-{user.id}", type="primary"
+            ):
+                try:
+                    delivery = repository.create_manual_send(user.id, datetime.now(UTC))
+                except ValueError:
+                    st.warning("用户当前不可发送，请刷新后检查启用状态。")
+                except Exception:
+                    st.error("创建手动发报任务失败，请检查网络后重试。")
+                else:
+                    st.session_state.pop("pending_manual_send_user_id", None)
+                    if not delivery.created:
+                        st.info(
+                            "今日手动发报任务已存在，当前状态："
+                            f"{_label(DELIVERY_STATUS_LABELS, delivery.status)}。"
+                        )
+                    elif settings is None:
+                        st.warning(
+                            "手动发报任务已创建，但尚未在“设置”中配置 GitHub 触发条件。"
+                        )
+                    else:
+                        try:
+                            dispatch_command(settings, "deliver", delivery.delivery_id)
+                        except Exception as exc:
+                            st.error(
+                                "手动发报任务已进入队列，但 GitHub Actions 触发失败："
+                                f"{type(exc).__name__}"
+                            )
+                        else:
+                            st.success("已在 GitHub Actions 中开始生成并发送日报。")
+            if cancel_column.button("取消", key=f"cancel-manual-send-{user.id}"):
+                st.session_state.pop("pending_manual_send_user_id", None)
+                st.rerun()
+
         if pending_deletion_id != user.id:
             continue
 

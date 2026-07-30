@@ -3,7 +3,7 @@ import runpy
 import sys
 import tempfile
 import unittest
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from unittest import mock
 from unittest.mock import patch
@@ -35,12 +35,12 @@ class DashboardSmokeTests(unittest.TestCase):
         app.run()
         return app
 
-    def create_preview_ready_user_with_disabled_schedule(self) -> None:
+    def create_user(self, status: str = "active") -> str:
         repository = PersonalizationRepository.for_sqlite(self.database_path)
         repository.initialize()
         try:
-            user_id = repository.create_user_with_profile(
-                UserInput.from_form("Alice", "alice@example.test", "active"),
+            return repository.create_user_with_profile(
+                UserInput.from_form("Alice", "alice@example.test", status),
                 ResearchProfileInput.from_form(
                     base_profile="chemistry",
                     research_topic="Lithium metal batteries",
@@ -56,6 +56,14 @@ class DashboardSmokeTests(unittest.TestCase):
                 ),
                 ScheduleInput.from_form("daily", None, "Asia/Shanghai", "07:30", False),
             )
+        finally:
+            repository.close()
+
+    def create_preview_ready_user_with_disabled_schedule(self) -> None:
+        repository = PersonalizationRepository.for_sqlite(self.database_path)
+        repository.initialize()
+        try:
+            user_id = self.create_user()
             preview = repository.create_manual_preview(user_id, date(2026, 7, 28))
             self.assertIsNotNone(repository.claim_delivery(preview.delivery_id))
             repository.mark_preview_ready(
@@ -68,23 +76,7 @@ class DashboardSmokeTests(unittest.TestCase):
         repository = PersonalizationRepository.for_sqlite(self.database_path)
         repository.initialize()
         try:
-            user_id = repository.create_user_with_profile(
-                UserInput.from_form("Alice", "alice@example.test", "active"),
-                ResearchProfileInput.from_form(
-                    base_profile="chemistry",
-                    research_topic="Lithium metal batteries",
-                    include_keywords="battery",
-                    exclude_keywords="",
-                    source_ids=("arxiv",),
-                    journal_ids=(),
-                    content_preferences=("mechanism",),
-                    max_items=12,
-                    llm_provider="deepseek",
-                    llm_model="deepseek-v4-flash",
-                    output_formats=("docx", "pdf"),
-                ),
-                ScheduleInput.from_form("daily", None, "Asia/Shanghai", "07:30", False),
-            )
+            user_id = self.create_user()
             return repository.create_manual_preview(user_id, date(2026, 7, 28)).delivery_id
         finally:
             repository.close()
@@ -430,21 +422,113 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertIn("min_value=1", source)
         self.assertIn("max_value=60", source)
 
-    def test_preview_ready_copy_never_offers_manual_email_send(self) -> None:
-        self.create_preview_ready_user_with_disabled_schedule()
-        app = self.local_dashboard_app()
-        app.sidebar.radio[0].set_value("日报与投递").run()
+    def test_active_user_manual_send_requires_safe_confirmation_before_dispatch(self) -> None:
+        user_id = self.create_user()
+        dashboard_app._open_repository.clear()
+        try:
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "PERSONAL_ADMIN_GITHUB_REPOSITORY": "owner/repo",
+                        "GITHUB_DISPATCH_TOKEN": "test-token",
+                    },
+                    clear=False,
+                ),
+                patch.object(views, "dispatch_command") as dispatch,
+            ):
+                app = self.local_dashboard_app()
+                app.sidebar.radio[0].set_value("用户画像").run()
 
-        rendered = " ".join(element.value for element in app.markdown)
-        button_labels = [element.label for element in app.button]
-        legacy_manual_email_label = "确认并" + "发送"
-        self.assertIn("启用固定频率计划", button_labels)
-        self.assertNotIn(legacy_manual_email_label, rendered)
-        self.assertNotIn(legacy_manual_email_label, button_labels)
-        source = (Path(__file__).resolve().parents[1] / "dashboard/views.py").read_text(
-            encoding="utf-8"
+                send_button = next(
+                    button for button in app.button if button.label == "手动发报"
+                )
+                send_button.click().run()
+
+                self.assertEqual(
+                    [element.value for element in app.warning],
+                    ["确认立即生成一份新的 PDF 日报并通过邮件发送？"],
+                )
+                self.assertIn(
+                    "确认立即发送", [button.label for button in app.button]
+                )
+                dispatch.assert_not_called()
+
+                repository = PersonalizationRepository.for_sqlite(self.database_path)
+                try:
+                    self.assertFalse(
+                        any(
+                            delivery["user_id"] == user_id
+                            for delivery in repository.list_recent_deliveries()
+                        )
+                    )
+                finally:
+                    repository.close()
+
+                confirm = next(
+                    button
+                    for button in app.button
+                    if button.label == "确认立即发送"
+                )
+                confirm.click().run()
+        finally:
+            dashboard_app._open_repository.clear()
+
+        dispatch.assert_called_once()
+        settings, command, delivery_id = dispatch.call_args.args
+        self.assertEqual(settings.repository, "owner/repo")
+        self.assertEqual(command, "deliver")
+        self.assertTrue(delivery_id.startswith("dlv_"))
+
+    def test_paused_user_does_not_offer_manual_send(self) -> None:
+        self.create_user(status="paused")
+        app = self.local_dashboard_app()
+        app.sidebar.radio[0].set_value("用户画像").run()
+
+        self.assertNotIn("手动发报", [button.label for button in app.button])
+
+    def test_existing_manual_send_shows_status_without_redispatch(self) -> None:
+        user_id = self.create_user()
+        repository = PersonalizationRepository.for_sqlite(self.database_path)
+        try:
+            existing = repository.create_manual_send(user_id, datetime.now(UTC))
+        finally:
+            repository.close()
+
+        dashboard_app._open_repository.clear()
+        try:
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "PERSONAL_ADMIN_GITHUB_REPOSITORY": "owner/repo",
+                        "GITHUB_DISPATCH_TOKEN": "test-token",
+                    },
+                    clear=False,
+                ),
+                patch.object(views, "dispatch_command") as dispatch,
+            ):
+                app = self.local_dashboard_app()
+                app.sidebar.radio[0].set_value("用户画像").run()
+                next(
+                    button for button in app.button if button.label == "手动发报"
+                ).click().run()
+                next(
+                    button
+                    for button in app.button
+                    if button.label == "确认立即发送"
+                ).click().run()
+        finally:
+            dashboard_app._open_repository.clear()
+
+        dispatch.assert_not_called()
+        status_text = " ".join(
+            [element.value for element in app.info]
+            + [element.value for element in app.warning]
+            + [element.value for element in app.success]
         )
-        self.assertNotIn('dispatch_command(settings, "del' + 'iver"', source)
+        self.assertIn("今日手动发报任务已存在", status_text)
+        self.assertIn(views.DELIVERY_STATUS_LABELS[existing.status], status_text)
 
     def test_schedule_activation_copy_describes_the_next_automatic_email(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "dashboard/views.py").read_text(
