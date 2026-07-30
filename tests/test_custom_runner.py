@@ -8,6 +8,7 @@ from unittest import mock
 import main
 from personalization.custom_runner import (
     RunnerServices,
+    deliver_manual_send,
     generate_preview,
     run_due_deliveries,
 )
@@ -205,6 +206,61 @@ class CustomRunnerTests(unittest.TestCase):
         self.assertEqual(exit_code, 4)
         self.assertEqual(delivery.status, "retryable_failed")
         self.assertEqual(delivery.error_stage, "profile")
+
+    def test_manual_send_emails_one_pdf_without_advancing_the_schedule(self) -> None:
+        """A manual send must not consume the user's next scheduled delivery."""
+
+        delivery = self.repository.create_manual_send(
+            self.user_id, datetime(2026, 7, 28, 3, 0, tzinfo=UTC)
+        )
+        next_run_at = self.repository.get_schedule(self.user_id).next_run_at
+        services = RunnerServices(
+            generator=self.successful_generator,
+            pdf_converter=self.successful_pdf,
+            mailer=self.successful_mailer,
+            github_run_id="123",
+            output_root=self.output_dir,
+        )
+
+        exit_code = deliver_manual_send(
+            self.repository,
+            delivery.delivery_id,
+            services,
+            datetime(2026, 7, 28, 3, 0, tzinfo=UTC),
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(self.mailer_calls, [self.output_dir / delivery.delivery_id / "report.pdf"])
+        self.assertEqual(self.repository.get_delivery(delivery.delivery_id).status, "sent")
+        self.assertEqual(self.repository.get_schedule(self.user_id).next_run_at, next_run_at)
+
+    def test_manual_send_does_not_claim_scheduled_or_preview_deliveries(self) -> None:
+        """The direct send route must never claim another delivery category."""
+
+        scheduled_due = self.repository.make_due_schedule(
+            user_id=self.user_id,
+            local_date=date(2026, 7, 28),
+            due_at=datetime(2026, 7, 27, 23, 30, tzinfo=UTC),
+        )
+        scheduled = self.repository.enqueue_automatic_delivery(scheduled_due)
+        preview = self.repository.create_manual_preview(self.user_id, date(2026, 7, 28))
+        services = RunnerServices(
+            generator=self.successful_generator,
+            pdf_converter=self.successful_pdf,
+            mailer=self.successful_mailer,
+            github_run_id="123",
+            output_root=self.output_dir,
+        )
+        now = datetime(2026, 7, 28, 3, 0, tzinfo=UTC)
+
+        scheduled_exit = deliver_manual_send(self.repository, scheduled.delivery_id, services, now)
+        preview_exit = deliver_manual_send(self.repository, preview.delivery_id, services, now)
+
+        self.assertEqual(scheduled_exit, 0)
+        self.assertEqual(preview_exit, 0)
+        self.assertEqual(self.mailer_calls, [])
+        self.assertEqual(self.repository.get_delivery(scheduled.delivery_id).status, "queued")
+        self.assertEqual(self.repository.get_delivery(preview.delivery_id).status, "queued")
 
     def test_automatic_due_delivery_retries_twice_then_stops(self) -> None:
         due = self.repository.make_due_schedule(

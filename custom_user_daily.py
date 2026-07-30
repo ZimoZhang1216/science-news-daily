@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from personalization.custom_runner import (
+    deliver_manual_send,
     default_services,
     generate_preview,
     run_due_deliveries,
@@ -26,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=(
             "scan",
             "preview",
+            "deliver",
             "artifact-metadata",
             "normalize-profiles",
             "retry",
@@ -69,6 +71,13 @@ def main() -> int:
         return summary.exit_code
     if args.command == "preview":
         return generate_preview(repository, _require_delivery_id(parser, args.delivery_id), services)
+    if args.command == "deliver":
+        return deliver_manual_send(
+            repository,
+            _require_delivery_id(parser, args.delivery_id),
+            services,
+            datetime.now(UTC),
+        )
     if args.command == "artifact-metadata":
         delivery_id = _require_delivery_id(parser, args.delivery_id)
         delivery = repository.get_delivery(delivery_id)

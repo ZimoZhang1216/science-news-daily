@@ -201,6 +201,21 @@ def generate_preview(
     return 0 if saved or repository.is_delivery_cancelled(delivery_id) else 4
 
 
+def deliver_manual_send(
+    repository: PersonalizationRepository,
+    delivery_id: str,
+    services: RunnerServices,
+    now_utc: datetime | None = None,
+) -> int:
+    """Generate and email one queued immediate manual-send delivery."""
+
+    now_utc = (now_utc or datetime.now(UTC)).astimezone(UTC)
+    claim = repository.claim_queued_manual_send(delivery_id, now_utc=now_utc)
+    if claim is None:
+        return 0
+    return _send_automatic_claim(repository, claim, services, now_utc)
+
+
 def _send_automatic_claim(
     repository: PersonalizationRepository,
     claim: DeliveryClaim,

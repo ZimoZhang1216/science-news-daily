@@ -43,6 +43,12 @@ class GitHubDispatchTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             custom_user_daily.build_parser().parse_args(["not-a-command"])
 
+    def test_command_parser_accepts_deliver(self) -> None:
+        args = custom_user_daily.build_parser().parse_args(["deliver", "--delivery-id", "dlv_123"])
+
+        self.assertEqual(args.command, "deliver")
+        self.assertEqual(args.delivery_id, "dlv_123")
+
     def test_dispatch_request_has_only_the_expected_command_and_delivery_id(self) -> None:
         request = build_dispatch_request(
             DispatchSettings("owner/repo", "token"), "preview", "dlv_123"

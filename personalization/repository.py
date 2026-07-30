@@ -1241,6 +1241,43 @@ class PersonalizationRepository:
                 delivery_id, execution_id, (now_utc or _utc_now()).astimezone(UTC), retry=False
             )
 
+    def claim_queued_manual_send(
+        self,
+        delivery_id: str,
+        execution_id: str = "manual-delivery-worker",
+        now_utc: datetime | None = None,
+    ) -> DeliveryClaim | None:
+        """Atomically claim only a queued immediate manual-send delivery."""
+
+        claimed_at = (now_utc or _utc_now()).astimezone(UTC)
+        timestamp = _timestamp(claimed_at)
+        with self._transaction():
+            cursor = self._execute(
+                """
+                UPDATE deliveries
+                SET status = 'claimed', attempt_count = attempt_count + 1,
+                    locked_at = ?, locked_by = ?, execution_id = ?, last_attempt_at = ?,
+                    next_retry_at = '', error_stage = '', updated_at = ?
+                WHERE id = ?
+                  AND status = 'queued'
+                  AND mode = 'manual'
+                  AND schedule_id = ''
+                  AND idempotency_key LIKE 'manual_send:%'
+                RETURNING *
+                """,
+                (timestamp, execution_id, execution_id, timestamp, timestamp, delivery_id),
+            )
+            updated = self._normalise_row(cursor, cursor.fetchone())
+            if updated is None:
+                return None
+            report_run_id = self._value(updated, "report_run_id")
+            self._execute(
+                "UPDATE report_runs SET status = 'running', started_at = ?, error_summary = '' WHERE id = ?",
+                (timestamp, report_run_id),
+            )
+            self._append_event(report_run_id, delivery_id, "manual_send_claimed", "Manual send claimed")
+            return self._claim_from_row(updated, created=False)
+
     def claim_automatic_retry(
         self,
         delivery_id: str,
