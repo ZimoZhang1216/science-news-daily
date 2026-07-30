@@ -56,6 +56,25 @@ class GitHubDispatchTests(unittest.TestCase):
             deliver_job,
         )
 
+    def test_retry_job_executes_the_command_selected_by_the_delivery_type(self) -> None:
+        workflow = (
+            Path(__file__).resolve().parents[1]
+            / ".github/workflows/custom-user-daily.yml"
+        ).read_text(encoding="utf-8")
+        retry_job = workflow.split("\n  retry:\n", maxsplit=1)[1]
+
+        self.assertIn(
+            "if: steps.retry.outputs.next_command == 'deliver'", retry_job
+        )
+        self.assertIn(
+            'python custom_user_daily.py deliver --delivery-id "${{ steps.retry.outputs.delivery_id }}"',
+            retry_job,
+        )
+        self.assertEqual(
+            retry_job.count("if: steps.retry.outputs.next_command == 'preview'"),
+            3,
+        )
+
     def test_command_parser_rejects_unknown_dispatch_command(self) -> None:
         with self.assertRaises(SystemExit):
             custom_user_daily.build_parser().parse_args(["not-a-command"])

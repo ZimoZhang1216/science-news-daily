@@ -1,3 +1,5 @@
+import os
+import sys
 import tempfile
 import unittest
 from dataclasses import replace
@@ -5,6 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
+import custom_user_daily
 import main
 from personalization.custom_runner import (
     RunnerServices,
@@ -116,6 +119,28 @@ class CustomRunnerTests(unittest.TestCase):
         self.mailer_calls.append(pdf_path)
         self.assertEqual(recipients, ["alice@example.test"])
         return True
+
+    def retry_with_cli(self, delivery_id: str) -> tuple[int, dict[str, str]]:
+        output_path = Path(self.tempdir.name) / "github-output.txt"
+        with (
+            mock.patch.object(
+                custom_user_daily.PersonalizationRepository,
+                "from_environment",
+                return_value=self.repository,
+            ),
+            mock.patch.object(
+                sys,
+                "argv",
+                ["custom_user_daily.py", "retry", "--delivery-id", delivery_id],
+            ),
+            mock.patch.dict(os.environ, {"GITHUB_OUTPUT": str(output_path)}, clear=False),
+        ):
+            exit_code = custom_user_daily.main()
+        outputs = dict(
+            line.split("=", maxsplit=1)
+            for line in output_path.read_text(encoding="utf-8").splitlines()
+        )
+        return exit_code, outputs
 
     def test_preview_generates_pdf_without_sending_email(self) -> None:
         claim = self.repository.create_manual_preview(self.user_id, date(2026, 7, 28))
@@ -233,6 +258,92 @@ class CustomRunnerTests(unittest.TestCase):
         self.assertEqual(self.mailer_calls, [self.output_dir / delivery.delivery_id / "report.pdf"])
         self.assertEqual(self.repository.get_delivery(delivery.delivery_id).status, "sent")
         self.assertEqual(self.repository.get_schedule(self.user_id).next_run_at, next_run_at)
+
+    def test_failed_manual_send_retry_routes_to_deliver_and_eventually_sends(self) -> None:
+        delivery = self.repository.create_manual_send(
+            self.user_id, datetime(2026, 7, 28, 3, 0, tzinfo=UTC)
+        )
+        failing_services = RunnerServices(
+            generator=self.failing_generator,
+            pdf_converter=self.successful_pdf,
+            mailer=self.fail_if_called,
+            github_run_id="123",
+            output_root=self.output_dir,
+        )
+
+        first_exit = deliver_manual_send(
+            self.repository,
+            delivery.delivery_id,
+            failing_services,
+            datetime(2026, 7, 28, 3, 0, tzinfo=UTC),
+        )
+        retry_exit, outputs = self.retry_with_cli(delivery.delivery_id)
+        successful_services = RunnerServices(
+            generator=self.successful_generator,
+            pdf_converter=self.successful_pdf,
+            mailer=self.successful_mailer,
+            github_run_id="124",
+            output_root=self.output_dir,
+        )
+        second_exit = deliver_manual_send(
+            self.repository,
+            delivery.delivery_id,
+            successful_services,
+            datetime(2026, 7, 28, 3, 31, tzinfo=UTC),
+        )
+
+        self.assertEqual(first_exit, 4)
+        self.assertEqual(retry_exit, 0)
+        self.assertEqual(
+            outputs,
+            {"next_command": "deliver", "delivery_id": delivery.delivery_id},
+        )
+        self.assertEqual(second_exit, 0)
+        self.assertEqual(self.repository.get_delivery(delivery.delivery_id).status, "sent")
+        self.assertEqual(
+            self.mailer_calls,
+            [self.output_dir / delivery.delivery_id / "report.pdf"],
+        )
+
+    def test_failed_preview_retry_still_routes_to_preview_without_email(self) -> None:
+        delivery = self.repository.create_manual_preview(
+            self.user_id, date(2026, 7, 28)
+        )
+        failing_services = RunnerServices(
+            generator=self.failing_generator,
+            pdf_converter=self.successful_pdf,
+            mailer=self.fail_if_called,
+            github_run_id="123",
+            output_root=self.output_dir,
+        )
+
+        first_exit = generate_preview(
+            self.repository, delivery.delivery_id, failing_services
+        )
+        retry_exit, outputs = self.retry_with_cli(delivery.delivery_id)
+        successful_services = RunnerServices(
+            generator=self.successful_generator,
+            pdf_converter=self.successful_pdf,
+            mailer=self.fail_if_called,
+            github_run_id="124",
+            output_root=self.output_dir,
+        )
+        second_exit = generate_preview(
+            self.repository, delivery.delivery_id, successful_services
+        )
+
+        self.assertEqual(first_exit, 4)
+        self.assertEqual(retry_exit, 0)
+        self.assertEqual(
+            outputs,
+            {"next_command": "preview", "delivery_id": delivery.delivery_id},
+        )
+        self.assertEqual(second_exit, 0)
+        self.assertEqual(
+            self.repository.get_delivery(delivery.delivery_id).status,
+            "preview_ready",
+        )
+        self.assertEqual(self.mailer_calls, [])
 
     def test_manual_send_does_not_claim_scheduled_or_preview_deliveries(self) -> None:
         """The direct send route must never claim another delivery category."""

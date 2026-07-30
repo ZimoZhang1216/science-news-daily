@@ -93,9 +93,10 @@ def main() -> int:
         return 1 if summary.failed else 0
     if args.command == "retry":
         delivery_id = _require_delivery_id(parser, args.delivery_id)
-        if repository.retry_delivery(delivery_id) is None:
+        next_command = repository.retry_delivery(delivery_id)
+        if next_command is None:
             parser.error("delivery is not retryable")
-        _emit_output("next_command", "preview")
+        _emit_output("next_command", next_command)
         _emit_output("delivery_id", delivery_id)
         return 0
 

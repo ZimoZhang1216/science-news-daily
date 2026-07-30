@@ -1626,10 +1626,9 @@ class PersonalizationRepository:
                 or self._value(row, "status") != "retryable_failed"
             ):
                 return None
+            idempotency_key = str(self._value(row, "idempotency_key"))
             action: Literal["preview", "deliver"] = (
-                "deliver"
-                if self._value(row, "artifact_name") and self._value(row, "artifact_run_id")
-                else "preview"
+                "deliver" if idempotency_key.startswith("manual_send:") else "preview"
             )
             self._execute(
                 "UPDATE deliveries SET status = 'queued', updated_at = ? WHERE id = ?",

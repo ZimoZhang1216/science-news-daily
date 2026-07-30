@@ -104,14 +104,22 @@ jobs:
       - name: Choose retry operation
         id: retry
         run: python custom_user_daily.py retry --delivery-id "${{ github.event.client_payload.delivery_id }}"
+      - name: Retry immediate manual delivery
+        if: steps.retry.outputs.next_command == 'deliver'
+        env:
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: python custom_user_daily.py deliver --delivery-id "${{ steps.retry.outputs.delivery_id }}"
       - name: Regenerate failed preview
+        if: steps.retry.outputs.next_command == 'preview'
         env:
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: python custom_user_daily.py preview --delivery-id "${{ steps.retry.outputs.delivery_id }}"
       - name: Read regenerated preview metadata
+        if: steps.retry.outputs.next_command == 'preview'
         id: regenerated
         run: python custom_user_daily.py artifact-metadata --delivery-id "${{ steps.retry.outputs.delivery_id }}"
       - name: Upload regenerated preview files
+        if: steps.retry.outputs.next_command == 'preview'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.regenerated.outputs.artifact_name }}
