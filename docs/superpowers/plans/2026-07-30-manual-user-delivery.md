@@ -23,10 +23,10 @@
 
 **Interface:** `create_manual_send(user_id: str, now_utc: datetime) -> DeliveryClaim` returns `created=True` only for the first task that day.
 
-- [ ] Write failing tests for local-date calculation, repeated-click reuse, empty schedule ID, and paused-user rejection.
-- [ ] Run `tests.test_personalization_repository` and verify `create_manual_send` is missing.
-- [ ] Implement the method inside the existing transaction: load an active user's time zone, derive their local date, insert a manual report run and queued delivery with the fixed key and empty `schedule_id`; return the existing row after a unique-key conflict.
-- [ ] Rerun repository tests and commit as `feat: create idempotent manual send deliveries`.
+- [x] Write failing tests for local-date calculation, repeated-click reuse, empty schedule ID, and paused-user rejection.
+- [x] Run `tests.test_personalization_repository` and verify `create_manual_send` is missing.
+- [x] Implement the method inside the existing transaction: load an active user's time zone, derive their local date, insert a manual report run and queued delivery with the fixed key and empty `schedule_id`; return the existing row after a unique-key conflict.
+- [x] Rerun repository tests and commit as `feat: create idempotent manual send deliveries`.
 
 ### Task 2: Run the immediate delivery safely
 
@@ -34,10 +34,10 @@
 
 **Interface:** `deliver_manual_send(repository, delivery_id, services, now_utc=None) -> int` and `custom_user_daily.py deliver --delivery-id <id>`.
 
-- [ ] Write failing tests proving a manual delivery sends one mocked PDF, does not change `next_run_at`, and that the parser accepts `deliver`.
-- [ ] Run the focused runner/parser tests and verify red.
-- [ ] Conditionally claim only queued manual deliveries without `schedule_id`, delegate to the existing generation/PDF/SMTP function, and route the new CLI command without exposing profile or recipient data.
-- [ ] Rerun focused tests and commit as `feat: execute manual user deliveries`.
+- [x] Write failing tests proving a manual delivery sends one mocked PDF, does not change `next_run_at`, and that the parser accepts `deliver`.
+- [x] Run the focused runner/parser tests and verify red.
+- [x] Conditionally claim only queued manual deliveries without `schedule_id`, delegate to the existing generation/PDF/SMTP function, and route the new CLI command without exposing profile or recipient data.
+- [x] Rerun focused tests and commit as `feat: execute manual user deliveries`.
 
 ### Task 3: Dashboard confirmation and workflow command
 
@@ -45,15 +45,15 @@
 
 **Interface:** `dispatch_command(settings, "deliver", delivery_id)` emits only the `command` and opaque `delivery_id` payload.
 
-- [ ] Write failing tests for `deliver` dispatch validation, workflow command, active-user button, confirmation, and absent paused-user button.
-- [ ] Run dashboard/dispatch tests and verify red.
-- [ ] Add a `deliver` Actions job with existing PDF dependencies, add the confirmation-gated dashboard button, and dispatch only when `create_manual_send(...).created` is true; existing tasks show status instead.
-- [ ] Rerun focused tests and commit as `feat: add confirmed manual send control`.
+- [x] Write failing tests for `deliver` dispatch validation, workflow command, active-user button, confirmation, and absent paused-user button.
+- [x] Run dashboard/dispatch tests and verify red.
+- [x] Add a `deliver` Actions job with existing PDF dependencies, add the confirmation-gated dashboard button, and dispatch only when `create_manual_send(...).created` is true; existing tasks show status instead.
+- [x] Rerun focused tests and commit as `feat: add confirmed manual send control`.
 
 ### Task 4: Documentation and verification
 
 **Files:** `README.md`, `docs/superpowers/plans/2026-07-30-manual-user-delivery.md`
 
-- [ ] Document active-user-only confirmation, one immediate task per user-local day, no schedule advancement, and retry/termination visibility.
-- [ ] Run the full unittest suite, compile the modified Python files, and run `git diff --check`.
-- [ ] Mark plan tasks complete and commit as `docs: document manual user delivery`.
+- [x] Document active-user-only confirmation, one immediate task per user-local day, no schedule advancement, and retry/termination visibility.
+- [x] Run the full unittest suite, compile the modified Python files, and run `git diff --check`.
+- [x] Mark plan tasks complete and commit as `docs: document manual user delivery`.
