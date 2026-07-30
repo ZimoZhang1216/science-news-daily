@@ -305,6 +305,93 @@ class CustomRunnerTests(unittest.TestCase):
             [self.output_dir / delivery.delivery_id / "report.pdf"],
         )
 
+    def test_manual_send_generator_exception_becomes_retryable_document_failure(self) -> None:
+        delivery = self.repository.create_manual_send(
+            self.user_id, datetime(2026, 7, 28, 3, 0, tzinfo=UTC)
+        )
+
+        def raising_generator(*args, **kwargs):
+            raise RuntimeError("generation failed")
+
+        exit_code = deliver_manual_send(
+            self.repository,
+            delivery.delivery_id,
+            RunnerServices(
+                generator=raising_generator,
+                pdf_converter=self.successful_pdf,
+                mailer=self.fail_if_called,
+                github_run_id="123",
+                output_root=self.output_dir,
+            ),
+            datetime(2026, 7, 28, 3, 0, tzinfo=UTC),
+        )
+        failed = self.repository.get_delivery(delivery.delivery_id)
+
+        self.assertEqual(exit_code, 4)
+        self.assertEqual(failed.status, "retryable_failed")
+        self.assertEqual(failed.error_stage, "document")
+        self.assertEqual(
+            self.repository.retry_delivery(delivery.delivery_id), "deliver"
+        )
+
+    def test_manual_send_pdf_exception_becomes_retryable_pdf_failure(self) -> None:
+        delivery = self.repository.create_manual_send(
+            self.user_id, datetime(2026, 7, 28, 3, 0, tzinfo=UTC)
+        )
+
+        def raising_pdf_converter(docx_path: Path) -> Path | None:
+            raise RuntimeError("pdf failed")
+
+        exit_code = deliver_manual_send(
+            self.repository,
+            delivery.delivery_id,
+            RunnerServices(
+                generator=self.successful_generator,
+                pdf_converter=raising_pdf_converter,
+                mailer=self.fail_if_called,
+                github_run_id="123",
+                output_root=self.output_dir,
+            ),
+            datetime(2026, 7, 28, 3, 0, tzinfo=UTC),
+        )
+        failed = self.repository.get_delivery(delivery.delivery_id)
+
+        self.assertEqual(exit_code, 4)
+        self.assertEqual(failed.status, "retryable_failed")
+        self.assertEqual(failed.error_stage, "pdf")
+        self.assertEqual(
+            self.repository.retry_delivery(delivery.delivery_id), "deliver"
+        )
+
+    def test_manual_send_mailer_exception_becomes_retryable_email_failure(self) -> None:
+        delivery = self.repository.create_manual_send(
+            self.user_id, datetime(2026, 7, 28, 3, 0, tzinfo=UTC)
+        )
+
+        def raising_mailer(*args, **kwargs) -> bool:
+            raise RuntimeError("smtp failed")
+
+        exit_code = deliver_manual_send(
+            self.repository,
+            delivery.delivery_id,
+            RunnerServices(
+                generator=self.successful_generator,
+                pdf_converter=self.successful_pdf,
+                mailer=raising_mailer,
+                github_run_id="123",
+                output_root=self.output_dir,
+            ),
+            datetime(2026, 7, 28, 3, 0, tzinfo=UTC),
+        )
+        failed = self.repository.get_delivery(delivery.delivery_id)
+
+        self.assertEqual(exit_code, 3)
+        self.assertEqual(failed.status, "retryable_failed")
+        self.assertEqual(failed.error_stage, "email")
+        self.assertEqual(
+            self.repository.retry_delivery(delivery.delivery_id), "deliver"
+        )
+
     def test_failed_preview_retry_still_routes_to_preview_without_email(self) -> None:
         delivery = self.repository.create_manual_preview(
             self.user_id, date(2026, 7, 28)

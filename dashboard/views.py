@@ -646,14 +646,14 @@ def render_users(repository: PersonalizationRepository | None) -> None:
                     st.error("创建手动发报任务失败，请检查网络后重试。")
                 else:
                     st.session_state.pop("pending_manual_send_user_id", None)
-                    if not delivery.created:
+                    if delivery.status != "queued":
                         st.info(
                             "今日手动发报任务已存在，当前状态："
                             f"{_label(DELIVERY_STATUS_LABELS, delivery.status)}。"
                         )
                     elif settings is None:
                         st.warning(
-                            "手动发报任务已创建，但尚未在“设置”中配置 GitHub 触发条件。"
+                            "手动发报任务已进入队列，但尚未在“设置”中配置 GitHub 触发条件。"
                         )
                     else:
                         try:
@@ -664,7 +664,11 @@ def render_users(repository: PersonalizationRepository | None) -> None:
                                 f"{type(exc).__name__}"
                             )
                         else:
-                            st.success("已在 GitHub Actions 中开始生成并发送日报。")
+                            st.success(
+                                "已在 GitHub Actions 中开始生成并发送日报。"
+                                if delivery.created
+                                else "已重新触发队列中的手动发报任务。"
+                            )
             if cancel_column.button("取消", key=f"cancel-manual-send-{user.id}"):
                 st.session_state.pop("pending_manual_send_user_id", None)
                 st.rerun()

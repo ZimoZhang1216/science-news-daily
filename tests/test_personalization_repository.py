@@ -255,6 +255,25 @@ class PersonalizationRepositoryTests(unittest.TestCase):
 
         self.assertEqual(self.repository.list_deliveries_for_user(user_id), [])
 
+    def test_manual_send_claim_rechecks_that_the_user_is_active(self) -> None:
+        user_id = self.repository.create_user_with_profile(
+            self.user(), self.profile("battery"), self.daily_schedule()
+        )
+        delivery = self.repository.create_manual_send(
+            user_id, datetime(2026, 7, 27, 16, 30, tzinfo=timezone.utc)
+        )
+        self.repository.set_user_status(user_id, "paused")
+
+        claim = self.repository.claim_queued_manual_send(
+            delivery.delivery_id,
+            now_utc=datetime(2026, 7, 27, 16, 31, tzinfo=timezone.utc),
+        )
+        record = self.repository.get_delivery(delivery.delivery_id)
+
+        self.assertIsNone(claim)
+        self.assertEqual(record.status, "queued")
+        self.assertEqual(record.attempt_count, 0)
+
     def test_successful_automatic_delivery_advances_next_run(self) -> None:
         user_id = self.repository.create_user_with_profile(
             self.user(), self.profile("battery"), self.daily_schedule()

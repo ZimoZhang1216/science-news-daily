@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -41,6 +42,8 @@ def _require_delivery_id(parser: argparse.ArgumentParser, delivery_id: str) -> s
     clean_id = delivery_id.strip()
     if not clean_id:
         parser.error("--delivery-id is required for this command")
+    if not re.fullmatch(r"dlv_[A-Za-z0-9_-]+", clean_id):
+        parser.error("--delivery-id has an invalid format")
     return clean_id
 
 

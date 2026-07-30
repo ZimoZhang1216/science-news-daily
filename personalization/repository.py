@@ -1263,6 +1263,11 @@ class PersonalizationRepository:
                   AND mode = 'manual'
                   AND schedule_id = ''
                   AND idempotency_key LIKE 'manual_send:%'
+                  AND EXISTS (
+                      SELECT 1 FROM users
+                      WHERE users.id = deliveries.user_id
+                        AND users.status = 'active'
+                  )
                 RETURNING *
                 """,
                 (timestamp, execution_id, execution_id, timestamp, timestamp, delivery_id),

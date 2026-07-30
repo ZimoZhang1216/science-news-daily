@@ -487,11 +487,14 @@ class DashboardSmokeTests(unittest.TestCase):
 
         self.assertNotIn("手动发报", [button.label for button in app.button])
 
-    def test_existing_manual_send_shows_status_without_redispatch(self) -> None:
+    def test_existing_nonqueued_manual_send_shows_status_without_redispatch(self) -> None:
         user_id = self.create_user()
         repository = PersonalizationRepository.for_sqlite(self.database_path)
         try:
             existing = repository.create_manual_send(user_id, datetime.now(UTC))
+            self.assertIsNotNone(
+                repository.claim_queued_manual_send(existing.delivery_id)
+            )
         finally:
             repository.close()
 
@@ -528,7 +531,108 @@ class DashboardSmokeTests(unittest.TestCase):
             + [element.value for element in app.success]
         )
         self.assertIn("今日手动发报任务已存在", status_text)
-        self.assertIn(views.DELIVERY_STATUS_LABELS[existing.status], status_text)
+        self.assertIn(views.DELIVERY_STATUS_LABELS["claimed"], status_text)
+
+    def test_dispatch_failure_can_redispatch_the_same_queued_manual_send(self) -> None:
+        user_id = self.create_user()
+        dashboard_app._open_repository.clear()
+        try:
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "PERSONAL_ADMIN_GITHUB_REPOSITORY": "owner/repo",
+                        "GITHUB_DISPATCH_TOKEN": "test-token",
+                    },
+                    clear=False,
+                ),
+                patch.object(
+                    views,
+                    "dispatch_command",
+                    side_effect=[RuntimeError("unavailable"), None],
+                ) as dispatch,
+            ):
+                app = self.local_dashboard_app()
+                app.sidebar.radio[0].set_value("用户画像").run()
+                next(
+                    button for button in app.button if button.label == "手动发报"
+                ).click().run()
+                next(
+                    button
+                    for button in app.button
+                    if button.label == "确认立即发送"
+                ).click().run()
+                next(
+                    button for button in app.button if button.label == "手动发报"
+                ).click().run()
+                next(
+                    button
+                    for button in app.button
+                    if button.label == "确认立即发送"
+                ).click().run()
+        finally:
+            dashboard_app._open_repository.clear()
+
+        self.assertEqual(dispatch.call_count, 2)
+        delivery_ids = [call.args[2] for call in dispatch.call_args_list]
+        self.assertEqual(delivery_ids[0], delivery_ids[1])
+        repository = PersonalizationRepository.for_sqlite(self.database_path)
+        try:
+            deliveries = repository.list_deliveries_for_user(user_id)
+        finally:
+            repository.close()
+        self.assertEqual(len(deliveries), 1)
+        self.assertEqual(deliveries[0].status, "queued")
+        self.assertEqual(deliveries[0].attempt_count, 0)
+
+    def test_missing_settings_can_dispatch_the_existing_queued_manual_send_later(self) -> None:
+        user_id = self.create_user()
+        dashboard_app._open_repository.clear()
+        try:
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "PERSONAL_ADMIN_GITHUB_REPOSITORY": "",
+                        "GITHUB_DISPATCH_TOKEN": "",
+                    },
+                    clear=False,
+                ),
+                patch.object(views, "dispatch_command") as dispatch,
+            ):
+                app = self.local_dashboard_app()
+                app.sidebar.radio[0].set_value("用户画像").run()
+                next(
+                    button for button in app.button if button.label == "手动发报"
+                ).click().run()
+                next(
+                    button
+                    for button in app.button
+                    if button.label == "确认立即发送"
+                ).click().run()
+                os.environ["PERSONAL_ADMIN_GITHUB_REPOSITORY"] = "owner/repo"
+                os.environ["GITHUB_DISPATCH_TOKEN"] = "test-token"
+                next(
+                    button for button in app.button if button.label == "手动发报"
+                ).click().run()
+                next(
+                    button
+                    for button in app.button
+                    if button.label == "确认立即发送"
+                ).click().run()
+        finally:
+            dashboard_app._open_repository.clear()
+
+        dispatch.assert_called_once()
+        repository = PersonalizationRepository.for_sqlite(self.database_path)
+        try:
+            deliveries = repository.list_deliveries_for_user(user_id)
+        finally:
+            repository.close()
+        self.assertEqual(len(deliveries), 1)
+        self.assertEqual(dispatch.call_args.args[2], deliveries[0].id)
+        self.assertEqual(deliveries[0].status, "queued")
+        self.assertEqual(deliveries[0].attempt_count, 0)
 
     def test_schedule_activation_copy_describes_the_next_automatic_email(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "dashboard/views.py").read_text(

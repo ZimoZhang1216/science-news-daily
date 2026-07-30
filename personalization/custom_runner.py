@@ -213,7 +213,14 @@ def deliver_manual_send(
     claim = repository.claim_queued_manual_send(delivery_id, now_utc=now_utc)
     if claim is None:
         return 0
-    return _send_automatic_claim(repository, claim, services, now_utc)
+    return _send_automatic_claim(
+        repository,
+        claim,
+        services,
+        now_utc,
+        retry_unhandled_generation_exceptions=True,
+        retry_mailer_exceptions=True,
+    )
 
 
 def _send_automatic_claim(
@@ -221,8 +228,19 @@ def _send_automatic_claim(
     claim: DeliveryClaim,
     services: RunnerServices,
     now_utc: datetime,
+    *,
+    retry_unhandled_generation_exceptions: bool = False,
+    retry_mailer_exceptions: bool = False,
 ) -> int:
-    generated = _generate_claimed_report(repository, claim, services, now_utc)
+    try:
+        generated = _generate_claimed_report(repository, claim, services, now_utc)
+    except Exception as exc:  # noqa: BLE001 - manual sends must remain immediately retryable.
+        if not retry_unhandled_generation_exceptions:
+            raise
+        repository.mark_retryable_failure(
+            claim.delivery_id, "document", type(exc).__name__, now_utc
+        )
+        return 4
     if generated is None:
         return 2 if repository.is_delivery_cancelled(claim.delivery_id) else 4
     context, effective_profile, _, pdf_path = generated
@@ -233,6 +251,11 @@ def _send_automatic_claim(
     try:
         accepted = services.mailer(pdf_path, claim.report_date, effective_profile, [context.email])
     except Exception as exc:  # noqa: BLE001 - mail transport must not stop the batch.
+        if retry_mailer_exceptions:
+            repository.mark_retryable_failure(
+                claim.delivery_id, "email", type(exc).__name__, now_utc
+            )
+            return 3
         try:
             repository.mark_email_outcome_unknown(claim.delivery_id, type(exc).__name__, now_utc)
         except Exception:  # noqa: BLE001 - preserve the existing `sending` marker if the DB is unavailable.
