@@ -25,7 +25,12 @@ def normalize_existing_profiles(
     *,
     recommender: Callable[[RecommendationRequest], ProfileRecommendation] = recommend_profile,
 ) -> ProfileNormalizationSummary:
-    """Create one AI-normalised current version per user without touching schedules or history."""
+    """Create one compatible AI-normalised version per user.
+
+    Saving through the existing version API preserves schedules and report
+    history.  Recommendations without ``source_layer_ids`` remain valid for
+    older model responses and are persisted as the empty, compatible tuple.
+    """
 
     users = repository.list_users()
     normalized = failed = 0

@@ -10,6 +10,7 @@ from typing import Literal, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import main
+from personalization.source_catalog import TRUSTED_SOURCE_LAYERS
 
 
 UserStatus = Literal["active", "paused", "expired"]
@@ -121,6 +122,7 @@ class ResearchProfileInput:
     llm_provider: str
     llm_model: str
     output_formats: tuple[str, ...]
+    source_layer_ids: tuple[str, ...] = ()
 
     @classmethod
     def from_form(
@@ -139,6 +141,7 @@ class ResearchProfileInput:
         output_formats: str | Sequence[str],
         lookback_days: int = 3,
         ccf_conference_tiers: str | Sequence[str] = ("A", "B"),
+        source_layer_ids: str | Sequence[str] = (),
     ) -> "ResearchProfileInput":
         if base_profile not in main.REPORT_PROFILES:
             raise ValueError("base_profile must be an existing report profile")
@@ -156,6 +159,14 @@ class ResearchProfileInput:
             raise ValueError(f"source_ids contain unsupported values: {', '.join(sorted(invalid_sources))}")
         if "ccf_conferences" in normalised_sources and base_profile != "computer_science":
             raise ValueError("ccf_conferences is only available for computer_science")
+
+        normalised_source_layers = _normalise_string_list(source_layer_ids)
+        invalid_source_layers = set(normalised_source_layers) - set(TRUSTED_SOURCE_LAYERS)
+        if invalid_source_layers:
+            raise ValueError(
+                "source_layer_ids contain unsupported values: "
+                f"{', '.join(sorted(invalid_source_layers))}"
+            )
 
         normalised_preferences = _normalise_string_list(content_preferences)
         invalid_preferences = set(normalised_preferences) - _CONTENT_PREFERENCES
@@ -195,6 +206,7 @@ class ResearchProfileInput:
             llm_provider=provider,
             llm_model=model,
             output_formats=normalised_formats,
+            source_layer_ids=normalised_source_layers,
         )
 
 

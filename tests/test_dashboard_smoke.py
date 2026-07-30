@@ -317,7 +317,13 @@ class DashboardSmokeTests(unittest.TestCase):
                 selected_count=4,
                 ai_generated=True,
                 profile_filter_fallback=False,
-                source_statuses=[main.SourceStatus("arXiv", True, 8)],
+                source_statuses=[
+                    main.SourceStatus(
+                        "arXiv", True, 8, source_id="arxiv",
+                        source_layer="academic_research", credibility=3,
+                        matched_count=6, deduplicated_count=5, selected_count=4,
+                    )
+                ],
             )
         finally:
             repository.close()
@@ -331,7 +337,20 @@ class DashboardSmokeTests(unittest.TestCase):
 
         self.assertIn("任务详情", [expander.label for expander in app.expander])
         self.assertIn("抓取原始条目", [metric.label for metric in app.metric])
-        self.assertTrue(any("arXiv" in dataframe.value.to_string() for dataframe in app.dataframe))
+        rendered = "\n".join(dataframe.value.to_string() for dataframe in app.dataframe)
+        self.assertIn("arXiv", rendered)
+        self.assertIn("来源类型", rendered)
+        self.assertIn("最终入选", rendered)
+
+    def test_profile_source_controls_explain_layers_and_restricted_catalogue_entries(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "dashboard" / "views.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("可信信源层级", source)
+        self.assertIn("目录收录、尚未接入", source)
+        self.assertIn("需要授权", source)
+        self.assertIn("source_layer_ids=source_layer_ids", source)
 
     def test_rendered_dashboard_injects_a_dark_system_theme(self) -> None:
         app = self.local_dashboard_app()

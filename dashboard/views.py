@@ -16,6 +16,11 @@ from personalization.models import RecommendationRequest, ResearchProfileInput, 
 from personalization.normalization import normalize_existing_profiles
 from personalization.recommender import RecommendationError, recommend_profile
 from personalization.repository import PersonalizationRepository
+from personalization.source_catalog import (
+    SOURCE_DEFINITIONS,
+    TRUSTED_SOURCE_LAYERS,
+    source_definitions_for_profile,
+)
 
 
 BASE_PROFILE_LABELS = main.PROFILE_LABELS
@@ -48,6 +53,13 @@ SOURCE_LABELS = {
     "official_rss": "官方 RSS",
     "hackernews": "Hacker News 社区信号",
     "github_releases": "GitHub Releases 社区信号",
+}
+SOURCE_LAYER_LABELS = {
+    "official_data_policy": "官方数据与政策",
+    "academic_research": "学术研究",
+    "institutional_research": "机构研究",
+    "industry_engineering": "行业、工程与开源动态",
+    "community_signal": "社区信号",
 }
 CCF_TIER_OPTIONS = {
     "A": ("A",),
@@ -94,6 +106,89 @@ def _label(mapping: dict[str, str], value: str) -> str:
     return mapping.get(value, value)
 
 
+def _source_label(source_id: str) -> str:
+    """Show catalogue names without hiding legacy executable source IDs."""
+
+    for source in SOURCE_DEFINITIONS:
+        if source.id == source_id:
+            return source.chinese_name
+    return _label(SOURCE_LABELS, source_id)
+
+
+def _profile_source_controls(
+    base_profile: str,
+    selected_source_ids: tuple[str, ...] | list[str],
+    selected_layer_ids: tuple[str, ...] | list[str],
+    *,
+    key_prefix: str,
+) -> tuple[list[str], list[str]]:
+    """Render one policy-scoped selector used by both profile forms.
+
+    The catalogue remains visible for transparency, but only IDs owned by the
+    existing collection orchestrator can be selected or persisted.
+    """
+
+    selected_ids = set(selected_source_ids)
+    executable_ids = set(main.available_source_ids(base_profile))
+    catalogue = source_definitions_for_profile(base_profile)
+    layer_ids = st.multiselect(
+        "可信信源层级",
+        TRUSTED_SOURCE_LAYERS,
+        default=[layer for layer in selected_layer_ids if layer in TRUSTED_SOURCE_LAYERS],
+        format_func=lambda layer: _label(SOURCE_LAYER_LABELS, layer),
+        key=f"{key_prefix}-source-layers",
+        help="层级选择会采用该学科已接入的公开稳定信源；仍可在下方逐个选择来源。",
+    )
+    st.caption("可选择的来源已接入现有抓取系统；目录中的未接入或授权来源只作透明说明，不会被保存为可执行任务。")
+
+    chosen: list[str] = []
+    catalogued_ids: set[str] = set()
+    for layer in TRUSTED_SOURCE_LAYERS:
+        sources = [source for source in catalogue if source.layer == layer]
+        if not sources:
+            continue
+        catalogued_ids.update(source.id for source in sources)
+        selectable = [source.id for source in sources if source.id in executable_ids]
+        st.markdown(f"**{_label(SOURCE_LAYER_LABELS, layer)}**")
+        if selectable:
+            chosen.extend(
+                st.multiselect(
+                    "具体来源",
+                    selectable,
+                    default=[source_id for source_id in selectable if source_id in selected_ids],
+                    format_func=_source_label,
+                    key=f"{key_prefix}-sources-{layer}",
+                )
+            )
+        else:
+            st.caption("当前学科此层级没有已接入的自动抓取来源。")
+
+        unavailable = [source for source in sources if source.id not in executable_ids]
+        if unavailable:
+            description = "；".join(
+                f"{source.chinese_name}（{source.access_label}；"
+                f"{'目录收录、尚未接入' if source.collectable else '需要授权'}）"
+                for source in unavailable
+            )
+            st.caption(description)
+
+    # Preserve pre-existing selections from the former flat control.  They
+    # remain executable, but are not reclassified as part of a new discipline.
+    compatibility_ids = sorted((selected_ids & executable_ids) - catalogued_ids)
+    if compatibility_ids:
+        st.caption("兼容已有选择（不新增跨学科推荐）：")
+        chosen.extend(
+            st.multiselect(
+                "兼容来源",
+                compatibility_ids,
+                default=compatibility_ids,
+                format_func=_source_label,
+                key=f"{key_prefix}-compatibility-sources",
+            )
+        )
+    return list(dict.fromkeys(chosen)), layer_ids
+
+
 def _validation_message(exc: ValueError) -> str:
     message = str(exc)
     return VALIDATION_ERROR_LABELS.get(message, "输入不符合要求，请检查必填项、邮箱、时区和发送时间。")
@@ -127,6 +222,13 @@ _ONBOARDING_SUGGESTION_KEYS = (
     "onboarding_include_keywords",
     "onboarding_exclude_keywords",
     "onboarding_source_ids",
+    "onboarding-source-layers",
+    "onboarding-sources-official_data_policy",
+    "onboarding-sources-academic_research",
+    "onboarding-sources-institutional_research",
+    "onboarding-sources-industry_engineering",
+    "onboarding-sources-community_signal",
+    "onboarding-compatibility-sources",
     "onboarding_journal_ids",
     "onboarding_preferences",
     "onboarding_max_items",
@@ -272,7 +374,6 @@ def _profile_form(repository: PersonalizationRepository) -> None:
         format_func=lambda value: _label(BASE_PROFILE_LABELS, value),
         key="onboarding_base_profile",
     )
-    available_sources = list(main.available_source_ids(base_profile))
     with st.form("save-recommended-profile"):
         include_keywords = st.text_area(
             "包含关键词",
@@ -284,16 +385,11 @@ def _profile_form(repository: PersonalizationRepository) -> None:
             value="; ".join(profile_recommendation.exclude_keywords),
             key="onboarding_exclude_keywords",
         )
-        source_ids = st.multiselect(
-            "数据来源",
-            available_sources,
-            default=[
-                source_id
-                for source_id in profile_recommendation.source_ids
-                if source_id in available_sources
-            ],
-            format_func=lambda value: _label(SOURCE_LABELS, value),
-            key="onboarding_source_ids",
+        source_ids, source_layer_ids = _profile_source_controls(
+            base_profile,
+            profile_recommendation.source_ids,
+            profile_recommendation.source_layer_ids,
+            key_prefix="onboarding",
         )
         ccf_conference_tiers = profile_recommendation.ccf_conference_tiers
         if base_profile == "computer_science":
@@ -406,6 +502,7 @@ def _profile_form(repository: PersonalizationRepository) -> None:
             include_keywords=include_keywords,
             exclude_keywords=exclude_keywords,
             source_ids=source_ids,
+            source_layer_ids=source_layer_ids,
             journal_ids=journal_ids,
             content_preferences=preferences,
             max_items=max_items,
@@ -452,7 +549,6 @@ def _profile_form(repository: PersonalizationRepository) -> None:
 def _edit_profile_form(repository: PersonalizationRepository, user_id: str, display_name: str) -> None:
     current = repository.get_current_profile(user_id).input
     schedule = repository.get_schedule(user_id)
-    all_sources = list(main.available_source_ids(current.base_profile))
     preference_options = ["review", "mechanism", "methodology", "experiment"]
     with st.expander(f"编辑科研画像：{display_name}"):
         st.caption(
@@ -466,11 +562,11 @@ def _edit_profile_form(repository: PersonalizationRepository, user_id: str, disp
             exclude_keywords = st.text_area(
                 "排除关键词", value="; ".join(current.exclude_keywords)
             )
-            source_ids = st.multiselect(
-                "数据来源",
-                all_sources,
-                default=list(current.source_ids),
-                format_func=lambda value: _label(SOURCE_LABELS, value),
+            source_ids, source_layer_ids = _profile_source_controls(
+                current.base_profile,
+                current.source_ids,
+                current.source_layer_ids,
+                key_prefix=f"edit-{user_id}",
             )
             ccf_conference_tiers = current.ccf_conference_tiers
             if current.base_profile == "computer_science":
@@ -540,6 +636,7 @@ def _edit_profile_form(repository: PersonalizationRepository, user_id: str, disp
                 include_keywords=include_keywords,
                 exclude_keywords=exclude_keywords,
                 source_ids=source_ids,
+                source_layer_ids=source_layer_ids,
                 journal_ids=journal_ids,
                 content_preferences=preferences,
                 max_items=max_items,
@@ -815,9 +912,16 @@ def _render_delivery_task_details(delivery: dict[str, object]) -> None:
             st.dataframe(
                 [
                     {
-                        "数据源": source["name"],
+                        "数据源": _source_label(str(source.get("source_id") or source["name"])),
+                        "来源类型": _label(
+                            SOURCE_LAYER_LABELS, str(source.get("source_layer") or "academic_research")
+                        ),
+                        "可信度": f"{int(source.get('credibility') or 0)}/5",
                         "状态": "成功" if source["success"] else "失败",
                         "原始条目": source["item_count"],
+                        "画像匹配": source.get("matched_count", 0),
+                        "去重后": source.get("deduplicated_count", 0),
+                        "最终入选": source.get("selected_count", 0),
                         "失败原因": source["error"] or "—",
                     }
                     for source in source_rows
@@ -848,9 +952,16 @@ def render_sources(repository: PersonalizationRepository | None) -> None:
         st.dataframe(
             [
                 {
-                    "数据源": _label(SOURCE_LABELS, metric["source_name"]),
+                    "数据源": _source_label(str(metric.get("source_id") or metric["source_name"])),
+                    "来源类型": _label(
+                        SOURCE_LAYER_LABELS, str(metric.get("source_layer") or "academic_research")
+                    ),
+                    "可信度": f"{int(metric.get('credibility') or 0)}/5",
                     "状态": "成功" if metric["success"] else "失败",
-                    "条目数": metric["item_count"],
+                    "原始条目": metric["item_count"],
+                    "画像匹配": metric.get("matched_count", 0),
+                    "去重后": metric.get("deduplicated_count", 0),
+                    "最终入选": metric.get("selected_count", 0),
                     "耗时（毫秒）": metric["duration_ms"],
                     "错误信息": metric["error_summary"],
                     "发生时间（UTC）": metric["created_at"],

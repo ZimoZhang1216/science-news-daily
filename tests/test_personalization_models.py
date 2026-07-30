@@ -19,7 +19,11 @@ from personalization.profile import compose_effective_profile, item_matches_rese
 
 class PersonalizationModelTests(unittest.TestCase):
     def valid_profile(
-        self, *, lookback_days: int = 3, ccf_conference_tiers: tuple[str, ...] = ("A", "B")
+        self,
+        *,
+        lookback_days: int = 3,
+        ccf_conference_tiers: tuple[str, ...] = ("A", "B"),
+        source_layer_ids: str | tuple[str, ...] = (),
     ) -> ResearchProfileInput:
         return ResearchProfileInput.from_form(
             base_profile="chemistry",
@@ -35,6 +39,7 @@ class PersonalizationModelTests(unittest.TestCase):
             output_formats=("docx",),
             lookback_days=lookback_days,
             ccf_conference_tiers=ccf_conference_tiers,
+            source_layer_ids=source_layer_ids,
         )
 
     def test_recommendation_request_requires_the_three_operator_inputs(self) -> None:
@@ -114,6 +119,18 @@ class PersonalizationModelTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ccf_conference_tiers"):
             self.valid_profile(ccf_conference_tiers=())
 
+    def test_profile_input_normalizes_known_source_layers_and_rejects_unknown_layers(self) -> None:
+        profile = self.valid_profile(
+            source_layer_ids="academic_research; official_data_policy, academic_research"
+        )
+
+        self.assertEqual(
+            profile.source_layer_ids,
+            ("academic_research", "official_data_policy"),
+        )
+        with self.assertRaisesRegex(ValueError, "source_layer_ids"):
+            self.valid_profile(source_layer_ids=("untrusted_layer",))
+
     def test_ccf_source_requires_the_computer_science_profile(self) -> None:
         with self.assertRaisesRegex(ValueError, "ccf_conferences"):
             ResearchProfileInput.from_form(
@@ -150,6 +167,7 @@ class PersonalizationProfileTests(unittest.TestCase):
         source_ids: tuple[str, ...] = (),
         journal_ids: tuple[str, ...] = (),
         content_preferences: tuple[str, ...] = (),
+        source_layer_ids: tuple[str, ...] = (),
         include_keywords: str = "",
         exclude_keywords: str = "",
     ) -> ResearchProfileInput:
@@ -161,6 +179,7 @@ class PersonalizationProfileTests(unittest.TestCase):
             source_ids=source_ids,
             journal_ids=journal_ids,
             content_preferences=content_preferences,
+            source_layer_ids=source_layer_ids,
             max_items=12,
             llm_provider="openai",
             llm_model="gpt-5.4-mini",
@@ -208,8 +227,56 @@ class PersonalizationProfileTests(unittest.TestCase):
         effective = compose_effective_profile(profile, "usr_001")
 
         self.assertEqual(effective["enabled_source_ids"], ("pubmed",))
+        self.assertTrue(effective["source_selection_explicit"])
         self.assertEqual([journal["source"] for journal in effective["crossref_journals"]], ["JACS"])
         self.assertIn("mechanism", effective["custom_preference_terms"])
+
+    def test_academic_layer_resolves_only_registered_default_sources(self) -> None:
+        profile = self.make_profile(source_layer_ids=("academic_research",))
+
+        effective = compose_effective_profile(profile, "usr_001")
+
+        self.assertEqual(effective["source_layer_ids"], ("academic_research",))
+        self.assertEqual(effective["enabled_source_ids"], ("arxiv", "pubmed", "crossref", "rss"))
+        self.assertTrue(effective["source_selection_explicit"])
+
+    def test_concrete_sources_override_layer_defaults_without_expansion(self) -> None:
+        profile = self.make_profile(
+            source_ids=("openalex", "arxiv"),
+            source_layer_ids=("academic_research",),
+        )
+
+        effective = compose_effective_profile(profile, "usr_001")
+
+        self.assertEqual(
+            effective["enabled_source_ids"],
+            ("openalex", "arxiv"),
+        )
+
+    def test_community_layer_keeps_an_explicitly_selected_supported_community_source(self) -> None:
+        profile = self.make_profile(
+            source_ids=("hackernews",),
+            source_layer_ids=("community_signal",),
+        )
+
+        effective = compose_effective_profile(profile, "usr_001")
+
+        self.assertEqual(effective["enabled_source_ids"], ("hackernews",))
+        self.assertTrue(effective["source_selection_explicit"])
+
+    def test_community_layer_is_an_explicit_empty_source_selection(self) -> None:
+        profile = self.make_profile(source_layer_ids=("community_signal",))
+
+        effective = compose_effective_profile(profile, "usr_001")
+
+        self.assertEqual(effective["enabled_source_ids"], ())
+        self.assertTrue(effective["source_selection_explicit"])
+
+    def test_legacy_empty_source_selection_remains_implicit(self) -> None:
+        effective = compose_effective_profile(self.make_profile(), "usr_001")
+
+        self.assertEqual(effective["enabled_source_ids"], ())
+        self.assertFalse(effective["source_selection_explicit"])
 
     def test_effective_computer_science_profile_carries_the_selected_ccf_tiers(self) -> None:
         profile = ResearchProfileInput.from_form(
@@ -389,6 +456,86 @@ class ReportGenerationApiTests(unittest.TestCase):
         self.assertEqual(result.output_path, output_path)
         self.assertEqual(result.matched_count, 0)
         self.assertTrue(result.profile_filter_fallback)
+        self.assertEqual(
+            (
+                result.source_statuses[0].matched_count,
+                result.source_statuses[0].deduplicated_count,
+                result.source_statuses[0].selected_count,
+            ),
+            (1, 1, 1),
+        )
+
+    def test_generate_report_attributes_the_source_funnel_to_one_canonical_duplicate(self) -> None:
+        """A duplicate must contribute its post-dedup counters to one source only."""
+
+        duplicate_from_arxiv = main.NewsItem(
+            "Battery interface transport",
+            "arXiv",
+            datetime(2026, 7, 28, tzinfo=timezone.utc),
+            "https://doi.org/10.1000/shared",
+            abstract="Short record.",
+            doi="10.1000/shared",
+            source_id="arxiv",
+        )
+        canonical_pubmed_record = main.NewsItem(
+            "Battery interface transport",
+            "PubMed",
+            datetime(2026, 7, 28, tzinfo=timezone.utc),
+            "https://pubmed.ncbi.nlm.nih.gov/123/",
+            abstract="A detailed battery interface transport study with reproducible methods." * 3,
+            doi="10.1000/shared",
+            authors=["A. Researcher", "B. Researcher"],
+            source_id="pubmed",
+        )
+        europe_pmc_record = main.NewsItem(
+            "Solid electrolyte stability",
+            "Europe PMC",
+            datetime(2026, 7, 28, tzinfo=timezone.utc),
+            "https://europepmc.org/article/MED/456",
+            abstract="A separate study about solid electrolyte stability.",
+            source_id="europe_pmc",
+        )
+        items = [duplicate_from_arxiv, canonical_pubmed_record, europe_pmc_record]
+        statuses = [
+            main.source_status("arXiv", True, "arxiv", item_count=1),
+            main.source_status("PubMed", True, "pubmed", item_count=1),
+            main.source_status("Europe PMC", True, "europe_pmc", item_count=1),
+        ]
+        options = main.ReportGenerationOptions(
+            days=1,
+            max_items=10,
+            min_items=1,
+            source_limit=10,
+            max_ai_items=10,
+            llm_provider="openai",
+            model="",
+            report_date=date(2026, 7, 28),
+            output_dir=Path(self.tempdir.name),
+            require_ai=False,
+            no_openai=False,
+        )
+        output_path = Path(self.tempdir.name) / "report.docx"
+        with (
+            patch.object(main, "collect_items", return_value=(items, statuses)),
+            patch("network_check.run_network_checks", return_value=type("Diagnostics", (), {"network_ok": True, "summary_lines": lambda self: []})()),
+            patch.object(main, "generate_ai_summaries", return_value=main.fallback_report_payload(items, self.profile)),
+            patch.object(main, "apply_ai_scientific_notation", return_value=False),
+            patch.object(main, "create_document", return_value=output_path),
+        ):
+            result = main.generate_report(options, self.profile, item_filter=lambda _item: True)
+
+        counters = {
+            status.source_id: (status.item_count, status.matched_count, status.deduplicated_count, status.selected_count)
+            for status in result.source_statuses
+        }
+        self.assertEqual(
+            counters,
+            {
+                "arxiv": (1, 1, 0, 0),
+                "pubmed": (1, 1, 1, 1),
+                "europe_pmc": (1, 1, 1, 1),
+            },
+        )
 
     def test_send_report_email_uses_explicit_custom_recipient_without_profile_fallback(self) -> None:
         pdf_path = Path(self.tempdir.name) / "preview.pdf"

@@ -24,6 +24,7 @@ from typing import Any, Callable
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from personalization.ccf_catalogue import CcfConference, conferences_for_tiers
+from personalization.source_catalog import SOURCE_DEFINITIONS, source_definitions_for_profile
 
 MISSING_DEPENDENCIES: list[str] = []
 
@@ -1254,7 +1255,8 @@ BUSINESS_MANAGEMENT_SOURCE_WEIGHTS = {
 
 ACADEMIC_SOURCE_IDS = ("arxiv", "pubmed", "crossref", "rss", "openalex", "ccf_conferences")
 PUBLIC_SOURCE_IDS = ("official_rss", "hackernews", "github_releases")
-SUPPORTED_SOURCE_IDS = frozenset((*ACADEMIC_SOURCE_IDS, *PUBLIC_SOURCE_IDS))
+PUBLIC_API_SOURCE_IDS = ("europe_pmc", "biorxiv", "medrxiv", "clinical_trials")
+SUPPORTED_SOURCE_IDS = frozenset((*ACADEMIC_SOURCE_IDS, *PUBLIC_SOURCE_IDS, *PUBLIC_API_SOURCE_IDS))
 # These sources accept topic terms directly, so a user can opt into them even
 # when their base discipline has no pre-configured journal or feed catalogue.
 SHARED_USER_SOURCE_IDS = ("arxiv", "pubmed", "openalex", "hackernews")
@@ -1264,6 +1266,80 @@ SOURCE_KIND_LABELS = {
     "official": "官方发布",
     "community": "社区信号",
 }
+SOURCE_LAYER_LABELS = {
+    "official_data_policy": "官方数据与政策",
+    "academic_research": "学术研究",
+    "institutional_research": "机构研究",
+    "industry_engineering": "行业、工程与开源动态",
+    "community_signal": "社区信号",
+}
+_LEGACY_KIND_TO_SOURCE_LAYER = {
+    "academic": "academic_research",
+    "official": "official_data_policy",
+    "community": "community_signal",
+}
+
+SOURCE_DEFINITIONS_BY_ID = {source.id: source for source in SOURCE_DEFINITIONS}
+
+
+def source_provenance(source_id: str) -> tuple[str, int]:
+    """Return the trusted-layer metadata for an executable source ID."""
+
+    source = SOURCE_DEFINITIONS_BY_ID.get(source_id)
+    if source is None:
+        return "academic_research", 0
+    return source.layer, source.credibility
+
+
+def item_source_layer(item: NewsItem) -> str:
+    """Return an evidence layer while retaining old records with only source_kind."""
+
+    legacy_layer = _LEGACY_KIND_TO_SOURCE_LAYER.get(item.source_kind, "academic_research")
+    if not item.source_id and item.source_layer == "academic_research":
+        return legacy_layer
+    return item.source_layer if item.source_layer in SOURCE_LAYER_LABELS else legacy_layer
+
+
+def item_credibility(item: NewsItem) -> int:
+    """Use catalogue credibility when available; old source-kind records stay transparent."""
+
+    if item.source_id:
+        _, credibility = source_provenance(item.source_id)
+        if credibility:
+            return credibility
+    return {"official_data_policy": 5, "academic_research": 3, "institutional_research": 3,
+            "industry_engineering": 3, "community_signal": 1}[item_source_layer(item)]
+
+
+def apply_source_provenance(items: list[NewsItem], source_id: str) -> list[NewsItem]:
+    """Attach stable catalogue provenance to collector results and test doubles."""
+
+    source_layer, _ = source_provenance(source_id)
+    for item in items:
+        item.source_id = source_id
+        item.source_layer = source_layer
+    return items
+
+
+def source_status(
+    name: str,
+    success: bool,
+    source_id: str,
+    item_count: int = 0,
+    error: str = "",
+) -> SourceStatus:
+    """Build a provenance-aware status without changing legacy call sites."""
+
+    source_layer, credibility = source_provenance(source_id)
+    return SourceStatus(
+        name=name,
+        success=success,
+        item_count=item_count,
+        error=error,
+        source_id=source_id,
+        source_layer=source_layer,
+        credibility=credibility,
+    )
 
 PROFILE_LABELS = {
     "chemistry": "化学（专业）",
@@ -1660,6 +1736,8 @@ class NewsItem:
     doi: str = ""
     authors: list[str] = field(default_factory=list)
     source_kind: str = "academic"
+    source_id: str = ""
+    source_layer: str = "academic_research"
     field_name: str = "综合化学"
     item_id: str = ""
     attractive_title: str = ""
@@ -1680,11 +1758,60 @@ class SourceStatus:
     success: bool
     item_count: int = 0
     error: str = ""
+    source_id: str = ""
+    source_layer: str = "academic_research"
+    credibility: int = 0
+    matched_count: int = 0
+    deduplicated_count: int = 0
+    selected_count: int = 0
 
     def summary(self) -> str:
         if self.success:
             return f"成功，获取 {self.item_count} 条"
         return f"失败：{summarize_source_error(self.error)}"
+
+
+_LEGACY_STATUS_SOURCE_IDS = {
+    "arxiv": "arxiv",
+    "pubmed": "pubmed",
+    "crossref": "crossref",
+    "openalex": "openalex",
+    "europe pmc": "europe_pmc",
+    "biorxiv": "biorxiv",
+    "medrxiv": "medrxiv",
+    "clinicaltrials.gov": "clinical_trials",
+    "clinical trials": "clinical_trials",
+    "official rss": "official_rss",
+    "hacker news": "hackernews",
+    "github releases": "github_releases",
+    "rss": "rss",
+}
+
+
+def source_id_for_status(status: SourceStatus) -> str:
+    """Return a stable source ID for both new and legacy status constructors."""
+
+    source_id = clean_text(status.source_id)
+    if source_id:
+        return source_id
+    name = clean_text(status.name).casefold()
+    for prefix, candidate in _LEGACY_STATUS_SOURCE_IDS.items():
+        if name == prefix or name.startswith(f"{prefix}:"):
+            return candidate
+    return re.sub(r"[^a-z0-9]+", "_", name).strip("_") or "unknown"
+
+
+def hydrate_source_status_provenance(status: SourceStatus) -> SourceStatus:
+    """Fill additive provenance for older callers that only provide a source name."""
+
+    source_id = source_id_for_status(status)
+    source_layer, credibility = source_provenance(source_id)
+    status.source_id = source_id
+    if not status.source_layer or status.source_layer == "academic_research":
+        status.source_layer = source_layer
+    if status.credibility <= 0:
+        status.credibility = credibility
+    return status
 
 
 @dataclass
@@ -2245,7 +2372,7 @@ def resolve_profile(profile_key: str) -> dict[str, Any]:
 
 
 def available_source_ids(profile_key: str | dict[str, Any]) -> tuple[str, ...]:
-    """Return source IDs that can execute for one user research profile."""
+    """Return currently executable IDs while retaining legacy profile support."""
 
     profile = resolve_profile(profile_key) if isinstance(profile_key, str) else profile_key
     configured = {
@@ -2259,11 +2386,24 @@ def available_source_ids(profile_key: str | dict[str, Any]) -> tuple[str, ...]:
         "hackernews": bool(profile.get("community_query_terms")),
         "github_releases": bool(profile.get("github_repositories")),
     }
-    return tuple(
+    legacy_ids = tuple(
         source_id
         for source_id in (*ACADEMIC_SOURCE_IDS, *PUBLIC_SOURCE_IDS)
         if source_id in SHARED_USER_SOURCE_IDS or configured[source_id]
     )
+    profile_key = profile.get("key")
+    # A catalogue entry becomes selectable only after this orchestrator owns a
+    # concrete public collector for it.  Scope alone must never create a new
+    # network request for a directory-only source.
+    catalogue_ids: tuple[str, ...] = ()
+    if isinstance(profile_key, str):
+        catalogue_ids = tuple(
+            source.id
+            for source in source_definitions_for_profile(profile_key)
+            if source.id in PUBLIC_API_SOURCE_IDS
+            and source.collectable
+        )
+    return tuple(dict.fromkeys((*legacy_ids, *catalogue_ids)))
 
 
 def classify_field(title: str, abstract: str, profile: dict[str, Any]) -> str:
@@ -2415,6 +2555,8 @@ def fetch_arxiv(
             link=link,
             abstract=abstract,
             authors=[author for author in authors if author],
+            source_id="arxiv",
+            source_layer="academic_research",
         )
         item.field_name = classify_field(item.title, item.abstract, profile)
         if is_profile_relevant(item, profile):
@@ -2528,6 +2670,220 @@ def fetch_pubmed(
             abstract=" ".join(abstract_parts),
             doi=doi,
             authors=authors,
+            source_id="pubmed",
+            source_layer="academic_research",
+        )
+        item.field_name = classify_field(item.title, item.abstract, profile)
+        if is_profile_relevant(item, profile):
+            items.append(item)
+    return items
+
+
+def fetch_europe_pmc(
+    session: requests.Session,
+    since: datetime,
+    until: datetime,
+    max_items: int,
+    profile: dict[str, Any],
+) -> list[NewsItem]:
+    """Map the public Europe PMC search response to recent scholarly items."""
+
+    terms = list(dict.fromkeys(profile.get("pubmed_query_terms") or profile.get("relevance_terms", ())))[:5]
+    term_query = " OR ".join(terms)
+    date_filter = f"FIRST_PDATE:[{since.date().isoformat()} TO {until.date().isoformat()}]"
+    query = f"({term_query}) AND {date_filter}" if term_query else date_filter
+    response = session.get(
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
+        params={
+            "query": query,
+            "format": "json",
+            "pageSize": min(max(max_items, 10), 100),
+            "sort": "FIRST_PDATE_D",
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    result_list = payload.get("resultList", {}) if isinstance(payload, dict) else {}
+    results = result_list.get("result", []) if isinstance(result_list, dict) else []
+    items: list[NewsItem] = []
+    for result in results if isinstance(results, list) else []:
+        if not isinstance(result, dict):
+            continue
+        published = parse_datetime(
+            result.get("firstPublicationDate") or result.get("firstIndexDate") or result.get("pubYear")
+        )
+        if published and not since <= published <= until:
+            continue
+        title = clean_text(result.get("title", ""))
+        article_id = clean_text(result.get("id", ""))
+        source_code = clean_text(result.get("source", "")) or "PMC"
+        if not title or not article_id:
+            continue
+        author_text = clean_text(result.get("authorString", ""))
+        item = NewsItem(
+            title=title,
+            source=f"Europe PMC: {clean_text(result.get('journalTitle', '')) or 'Europe PMC'}",
+            published=published,
+            link=f"https://europepmc.org/article/{source_code}/{article_id}",
+            abstract=clean_text(result.get("abstractText", "")) or "Europe PMC 元数据未提供摘要；请通过链接查看原文。",
+            doi=clean_text(result.get("doi", "")),
+            authors=[author.strip() for author in author_text.split(";") if author.strip()],
+            source_kind="academic",
+            source_id="europe_pmc",
+            source_layer="academic_research",
+        )
+        item.field_name = classify_field(item.title, item.abstract, profile)
+        if is_profile_relevant(item, profile):
+            items.append(item)
+    return items
+
+
+def fetch_preprint_server(
+    session: requests.Session,
+    since: datetime,
+    until: datetime,
+    max_items: int,
+    profile: dict[str, Any],
+    server: str,
+) -> list[NewsItem]:
+    """Fetch one public bioRxiv-family server without conflating the two sources."""
+
+    response = session.get(
+        f"https://api.biorxiv.org/details/{server}/{since.date().isoformat()}/{until.date().isoformat()}/0",
+        timeout=30,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    records = payload.get("collection", []) if isinstance(payload, dict) else []
+    source_id = server
+    display_name = "bioRxiv" if server == "biorxiv" else "medRxiv"
+    items: list[NewsItem] = []
+    for record in records if isinstance(records, list) else []:
+        if not isinstance(record, dict):
+            continue
+        published = parse_datetime(record.get("date"))
+        if published and not since <= published <= until:
+            continue
+        title = clean_text(record.get("title", ""))
+        doi = clean_text(record.get("doi", ""))
+        if not title or not doi:
+            continue
+        version = clean_text(record.get("version", "")) or "1"
+        authors = clean_text(record.get("authors", ""))
+        item = NewsItem(
+            title=title,
+            source=display_name,
+            published=published,
+            link=f"https://www.{server}.org/content/{doi}v{version}",
+            abstract=clean_text(record.get("abstract", "")) or f"{display_name} 预印本未提供摘要；请通过链接查看原文。",
+            doi=doi,
+            authors=[author.strip() for author in authors.split(";") if author.strip()],
+            source_kind="academic",
+            source_id=source_id,
+            source_layer="academic_research",
+        )
+        item.field_name = classify_field(item.title, item.abstract, profile)
+        if is_profile_relevant(item, profile):
+            items.append(item)
+            if len(items) >= max_items:
+                break
+    return items
+
+
+def fetch_biorxiv(
+    session: requests.Session,
+    since: datetime,
+    until: datetime,
+    max_items: int,
+    profile: dict[str, Any],
+) -> list[NewsItem]:
+    """Fetch public bioRxiv preprints."""
+
+    return fetch_preprint_server(session, since, until, max_items, profile, "biorxiv")
+
+
+def fetch_medrxiv(
+    session: requests.Session,
+    since: datetime,
+    until: datetime,
+    max_items: int,
+    profile: dict[str, Any],
+) -> list[NewsItem]:
+    """Fetch public medRxiv preprints."""
+
+    return fetch_preprint_server(session, since, until, max_items, profile, "medrxiv")
+
+
+def fetch_clinical_trials(
+    session: requests.Session,
+    since: datetime,
+    until: datetime,
+    max_items: int,
+    profile: dict[str, Any],
+) -> list[NewsItem]:
+    """Map ClinicalTrials.gov's public v2 study records to official-data items."""
+
+    terms = list(dict.fromkeys(profile.get("pubmed_query_terms") or profile.get("relevance_terms", ())))[:5]
+    response = session.get(
+        "https://clinicaltrials.gov/api/v2/studies",
+        params={
+            "query.term": " OR ".join(terms),
+            "filter.advanced": (
+                "AREA[LastUpdatePostDate]RANGE["
+                f"{since.date().isoformat()},{until.date().isoformat()}]"
+            ),
+            "sort": "LastUpdatePostDate:desc",
+            "pageSize": min(max(max_items, 10), 100),
+            "format": "json",
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    studies = payload.get("studies", []) if isinstance(payload, dict) else []
+    items: list[NewsItem] = []
+    for study in studies if isinstance(studies, list) else []:
+        if not isinstance(study, dict):
+            continue
+        protocol = study.get("protocolSection")
+        if not isinstance(protocol, dict):
+            continue
+        identification = protocol.get("identificationModule")
+        status = protocol.get("statusModule")
+        if not isinstance(identification, dict) or not isinstance(status, dict):
+            continue
+        nct_id = clean_text(identification.get("nctId", ""))
+        title = clean_text(identification.get("briefTitle", "") or identification.get("officialTitle", ""))
+        update_posted = status.get("lastUpdatePostDateStruct")
+        post_date = update_posted.get("date") if isinstance(update_posted, dict) else ""
+        published = parse_datetime(post_date)
+        if published and not since <= published <= until:
+            continue
+        if not nct_id or not title:
+            continue
+        description = protocol.get("descriptionModule")
+        conditions = protocol.get("conditionsModule")
+        sponsor_module = protocol.get("sponsorCollaboratorsModule")
+        summary = clean_text(description.get("briefSummary", "")) if isinstance(description, dict) else ""
+        condition_names = conditions.get("conditions", []) if isinstance(conditions, dict) else []
+        condition_text = "; ".join(clean_text(name) for name in condition_names if clean_text(name))
+        sponsor = ""
+        if isinstance(sponsor_module, dict):
+            lead_sponsor = sponsor_module.get("leadSponsor")
+            if isinstance(lead_sponsor, dict):
+                sponsor = clean_text(lead_sponsor.get("name", ""))
+        item = NewsItem(
+            title=title,
+            source="ClinicalTrials.gov",
+            published=published,
+            link=f"https://clinicaltrials.gov/study/{nct_id}",
+            abstract=" ".join(part for part in [summary, f"适应症：{condition_text}" if condition_text else ""] if part)
+            or "ClinicalTrials.gov 公开登记未提供简要说明；请通过链接核验试验状态与结果。",
+            authors=[sponsor] if sponsor else [],
+            source_kind="official",
+            source_id="clinical_trials",
+            source_layer="official_data_policy",
         )
         item.field_name = classify_field(item.title, item.abstract, profile)
         if is_profile_relevant(item, profile):
@@ -2604,6 +2960,8 @@ def fetch_crossref_journal(
                 abstract=abstract or "出版商元数据未提供摘要；请通过链接查看原文摘要。",
                 doi=doi,
                 authors=author_names,
+                source_id="crossref",
+                source_layer="academic_research",
             )
             item.field_name = classify_field(item.title, item.abstract, profile)
             if should_include_crossref_item(item, journal, profile):
@@ -2627,18 +2985,20 @@ def fetch_crossref(
             LOGGER.info("%s via Crossref: %d items", journal["source"], len(journal_items))
             items.extend(journal_items)
             statuses.append(
-                SourceStatus(
+                source_status(
                     name=f"Crossref: {journal['source']}",
                     success=True,
+                    source_id="crossref",
                     item_count=len(journal_items),
                 )
             )
         except Exception as exc:  # noqa: BLE001 - one journal must not stop the report.
             LOGGER.warning("Crossref source failed for %s: %s", journal["source"], exc)
             statuses.append(
-                SourceStatus(
+                source_status(
                     name=f"Crossref: {journal['source']}",
                     success=False,
+                    source_id="crossref",
                     error=f"{type(exc).__name__}: {exc}",
                 )
             )
@@ -2732,6 +3092,8 @@ def fetch_openalex(
                 doi=doi,
                 authors=authors,
                 source_kind="academic",
+                source_id="openalex",
+                source_layer="academic_research",
             )
             item.field_name = classify_field(item.title, item.abstract, profile)
             if is_profile_relevant(item, profile):
@@ -2833,6 +3195,8 @@ def _dblp_page_items(
             doi=extract_doi(link),
             authors=list(dict.fromkeys(author for author in authors if author)),
             source_kind="academic",
+            source_id="ccf_conferences",
+            source_layer="academic_research",
         )
         item.field_name = classify_field(item.title, item.abstract, profile)
         if is_profile_relevant(item, profile):
@@ -2953,6 +3317,8 @@ def fetch_hackernews(
                 abstract="公开社区讨论信号；请以链接中的原始资料为准。",
                 authors=[author] if author else [],
                 source_kind="community",
+                source_id="hackernews",
+                source_layer="community_signal",
             )
             item.field_name = classify_field(item.title, item.abstract, profile)
             if is_profile_relevant(item, profile):
@@ -3013,6 +3379,8 @@ def fetch_github_releases(
                 abstract=clean_text(release.get("body", "")) or "项目公开发布说明未提供详情。",
                 authors=[author] if author else [],
                 source_kind="community",
+                source_id="github_releases",
+                source_layer="industry_engineering",
             )
             item.field_name = classify_field(item.title, item.abstract, profile)
             if is_profile_relevant(item, profile):
@@ -3029,6 +3397,8 @@ def fetch_rss(
     per_feed = max(10, min(40, max_items // max(len(feeds), 1) + 5))
     for feed_config in feeds:
         try:
+            source_id = clean_text(feed_config.get("source_id", "")) or "rss"
+            source_layer, credibility = source_provenance(source_id)
             response = session.get(feed_config["url"], timeout=30)
             response.raise_for_status()
             parsed = feedparser.parse(response.content)
@@ -3053,6 +3423,8 @@ def fetch_rss(
                     link=link,
                     abstract=abstract or "RSS 未提供摘要；请通过链接查看详情。",
                     source_kind=feed_config.get("source_kind", "official"),
+                    source_id=source_id,
+                    source_layer=source_layer,
                 )
                 item.field_name = classify_field(item.title, item.abstract, profile)
                 if not feed_config.get("broad") or is_profile_relevant(item, profile):
@@ -3064,6 +3436,9 @@ def fetch_rss(
                     name=f"RSS: {feed_config['source']}",
                     success=True,
                     item_count=count,
+                    source_id=source_id,
+                    source_layer=source_layer,
+                    credibility=credibility,
                 )
             )
         except Exception as exc:  # noqa: BLE001 - RSS endpoints are best-effort.
@@ -3073,6 +3448,9 @@ def fetch_rss(
                     name=f"RSS: {feed_config['source']}",
                     success=False,
                     error=f"{type(exc).__name__}: {exc}",
+                    source_id=clean_text(feed_config.get("source_id", "")) or "rss",
+                    source_layer=source_provenance(clean_text(feed_config.get("source_id", "")) or "rss")[0],
+                    credibility=source_provenance(clean_text(feed_config.get("source_id", "")) or "rss")[1],
                 )
             )
     return items, statuses
@@ -3108,6 +3486,56 @@ def dedupe_items(items: list[NewsItem]) -> list[NewsItem]:
             continue
         unique_items.append(max(cluster, key=duplicate_quality_score))
     return unique_items
+
+
+def _status_for_item(item: NewsItem, statuses: list[SourceStatus]) -> SourceStatus | None:
+    """Resolve one status row for an item without spreading a duplicate across sources."""
+
+    item_source_id = clean_text(item.source_id)
+    candidates = [
+        status for status in statuses if source_id_for_status(status) == item_source_id
+    ]
+    if not candidates and not item_source_id and len(statuses) == 1:
+        return statuses[0]
+    if not candidates:
+        return None
+
+    item_source = clean_text(item.source).casefold()
+    matching_names = [
+        status
+        for status in candidates
+        if item_source
+        and (
+            clean_text(status.name).casefold() == item_source
+            or clean_text(status.name).casefold().endswith(f": {item_source}")
+        )
+    ]
+    return sorted(matching_names or candidates, key=lambda status: status.name.casefold())[0]
+
+
+def populate_source_funnel_metrics(
+    statuses: list[SourceStatus],
+    matched_items: list[NewsItem],
+    deduplicated_items: list[NewsItem],
+    selected_items: list[NewsItem],
+) -> None:
+    """Populate task-local source counts for the effective filtering and selection path."""
+
+    for status in statuses:
+        hydrate_source_status_provenance(status)
+        status.matched_count = 0
+        status.deduplicated_count = 0
+        status.selected_count = 0
+
+    for items, counter_name in (
+        (matched_items, "matched_count"),
+        (deduplicated_items, "deduplicated_count"),
+        (selected_items, "selected_count"),
+    ):
+        for item in items:
+            status = _status_for_item(item, statuses)
+            if status is not None:
+                setattr(status, counter_name, getattr(status, counter_name) + 1)
 
 
 def history_file_path(history_dir: Path, profile: dict[str, Any]) -> Path:
@@ -4983,9 +5411,9 @@ def add_top_item_block(document: Document, item: NewsItem, index: int) -> None:
     meta = document.add_paragraph()
     meta.paragraph_format.space_before = Pt(0)
     meta.paragraph_format.space_after = Pt(1)
-    source_kind = SOURCE_KIND_LABELS.get(item.source_kind, SOURCE_KIND_LABELS["academic"])
+    source_kind = SOURCE_LAYER_LABELS[item_source_layer(item)]
     run = meta.add_run(
-        f"{source_kind}  |  {item.field_name}  |  {item.source}  |  {format_date(item.published)}"
+        f"{source_kind}（可信度 {item_credibility(item)}/5）  |  {item.field_name}  |  {item.source}  |  {format_date(item.published)}"
     )
     set_run_font(run, size=8.5, color=RGBColor(107, 114, 128))
 
@@ -5011,9 +5439,9 @@ def add_item_block(document: Document, item: NewsItem) -> None:
     meta = document.add_paragraph()
     meta.paragraph_format.space_before = Pt(0)
     meta.paragraph_format.space_after = Pt(2)
-    source_kind = SOURCE_KIND_LABELS.get(item.source_kind, SOURCE_KIND_LABELS["academic"])
+    source_kind = SOURCE_LAYER_LABELS[item_source_layer(item)]
     run = meta.add_run(
-        f"{source_kind}  |  {item.source}  |  {format_date(item.published)}  |  {item.field_name}"
+        f"{source_kind}（可信度 {item_credibility(item)}/5）  |  {item.source}  |  {format_date(item.published)}  |  {item.field_name}"
     )
     set_run_font(run, size=8.5, color=RGBColor(107, 114, 128))
 
@@ -5122,8 +5550,10 @@ def create_document(
     add_source_note(document, len(items))
 
     by_id = {item.item_id: item for item in items}
-    academic_items = [item for item in items if item.source_kind == "academic"]
-    highlight_candidates = academic_items or items
+    # Community discussion is intentionally never elevated to a report's
+    # evidence-like highlights.  It remains visible in its own final section.
+    evidence_items = [item for item in items if item_source_layer(item) != "community_signal"]
+    highlight_candidates = evidence_items
     highlight_candidate_ids = {item.item_id for item in highlight_candidates}
     top_items: list[NewsItem] = []
     selected_top_ids: set[str] = set()
@@ -5157,26 +5587,43 @@ def create_document(
         if isinstance(entry, dict) and entry.get("field") and entry.get("summary"):
             field_summary_map[clean_text(entry["field"])] = clean_text(entry["summary"])
 
-    grouped: dict[str, list[NewsItem]] = {}
-    for item in items:
-        grouped.setdefault(item.field_name, []).append(item)
-
     ordered_fields = list(profile["field_keywords"].keys()) + [profile["default_field"]]
-    for field_name in ordered_fields:
-        group_items = grouped.get(field_name, [])
-        if not group_items:
+    for source_layer in (
+        "official_data_policy",
+        "academic_research",
+        "institutional_research",
+        "industry_engineering",
+        "community_signal",
+    ):
+        document.add_heading(SOURCE_LAYER_LABELS[source_layer], level=2)
+        layer_items = [item for item in items if item_source_layer(item) == source_layer]
+        if not layer_items:
+            document.add_paragraph("本期无符合条件的内容。")
             continue
-        document.add_heading(field_name, level=2)
-        summary = field_summary_map.get(
-            field_name,
-            f"本领域收录 {len(group_items)} 条，主要覆盖近期论文、期刊上线内容和科研资讯。",
-        )
-        summary_paragraph = document.add_paragraph()
-        summary_paragraph.paragraph_format.space_after = Pt(6)
-        summary_paragraph.paragraph_format.line_spacing = 1.25
-        add_rich_text(summary_paragraph, summary, size=9.2, color=RGBColor(55, 65, 81))
-        for item in group_items:
-            add_item_block(document, item)
+        grouped: dict[str, list[NewsItem]] = {}
+        for item in layer_items:
+            grouped.setdefault(item.field_name, []).append(item)
+        for field_name in ordered_fields:
+            group_items = grouped.pop(field_name, [])
+            if not group_items:
+                continue
+            document.add_heading(field_name, level=3)
+            summary = field_summary_map.get(
+                field_name,
+                f"本领域收录 {len(group_items)} 条，主要覆盖近期论文、期刊上线内容和科研资讯。",
+            )
+            summary_paragraph = document.add_paragraph()
+            summary_paragraph.paragraph_format.space_after = Pt(6)
+            summary_paragraph.paragraph_format.line_spacing = 1.25
+            add_rich_text(summary_paragraph, summary, size=9.2, color=RGBColor(55, 65, 81))
+            for item in group_items:
+                add_item_block(document, item)
+        # Custom/legacy field values not present in the static profile remain
+        # observable instead of disappearing from a report section.
+        for field_name, group_items in grouped.items():
+            document.add_heading(field_name, level=3)
+            for item in group_items:
+                add_item_block(document, item)
 
     add_run_diagnostics_section(document, diagnostics, source_statuses)
 
@@ -5605,65 +6052,54 @@ def collect_items(
 ) -> tuple[list[NewsItem], list[SourceStatus]]:
     session = build_session()
     enabled_source_ids = set(profile.get("enabled_source_ids", ()))
-    fetchers: list[tuple[str, Callable[[], list[NewsItem]]]] = []
-    if not enabled_source_ids or "arxiv" in enabled_source_ids:
-        fetchers.append(("arXiv", lambda: fetch_arxiv(session, since, until, args.source_limit, profile)))
-    if not enabled_source_ids or "pubmed" in enabled_source_ids:
-        fetchers.append(("PubMed", lambda: fetch_pubmed(session, since, until, args.source_limit, profile)))
+    collect_all_sources = not profile.get("source_selection_explicit", False) and not enabled_source_ids
+    fetchers: list[tuple[str, str, Callable[[], list[NewsItem]]]] = []
+    if collect_all_sources or "arxiv" in enabled_source_ids:
+        fetchers.append(("arXiv", "arxiv", lambda: fetch_arxiv(session, since, until, args.source_limit, profile)))
+    if collect_all_sources or "pubmed" in enabled_source_ids:
+        fetchers.append(("PubMed", "pubmed", lambda: fetch_pubmed(session, since, until, args.source_limit, profile)))
 
     all_items: list[NewsItem] = []
     statuses: list[SourceStatus] = []
-    for source_name, fetcher in fetchers:
+    for source_name, source_id, fetcher in fetchers:
         try:
-            items = fetcher()
+            items = apply_source_provenance(fetcher(), source_id)
             LOGGER.info("%s returned %d items", source_name, len(items))
             all_items.extend(items)
-            statuses.append(SourceStatus(name=source_name, success=True, item_count=len(items)))
+            statuses.append(source_status(source_name, True, source_id, item_count=len(items)))
         except Exception as exc:  # noqa: BLE001 - source isolation is required.
             LOGGER.exception("%s failed and was skipped: %s", source_name, exc)
             statuses.append(
-                SourceStatus(
-                    name=source_name,
-                    success=False,
-                    error=f"{type(exc).__name__}: {exc}",
-                )
+                source_status(source_name, False, source_id, error=f"{type(exc).__name__}: {exc}")
             )
 
-    if not enabled_source_ids or "crossref" in enabled_source_ids:
+    if collect_all_sources or "crossref" in enabled_source_ids:
         try:
             crossref_items, crossref_statuses = fetch_crossref(session, since, until, args.source_limit, profile)
             LOGGER.info("Crossref returned %d items", len(crossref_items))
-            all_items.extend(crossref_items)
+            all_items.extend(apply_source_provenance(crossref_items, "crossref"))
             statuses.extend(crossref_statuses)
         except Exception as exc:  # noqa: BLE001 - defensive guard around the grouped source.
             LOGGER.exception("Crossref failed and was skipped: %s", exc)
             statuses.append(
-                SourceStatus(
-                    name="Crossref",
-                    success=False,
-                    error=f"{type(exc).__name__}: {exc}",
-                )
+                source_status("Crossref", False, "crossref", error=f"{type(exc).__name__}: {exc}")
             )
 
-    if not enabled_source_ids or "rss" in enabled_source_ids:
+    if collect_all_sources or "rss" in enabled_source_ids:
         try:
             rss_items, rss_statuses = fetch_rss(session, since, until, args.source_limit, profile)
             LOGGER.info("RSS returned %d items", len(rss_items))
-            all_items.extend(rss_items)
+            all_items.extend(apply_source_provenance(rss_items, "rss"))
             statuses.extend(rss_statuses)
         except Exception as exc:  # noqa: BLE001 - defensive guard around the grouped source.
             LOGGER.exception("RSS failed and was skipped: %s", exc)
             statuses.append(
-                SourceStatus(
-                    name="RSS",
-                    success=False,
-                    error=f"{type(exc).__name__}: {exc}",
-                )
+                source_status("RSS", False, "rss", error=f"{type(exc).__name__}: {exc}")
             )
 
     supplementary_fetchers: list[tuple[str, str, Callable[[], list[NewsItem]]]] = []
     if profile.get("openalex_query_terms") and (
-        not enabled_source_ids or "openalex" in enabled_source_ids
+        collect_all_sources or "openalex" in enabled_source_ids
     ):
         supplementary_fetchers.append(
             ("OpenAlex", "openalex", lambda: fetch_openalex(session, since, until, args.source_limit, profile))
@@ -5677,39 +6113,57 @@ def collect_items(
             )
         )
     if profile.get("official_rss_feeds") and (
-        not enabled_source_ids or "official_rss" in enabled_source_ids
+        collect_all_sources or "official_rss" in enabled_source_ids
     ):
-        official_profile = {**profile, "rss_feeds": profile["official_rss_feeds"]}
+        official_profile = {
+            **profile,
+            "rss_feeds": [
+                {**feed_config, "source_id": "official_rss", "source_kind": "official"}
+                for feed_config in profile["official_rss_feeds"]
+            ],
+        }
         supplementary_fetchers.append(
             ("Official RSS", "official_rss", lambda: fetch_rss(session, since, until, args.source_limit, official_profile)[0])
         )
     if profile.get("community_query_terms") and (
-        not enabled_source_ids or "hackernews" in enabled_source_ids
+        collect_all_sources or "hackernews" in enabled_source_ids
     ):
         supplementary_fetchers.append(
             ("Hacker News", "hackernews", lambda: fetch_hackernews(session, since, until, args.source_limit, profile))
         )
     if profile.get("github_repositories") and (
-        not enabled_source_ids or "github_releases" in enabled_source_ids
+        collect_all_sources or "github_releases" in enabled_source_ids
     ):
         supplementary_fetchers.append(
             ("GitHub Releases", "github_releases", lambda: fetch_github_releases(session, since, until, args.source_limit, profile))
         )
+    if "europe_pmc" in enabled_source_ids:
+        supplementary_fetchers.append(
+            ("Europe PMC", "europe_pmc", lambda: fetch_europe_pmc(session, since, until, args.source_limit, profile))
+        )
+    if "biorxiv" in enabled_source_ids:
+        supplementary_fetchers.append(
+            ("bioRxiv", "biorxiv", lambda: fetch_biorxiv(session, since, until, args.source_limit, profile))
+        )
+    if "medrxiv" in enabled_source_ids:
+        supplementary_fetchers.append(
+            ("medRxiv", "medrxiv", lambda: fetch_medrxiv(session, since, until, args.source_limit, profile))
+        )
+    if "clinical_trials" in enabled_source_ids:
+        supplementary_fetchers.append(
+            ("ClinicalTrials.gov", "clinical_trials", lambda: fetch_clinical_trials(session, since, until, args.source_limit, profile))
+        )
 
-    for source_name, _, fetcher in supplementary_fetchers:
+    for source_name, source_id, fetcher in supplementary_fetchers:
         try:
-            items = fetcher()
+            items = apply_source_provenance(fetcher(), source_id)
             LOGGER.info("%s returned %d items", source_name, len(items))
             all_items.extend(items)
-            statuses.append(SourceStatus(name=source_name, success=True, item_count=len(items)))
+            statuses.append(source_status(source_name, True, source_id, item_count=len(items)))
         except Exception as exc:  # noqa: BLE001 - optional sources must not block a daily.
             LOGGER.exception("%s failed and was skipped: %s", source_name, exc)
             statuses.append(
-                SourceStatus(
-                    name=source_name,
-                    success=False,
-                    error=f"{type(exc).__name__}: {exc}",
-                )
+                source_status(source_name, False, source_id, error=f"{type(exc).__name__}: {exc}")
             )
     return all_items, statuses
 
@@ -5920,7 +6374,8 @@ def generate_report(
         LOGGER.warning("No items matched the custom keyword filter; using base-profile results as a fallback.")
         filtered = collected
         profile_filter_fallback = True
-    deduplicated_count = len(dedupe_items(filtered))
+    unique_items = dedupe_items(filtered)
+    deduplicated_count = len(unique_items)
     prepared = prepare_items(
         filtered,
         options.max_items,
@@ -5930,13 +6385,16 @@ def generate_report(
         min_items=options.min_items,
     )
     ensure_item_ids(prepared)
-    unique_items = dedupe_items(filtered)
     selected_item_ids = {id(item) for item in prepared}
     history_excluded_count = sum(
         1
         for item in unique_items
         if item.history_repetition == "exact" and id(item) not in selected_item_ids
     )
+    # ``filtered`` is intentionally the effective list after a documented
+    # base-profile fallback.  That keeps each source's funnel interpretable
+    # even when strict user keywords matched nothing.
+    populate_source_funnel_metrics(source_statuses, filtered, unique_items, prepared)
     LOGGER.info("Prepared %d history-aware deduplicated items", len(prepared))
 
     if not prepared:

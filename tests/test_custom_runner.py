@@ -75,7 +75,19 @@ class CustomRunnerTests(unittest.TestCase):
         return main.ReportGenerationResult(
             output_path=output_path,
             selected_items=[item],
-            source_statuses=[main.SourceStatus("arXiv", True, 1)],
+            source_statuses=[
+                main.SourceStatus(
+                    "arXiv",
+                    True,
+                    1,
+                    source_id="arxiv",
+                    source_layer="academic_research",
+                    credibility=3,
+                    matched_count=1,
+                    deduplicated_count=1,
+                    selected_count=1,
+                )
+            ],
             report_payload={"ai_generated": True},
             collected_count=1,
             matched_count=1,
@@ -166,7 +178,23 @@ class CustomRunnerTests(unittest.TestCase):
         self.assertEqual(metrics["deduplicated_count"], 1)
         self.assertEqual(metrics["history_excluded_count"], 0)
         self.assertEqual(metrics["selected_count"], 1)
-        self.assertEqual(metrics["sources"], [{"name": "arXiv", "success": True, "item_count": 1, "error": ""}])
+        self.assertEqual(
+            metrics["sources"],
+            [
+                {
+                    "name": "arXiv",
+                    "source_id": "arxiv",
+                    "source_layer": "academic_research",
+                    "credibility": 3,
+                    "success": True,
+                    "item_count": 1,
+                    "matched_count": 1,
+                    "deduplicated_count": 1,
+                    "selected_count": 1,
+                    "error": "",
+                }
+            ],
+        )
 
     def test_preview_becomes_retryable_when_pdf_conversion_fails(self) -> None:
         """A preview is not ready until its downloadable PDF has been created."""
@@ -488,7 +516,23 @@ class CustomRunnerTests(unittest.TestCase):
         self.assertEqual(delivery.attempt_count, 3)
         metrics = self.repository.get_delivery_task_metrics(delivery.id)
         self.assertEqual(metrics["collected_count"], 0)
-        self.assertEqual(metrics["sources"], [{"name": "arXiv", "success": False, "item_count": 0, "error": "timeout"}])
+        self.assertEqual(
+            metrics["sources"],
+            [
+                {
+                    "name": "arXiv",
+                    "source_id": "arxiv",
+                    "source_layer": "academic_research",
+                    "credibility": 3,
+                    "success": False,
+                    "item_count": 0,
+                    "matched_count": 0,
+                    "deduplicated_count": 0,
+                    "selected_count": 0,
+                    "error": "timeout",
+                }
+            ],
+        )
 
     def test_expired_automatic_claim_waits_until_the_next_scan_before_retrying(self) -> None:
         due = self.repository.make_due_schedule(

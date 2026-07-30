@@ -21,6 +21,7 @@ def valid_response() -> dict[str, object]:
         "include_keywords": ["solid electrolyte", "SEI"],
         "exclude_keywords": ["editorial"],
         "source_ids": ["arxiv", "pubmed", "crossref"],
+        "source_layer_ids": ["academic_research"],
         "journal_ids": ["1755-4330"],
         "content_preferences": ["mechanism", "methodology"],
         "max_items": 15,
@@ -46,13 +47,19 @@ def shared_social_source_response() -> dict[str, object]:
     return response
 
 
+def restricted_source_response() -> dict[str, object]:
+    response = valid_response()
+    response["source_ids"] = ["openalex"]
+    return response
+
+
 def computer_science_response() -> dict[str, object]:
     response = valid_response()
     response.update(
         {
             "base_profile": "computer_science",
             "include_keywords": ["data cleaning", "AI agent"],
-            "source_ids": ["arxiv", "openalex", "hackernews", "github_releases"],
+            "source_ids": ["arxiv", "ccf_conferences"],
             "journal_ids": ["0360-0300"],
             "rationale": "描述同时关注数据质量与 AI 智能体，因此选择计算机科学及其公开信号源。",
         }
@@ -87,20 +94,28 @@ class PersonalizationRecommenderTests(unittest.TestCase):
             with self.assertRaisesRegex(RecommendationError, "journal_ids"):
                 recommend_profile(valid_request(), request_json=lambda *_: invalid_journal_response())
 
-    def test_recommender_allows_a_shared_source_outside_the_base_profile_catalogue(self) -> None:
+    def test_recommender_rejects_a_community_signal_from_automatic_recommendations(self) -> None:
         config = main.LLMConfig("deepseek", "deepseek-v4-flash", "", "DEEPSEEK_API_KEY")
 
         with patch.object(main, "resolve_llm_config", return_value=config):
-            try:
-                recommendation = recommend_profile(
-                    valid_request(), request_json=lambda *_: shared_social_source_response()
-                )
-            except RecommendationError:
-                recommendation = None
+            with self.assertRaisesRegex(RecommendationError, "source_ids"):
+                recommend_profile(valid_request(), request_json=lambda *_: shared_social_source_response())
 
-        self.assertIsNotNone(recommendation)
-        assert recommendation is not None
-        self.assertEqual(recommendation.profile.source_ids, ("hackernews",))
+    def test_recommender_rejects_an_authorised_or_non_default_catalogue_source(self) -> None:
+        config = main.LLMConfig("deepseek", "deepseek-v4-flash", "", "DEEPSEEK_API_KEY")
+
+        with patch.object(main, "resolve_llm_config", return_value=config):
+            with self.assertRaisesRegex(RecommendationError, "source_ids"):
+                recommend_profile(valid_request(), request_json=lambda *_: restricted_source_response())
+
+    def test_recommender_rejects_a_community_layer_from_automatic_recommendations(self) -> None:
+        config = main.LLMConfig("deepseek", "deepseek-v4-flash", "", "DEEPSEEK_API_KEY")
+        response = valid_response()
+        response["source_layer_ids"] = ["community_signal"]
+
+        with patch.object(main, "resolve_llm_config", return_value=config):
+            with self.assertRaisesRegex(RecommendationError, "source_layer_ids"):
+                recommend_profile(valid_request(), request_json=lambda *_: response)
 
     def test_recommender_uses_profile_specific_source_catalogue_for_a_free_text_description(self) -> None:
         config = main.LLMConfig("deepseek", "deepseek-v4-flash", "", "DEEPSEEK_API_KEY")
@@ -121,14 +136,25 @@ class PersonalizationRecommenderTests(unittest.TestCase):
         self.assertEqual(recommendation.profile.base_profile, "computer_science")
         self.assertEqual(
             recommendation.profile.source_ids,
-            ("arxiv", "openalex", "hackernews", "github_releases", "ccf_conferences"),
+            ("arxiv", "ccf_conferences"),
         )
+        self.assertEqual(recommendation.profile.source_layer_ids, ("academic_research",))
         self.assertEqual(recommendation.profile.ccf_conference_tiers, ("A", "B"))
         source_catalogue = captured_prompt["supported_source_ids_by_profile"]
         self.assertEqual(
             source_catalogue["computer_science"],
-            list(main.available_source_ids("computer_science")),
+            ["arxiv", "crossref", "rss", "ccf_conferences", "official_rss"],
         )
+
+    def test_recommender_accepts_a_legacy_response_without_source_layer_ids(self) -> None:
+        config = main.LLMConfig("deepseek", "deepseek-v4-flash", "", "DEEPSEEK_API_KEY")
+        response = valid_response()
+        response.pop("source_layer_ids")
+
+        with patch.object(main, "resolve_llm_config", return_value=config):
+            recommendation = recommend_profile(valid_request(), request_json=lambda *_: response)
+
+        self.assertEqual(recommendation.profile.source_layer_ids, ())
 
     def test_recommender_retries_without_json_mode_when_compatible_endpoint_rejects_it(self) -> None:
         config = main.LLMConfig(

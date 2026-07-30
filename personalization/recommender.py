@@ -15,6 +15,7 @@ from personalization.models import (
     ResearchProfileInput,
     ScheduleInput,
 )
+from personalization.source_catalog import TRUSTED_SOURCE_LAYERS, source_definitions_for_profile
 
 
 class RecommendationError(RuntimeError):
@@ -52,6 +53,41 @@ _LIST_RESPONSE_FIELDS = frozenset(
 )
 
 
+def automatic_source_ids(base_profile: str) -> tuple[str, ...]:
+    """Return the safe, already-registered sources an AI may recommend.
+
+    Manual source selection has a wider scope: an operator may explicitly opt
+    into a community signal.  Model recommendations deliberately do not have
+    that authority, and never introduce a key-gated, restricted, directory-only
+    or non-default source into a saved profile.
+    """
+
+    executable_ids = set(main.available_source_ids(base_profile))
+    return tuple(
+        source.id
+        for source in source_definitions_for_profile(base_profile)
+        if source.id in executable_ids
+        and source.collectable
+        and source.default_enabled
+        and source.layer != "community_signal"
+        and source.access_label == "公开可用"
+    )
+
+
+def automatic_source_layers(base_profile: str) -> tuple[str, ...]:
+    """Return the evidence layers represented by safe automatic sources."""
+
+    allowed_ids = set(automatic_source_ids(base_profile))
+    return tuple(
+        layer
+        for layer in TRUSTED_SOURCE_LAYERS
+        if any(
+            source.id in allowed_ids and source.layer == layer
+            for source in source_definitions_for_profile(base_profile)
+        )
+    )
+
+
 def allowed_journal_ids(base_profile: str) -> set[str]:
     """Return the Crossref ISSNs that the selected report profile supports."""
 
@@ -67,13 +103,15 @@ def _prompt(request: RecommendationRequest) -> tuple[str, str]:
     journal_catalogue = {
         profile: sorted(allowed_journal_ids(profile)) for profile in supported_profiles
     }
-    source_catalogue = {
-        profile: list(main.available_source_ids(profile)) for profile in supported_profiles
+    source_catalogue = {profile: list(automatic_source_ids(profile)) for profile in supported_profiles}
+    source_layer_catalogue = {
+        profile: list(automatic_source_layers(profile)) for profile in supported_profiles
     }
     instructions = (
         "你是科研资讯日报的配置推荐助手。请充分分析用户研究方向，但不要输出分析过程、"
         "推理步骤或链式思维。只返回一个严格 JSON object，不要 Markdown、代码块或额外文字。"
-        "推荐必须只使用提供的 profile、source、content preference 和 ISSN。"
+        "推荐必须只使用提供的 profile、source、source layer、content preference 和 ISSN。"
+        "社区信号、需要授权或 API Key 的来源、以及尚未接入抓取器的目录来源不能推荐。"
         "research_focus 必须是 8 到 28 个字符的中文研究聚焦短语：概括研究对象或信息主题，"
         "不能逐字复述用户原文，不能包含“偏好”“信息来源”“优先级”“我想”或冒号。"
         "rationale 与 uncertainty 必须是简短中文说明。"
@@ -82,6 +120,7 @@ def _prompt(request: RecommendationRequest) -> tuple[str, str]:
         "research_topic": request.research_topic,
         "supported_profile_ids": supported_profiles,
         "supported_source_ids_by_profile": source_catalogue,
+        "supported_source_layer_ids_by_profile": source_layer_catalogue,
         "supported_content_preferences": ["review", "mechanism", "methodology", "experiment"],
         "allowed_journal_issns_by_profile": journal_catalogue,
         "response_schema": {
@@ -90,6 +129,7 @@ def _prompt(request: RecommendationRequest) -> tuple[str, str]:
             "include_keywords": ["strings"],
             "exclude_keywords": ["strings"],
             "source_ids": ["source IDs allowed for base_profile"],
+            "source_layer_ids": ["non-community source layers allowed for base_profile"],
             "journal_ids": ["ISSNs allowed for base_profile"],
             "content_preferences": ["supported content preferences"],
             "max_items": "integer from 1 to 50",
@@ -115,6 +155,12 @@ def _require_response_shape(response: dict[str, object]) -> None:
         value = response[field]
         if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
             raise RecommendationError(f"malformed model output: {field} must be a list of strings")
+    if "source_layer_ids" in response:
+        source_layers = response["source_layer_ids"]
+        if not isinstance(source_layers, list) or not all(
+            isinstance(item, str) for item in source_layers
+        ):
+            raise RecommendationError("malformed model output: source_layer_ids must be a list of strings")
     if isinstance(response["max_items"], bool) or not isinstance(response["max_items"], int):
         raise RecommendationError("malformed model output: max_items must be an integer")
     for field in (
@@ -156,10 +202,17 @@ def _build_recommendation(
 
     source_ids = response["source_ids"]
     assert isinstance(source_ids, list)
-    if invalid_sources := set(source_ids) - set(main.available_source_ids(base_profile)):
+    if invalid_sources := set(source_ids) - set(automatic_source_ids(base_profile)):
         raise RecommendationError(
-            f"source_ids contain unsupported values for {base_profile}: "
+            f"source_ids contain unsupported automatic values for {base_profile}: "
             f"{', '.join(sorted(invalid_sources))}"
+        )
+    source_layer_ids = response.get("source_layer_ids", [])
+    assert isinstance(source_layer_ids, list)
+    if invalid_layers := set(source_layer_ids) - set(automatic_source_layers(base_profile)):
+        raise RecommendationError(
+            f"source_layer_ids contain unsupported automatic values for {base_profile}: "
+            f"{', '.join(sorted(invalid_layers))}"
         )
     resolved_source_ids = list(source_ids)
     if (
@@ -186,6 +239,7 @@ def _build_recommendation(
             include_keywords=response["include_keywords"],
             exclude_keywords=response["exclude_keywords"],
             source_ids=resolved_source_ids,
+            source_layer_ids=source_layer_ids,
             journal_ids=journal_ids,
             content_preferences=response["content_preferences"],
             max_items=response["max_items"],

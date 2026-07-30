@@ -17,7 +17,8 @@ def _response(focus: str) -> dict[str, object]:
         "research_focus": focus,
         "include_keywords": ["macroeconomics", "financial markets"],
         "exclude_keywords": ["sports"],
-        "source_ids": ["openalex", "hackernews"],
+        "source_ids": ["arxiv"],
+        "source_layer_ids": ["academic_research"],
         "journal_ids": [],
         "content_preferences": ["methodology"],
         "max_items": 12,
@@ -84,6 +85,7 @@ class ProfileNormalizationTests(unittest.TestCase):
         self.assertEqual(first_current.input.research_topic, "宏观经济、金融市场与国际贸易")
         self.assertEqual(second_current.input.research_topic, "经济增长、政策与产业动态")
         self.assertEqual(len(self.repository.list_profile_versions(first)), 2)
+        self.assertEqual(first_current.input.source_layer_ids, ("academic_research",))
         self.assertEqual(after.frequency, before.frequency)
         self.assertEqual(after.weekday, before.weekday)
         self.assertEqual(after.timezone, before.timezone)
@@ -108,6 +110,22 @@ class ProfileNormalizationTests(unittest.TestCase):
         self.assertEqual(summary.failed, 1)
         self.assertEqual(self.repository.get_current_profile(successful).version, 2)
         self.assertEqual(self.repository.get_current_profile(failed).version, 1)
+
+    def test_normalizing_a_legacy_model_response_without_layers_creates_one_compatible_version(self) -> None:
+        user_id = self._user("Alice", "宏观经济与金融市场")
+
+        def recommender(request: RecommendationRequest):
+            response = _response("宏观经济与金融市场研究")
+            response.pop("source_layer_ids")
+            with patch.object(main, "resolve_llm_config", return_value=self.config):
+                return recommend_profile(request, request_json=lambda *_: response)
+
+        summary = normalize_existing_profiles(self.repository, recommender=recommender)
+
+        current = self.repository.get_current_profile(user_id)
+        self.assertEqual(summary.as_dict(), {"total": 1, "normalized": 1, "failed": 0})
+        self.assertEqual(current.version, 2)
+        self.assertEqual(current.input.source_layer_ids, ())
 
 
 if __name__ == "__main__":

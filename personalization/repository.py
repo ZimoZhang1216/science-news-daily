@@ -251,6 +251,7 @@ class PersonalizationRepository:
         for column_name, definition in (
             ("lookback_days", "INTEGER NOT NULL DEFAULT 3"),
             ("ccf_conference_tiers_json", "TEXT NOT NULL DEFAULT '[\"A\", \"B\"]'"),
+            ("source_layer_ids_json", "TEXT NOT NULL DEFAULT '[]'"),
         ):
             self._add_column_if_missing("research_profiles", column_name, definition)
         for column_name, definition in (
@@ -261,6 +262,15 @@ class PersonalizationRepository:
             ("metrics_recorded_at", "TEXT NOT NULL DEFAULT ''"),
         ):
             self._add_column_if_missing("report_runs", column_name, definition)
+        for column_name, definition in (
+            ("source_id", "TEXT NOT NULL DEFAULT ''"),
+            ("source_layer", "TEXT NOT NULL DEFAULT 'academic_research'"),
+            ("credibility", "INTEGER NOT NULL DEFAULT 0"),
+            ("matched_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("deduplicated_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("selected_count", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            self._add_column_if_missing("source_metrics", column_name, definition)
         for column_name, definition in (
             ("last_run_at", "TEXT NOT NULL DEFAULT ''"),
         ):
@@ -310,7 +320,15 @@ class PersonalizationRepository:
         )
         self.connection.execute(
             "INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+            ("profile_source_layers_v1", _timestamp()),
+        )
+        self.connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES (?, ?)",
             ("delivery_task_metrics_v1", _timestamp()),
+        )
+        self.connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+            ("source_funnel_metrics_v1", _timestamp()),
         )
 
     def close(self) -> None:
@@ -418,6 +436,12 @@ class PersonalizationRepository:
             # A local read replica can temporarily lag this additive schema
             # migration; preserve the default tier scope until it catches up.
             ccf_conference_tiers = ("A", "B")
+        try:
+            source_layer_ids = _load_list(self._value(row, "source_layer_ids_json"))
+        except (AttributeError, KeyError, TypeError, ValueError):
+            # A local read replica can temporarily lag this additive schema
+            # migration; preserve the legacy no-layer-selection behavior.
+            source_layer_ids = ()
         input_profile = ResearchProfileInput.from_form(
             base_profile=self._value(row, "base_profile"),
             research_topic=self._value(row, "research_topic"),
@@ -432,6 +456,7 @@ class PersonalizationRepository:
             llm_provider=self._value(row, "llm_provider"),
             llm_model=self._value(row, "llm_model"),
             output_formats=_load_list(self._value(row, "output_formats_json")),
+            source_layer_ids=source_layer_ids,
         )
         return StoredResearchProfile(
             id=self._value(row, "id"),
@@ -447,11 +472,11 @@ class PersonalizationRepository:
             """
             INSERT INTO research_profiles (
                 id, user_id, version, is_current, base_profile, research_topic,
-                include_keywords_json, exclude_keywords_json, source_ids_json,
+                include_keywords_json, exclude_keywords_json, source_ids_json, source_layer_ids_json,
                 journal_ids_json, content_preferences_json, max_items, lookback_days,
                 ccf_conference_tiers_json,
                 llm_provider, llm_model, output_formats_json, created_at
-            ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 profile_id,
@@ -462,6 +487,7 @@ class PersonalizationRepository:
                 json.dumps(profile.include_keywords),
                 json.dumps(profile.exclude_keywords),
                 json.dumps(profile.source_ids),
+                json.dumps(profile.source_layer_ids),
                 json.dumps(profile.journal_ids),
                 json.dumps(profile.content_preferences),
                 profile.max_items,
@@ -777,7 +803,8 @@ class PersonalizationRepository:
         run_id = self._value(row, "id")
         source_rows = self._fetchall(
             """
-            SELECT source_name, success, item_count, error_summary
+            SELECT source_name, source_id, source_layer, credibility, success, item_count,
+                   matched_count, deduplicated_count, selected_count, error_summary
             FROM source_metrics WHERE report_run_id = ? ORDER BY source_name ASC
             """,
             (run_id,),
@@ -793,8 +820,14 @@ class PersonalizationRepository:
             "sources": [
                 {
                     "name": self._value(source, "source_name"),
+                    "source_id": self._value(source, "source_id"),
+                    "source_layer": self._value(source, "source_layer"),
+                    "credibility": int(self._value(source, "credibility") or 0),
                     "success": bool(self._value(source, "success")),
                     "item_count": int(self._value(source, "item_count") or 0),
+                    "matched_count": int(self._value(source, "matched_count") or 0),
+                    "deduplicated_count": int(self._value(source, "deduplicated_count") or 0),
+                    "selected_count": int(self._value(source, "selected_count") or 0),
                     "error": self._value(source, "error_summary"),
                 }
                 for source in source_rows
@@ -826,7 +859,9 @@ class PersonalizationRepository:
     def list_source_metrics(self, limit: int = 100) -> list[dict[str, Any]]:
         rows = self._fetchall(
             """
-            SELECT source_name, success, item_count, error_summary, duration_ms, created_at
+            SELECT source_name, source_id, source_layer, credibility, success, item_count,
+                   matched_count, deduplicated_count, selected_count, error_summary,
+                   duration_ms, created_at
             FROM source_metrics ORDER BY created_at DESC LIMIT ?
             """,
             (limit,),
@@ -834,8 +869,14 @@ class PersonalizationRepository:
         return [
             {
                 "source_name": self._value(row, "source_name"),
+                "source_id": self._value(row, "source_id"),
+                "source_layer": self._value(row, "source_layer"),
+                "credibility": int(self._value(row, "credibility") or 0),
                 "success": bool(self._value(row, "success")),
                 "item_count": int(self._value(row, "item_count")),
+                "matched_count": int(self._value(row, "matched_count") or 0),
+                "deduplicated_count": int(self._value(row, "deduplicated_count") or 0),
+                "selected_count": int(self._value(row, "selected_count") or 0),
                 "error_summary": self._value(row, "error_summary"),
                 "duration_ms": int(self._value(row, "duration_ms")),
                 "created_at": self._value(row, "created_at"),
@@ -1708,18 +1749,27 @@ class PersonalizationRepository:
     def _replace_source_statuses(self, run_id: str, statuses: list[main.SourceStatus]) -> None:
         self._execute("DELETE FROM source_metrics WHERE report_run_id = ?", (run_id,))
         for status in statuses:
+            status = main.hydrate_source_status_provenance(status)
             self._execute(
                 """
                 INSERT INTO source_metrics (
-                    id, report_run_id, source_name, success, item_count, error_summary, duration_ms, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+                    id, report_run_id, source_name, source_id, source_layer, credibility,
+                    success, item_count, matched_count, deduplicated_count, selected_count,
+                    error_summary, duration_ms, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
                 """,
                 (
                     _new_id("src"),
                     run_id,
                     status.name,
+                    status.source_id,
+                    status.source_layer,
+                    max(0, status.credibility),
                     int(status.success),
-                    status.item_count,
+                    max(0, status.item_count),
+                    max(0, status.matched_count),
+                    max(0, status.deduplicated_count),
+                    max(0, status.selected_count),
                     status.error[:500],
                     _timestamp(),
                 ),

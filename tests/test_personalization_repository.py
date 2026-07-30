@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import sqlite3
 import sys
@@ -36,6 +37,7 @@ class PersonalizationRepositoryTests(unittest.TestCase):
         *,
         lookback_days: int = 3,
         ccf_conference_tiers: tuple[str, ...] = ("A", "B"),
+        source_layer_ids: tuple[str, ...] = (),
     ) -> ResearchProfileInput:
         return ResearchProfileInput.from_form(
             base_profile="chemistry",
@@ -51,6 +53,7 @@ class PersonalizationRepositoryTests(unittest.TestCase):
             output_formats=("docx", "pdf"),
             lookback_days=lookback_days,
             ccf_conference_tiers=ccf_conference_tiers,
+            source_layer_ids=source_layer_ids,
         )
 
     def daily_schedule(self) -> ScheduleInput:
@@ -74,11 +77,18 @@ class PersonalizationRepositoryTests(unittest.TestCase):
 
     def test_profile_saves_an_immutable_new_version(self) -> None:
         user_id = self.repository.create_user_with_profile(
-            self.user(), self.profile("battery"), self.daily_schedule()
+            self.user(),
+            self.profile("battery", source_layer_ids=("academic_research",)),
+            self.daily_schedule(),
         )
 
         version_two = self.repository.save_profile_version(
-            user_id, self.profile("solid electrolyte", lookback_days=60)
+            user_id,
+            self.profile(
+                "solid electrolyte",
+                lookback_days=60,
+                source_layer_ids=("official_data_policy",),
+            ),
         )
         current = self.repository.get_current_profile(user_id)
         versions = self.repository.list_profile_versions(user_id)
@@ -90,6 +100,8 @@ class PersonalizationRepositoryTests(unittest.TestCase):
         self.assertEqual(versions[0].input.lookback_days, 3)
         self.assertEqual(current.input.lookback_days, 60)
         self.assertEqual(current.input.ccf_conference_tiers, ("A", "B"))
+        self.assertEqual(versions[0].input.source_layer_ids, ("academic_research",))
+        self.assertEqual(current.input.source_layer_ids, ("official_data_policy",))
 
     def test_profile_versions_round_trip_the_ccf_tier_scope(self) -> None:
         user_id = self.repository.create_user_with_profile(
@@ -100,17 +112,51 @@ class PersonalizationRepositoryTests(unittest.TestCase):
 
         self.assertEqual(current.input.ccf_conference_tiers, ("A", "B", "C"))
 
+    def test_profile_versions_round_trip_source_layer_ids_as_json(self) -> None:
+        user_id = self.repository.create_user_with_profile(
+            self.user(),
+            self.profile(
+                "battery",
+                source_layer_ids=("academic_research", "official_data_policy"),
+            ),
+            self.daily_schedule(),
+        )
+
+        row = self.repository._fetchone(
+            "SELECT source_layer_ids_json FROM research_profiles WHERE user_id = ? AND is_current = 1",
+            (user_id,),
+        )
+        current = self.repository.get_current_profile(user_id)
+
+        self.assertEqual(
+            json.loads(self.repository._value(row, "source_layer_ids_json")),
+            ["academic_research", "official_data_policy"],
+        )
+        self.assertEqual(
+            current.input.source_layer_ids,
+            ("academic_research", "official_data_policy"),
+        )
+
     def test_initialize_adds_three_day_lookback_default_to_a_legacy_schema(self) -> None:
         legacy_path = Path(self.tempdir.name) / "legacy.db"
         legacy_schema = (Path(__file__).resolve().parents[1] / "personalization/schema.sql").read_text(
             encoding="utf-8"
         ).replace("    lookback_days INTEGER NOT NULL DEFAULT 3,\n", "").replace(
             "    ccf_conference_tiers_json TEXT NOT NULL DEFAULT '[\"A\", \"B\"]',\n", ""
+        ).replace(
+            "    source_layer_ids_json TEXT NOT NULL DEFAULT '[]',\n", ""
         ).replace("    matched_count INTEGER NOT NULL DEFAULT 0,\n", "").replace(
             "    deduplicated_count INTEGER NOT NULL DEFAULT 0,\n", ""
         ).replace("    history_excluded_count INTEGER NOT NULL DEFAULT 0,\n", "").replace(
             "    profile_filter_fallback INTEGER NOT NULL DEFAULT 0,\n", ""
-        ).replace("    metrics_recorded_at TEXT NOT NULL DEFAULT '',\n", "")
+        ).replace("    metrics_recorded_at TEXT NOT NULL DEFAULT '',\n", "").replace(
+            "    source_id TEXT NOT NULL DEFAULT '',\n", ""
+        ).replace("    source_layer TEXT NOT NULL DEFAULT 'academic_research',\n", "").replace(
+            "    credibility INTEGER NOT NULL DEFAULT 0,\n", ""
+        ).replace(
+            "    selected_count INTEGER NOT NULL DEFAULT 0,\n    error_summary TEXT NOT NULL DEFAULT '',\n",
+            "    error_summary TEXT NOT NULL DEFAULT '',\n",
+        )
         legacy_connection = sqlite3.connect(legacy_path)
         legacy_connection.executescript(legacy_schema)
         legacy_connection.close()
@@ -121,6 +167,7 @@ class PersonalizationRepositoryTests(unittest.TestCase):
             columns = legacy_repository._table_columns("research_profiles")
             self.assertIn("lookback_days", columns)
             self.assertIn("ccf_conference_tiers_json", columns)
+            self.assertIn("source_layer_ids_json", columns)
             column = legacy_repository._fetchone(
                 "SELECT dflt_value FROM pragma_table_info('research_profiles') WHERE name = 'lookback_days'"
             )
@@ -132,6 +179,13 @@ class PersonalizationRepositoryTests(unittest.TestCase):
                 str(legacy_repository._value(tier_column, "dflt_value")).strip("'\""),
                 '["A", "B"]',
             )
+            layer_column = legacy_repository._fetchone(
+                "SELECT dflt_value FROM pragma_table_info('research_profiles') WHERE name = 'source_layer_ids_json'"
+            )
+            self.assertEqual(
+                str(legacy_repository._value(layer_column, "dflt_value")).strip("'\""),
+                "[]",
+            )
             report_run_columns = legacy_repository._table_columns("report_runs")
             self.assertTrue(
                 {
@@ -142,6 +196,17 @@ class PersonalizationRepositoryTests(unittest.TestCase):
                     "metrics_recorded_at",
                 }.issubset(report_run_columns)
             )
+            source_metric_columns = legacy_repository._table_columns("source_metrics")
+            self.assertTrue(
+                {
+                    "source_id",
+                    "source_layer",
+                    "credibility",
+                    "matched_count",
+                    "deduplicated_count",
+                    "selected_count",
+                }.issubset(source_metric_columns)
+            )
             user_id = legacy_repository.create_user_with_profile(
                 self.user(), self.profile("battery"), self.daily_schedule()
             )
@@ -151,6 +216,122 @@ class PersonalizationRepositoryTests(unittest.TestCase):
             self.assertEqual(metrics["sources"], [])
         finally:
             legacy_repository.close()
+
+    def test_initialize_reads_a_real_pre_migration_profile_with_no_source_layers(self) -> None:
+        legacy_path = Path(self.tempdir.name) / "pre-migration-profile.db"
+        legacy_schema = (Path(__file__).resolve().parents[1] / "personalization/schema.sql").read_text(
+            encoding="utf-8"
+        ).replace("    lookback_days INTEGER NOT NULL DEFAULT 3,\n", "").replace(
+            "    ccf_conference_tiers_json TEXT NOT NULL DEFAULT '[\"A\", \"B\"]',\n", ""
+        ).replace("    source_layer_ids_json TEXT NOT NULL DEFAULT '[]',\n", "").replace(
+            "    source_id TEXT NOT NULL DEFAULT '',\n", ""
+        ).replace("    source_layer TEXT NOT NULL DEFAULT 'academic_research',\n", "").replace(
+            "    credibility INTEGER NOT NULL DEFAULT 0,\n", ""
+        ).replace("    matched_count INTEGER NOT NULL DEFAULT 0,\n", "").replace(
+            "    deduplicated_count INTEGER NOT NULL DEFAULT 0,\n", ""
+        ).replace(
+            "    selected_count INTEGER NOT NULL DEFAULT 0,\n    error_summary TEXT NOT NULL DEFAULT '',\n",
+            "    error_summary TEXT NOT NULL DEFAULT '',\n",
+        )
+        connection = sqlite3.connect(legacy_path)
+        try:
+            connection.executescript(legacy_schema)
+            connection.execute(
+                "INSERT INTO users (id, display_name, email, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                ("usr_legacy", "Legacy", "legacy@example.test", "active", "2026-07-30T00:00:00+00:00", "2026-07-30T00:00:00+00:00"),
+            )
+            connection.execute(
+                """
+                INSERT INTO research_profiles (
+                    id, user_id, version, is_current, base_profile, research_topic,
+                    include_keywords_json, exclude_keywords_json, source_ids_json,
+                    journal_ids_json, content_preferences_json, max_items,
+                    llm_provider, llm_model, output_formats_json, created_at
+                ) VALUES (?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "prof_legacy", "usr_legacy", "chemistry", "Legacy battery report",
+                    "[]", "[]", '["arxiv"]', "[]", "[]", 12,
+                    "openai", "gpt-5.4-mini", '["docx"]', "2026-07-30T00:00:00+00:00",
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        legacy_repository = PersonalizationRepository.for_sqlite(legacy_path)
+        try:
+            legacy_repository.initialize()
+            profile = legacy_repository.get_current_profile("usr_legacy")
+        finally:
+            legacy_repository.close()
+
+        self.assertEqual(profile.input.source_ids, ("arxiv",))
+        self.assertEqual(profile.input.source_layer_ids, ())
+
+    def test_libsql_compatible_migration_adds_source_layers_to_a_legacy_database(self) -> None:
+        legacy_path = Path(self.tempdir.name) / "libsql-compatible-legacy.db"
+        legacy_schema = (Path(__file__).resolve().parents[1] / "personalization/schema.sql").read_text(
+            encoding="utf-8"
+        ).replace("    lookback_days INTEGER NOT NULL DEFAULT 3,\n", "").replace(
+            "    ccf_conference_tiers_json TEXT NOT NULL DEFAULT '[\"A\", \"B\"]',\n", ""
+        ).replace("    source_layer_ids_json TEXT NOT NULL DEFAULT '[]',\n", "").replace(
+            "    source_id TEXT NOT NULL DEFAULT '',\n", ""
+        ).replace("    source_layer TEXT NOT NULL DEFAULT 'academic_research',\n", "").replace(
+            "    credibility INTEGER NOT NULL DEFAULT 0,\n", ""
+        ).replace("    matched_count INTEGER NOT NULL DEFAULT 0,\n", "").replace(
+            "    deduplicated_count INTEGER NOT NULL DEFAULT 0,\n", ""
+        ).replace(
+            "    selected_count INTEGER NOT NULL DEFAULT 0,\n    error_summary TEXT NOT NULL DEFAULT '',\n",
+            "    error_summary TEXT NOT NULL DEFAULT '',\n",
+        )
+        connection = sqlite3.connect(legacy_path)
+        connection.executescript(legacy_schema)
+        connection.close()
+
+        class LibsqlCompatibleConnection:
+            def __init__(self, path: Path) -> None:
+                self._connection = sqlite3.connect(path)
+
+            def execute(self, statement: str, parameters: tuple[object, ...] = ()) -> sqlite3.Cursor:
+                return self._connection.execute(statement, parameters)
+
+            def commit(self) -> None:
+                self._connection.commit()
+
+            def rollback(self) -> None:
+                self._connection.rollback()
+
+            def close(self) -> None:
+                self._connection.close()
+
+        repository = PersonalizationRepository(LibsqlCompatibleConnection(legacy_path))
+        try:
+            repository.initialize()
+            columns = repository._table_columns("research_profiles")
+            source_columns = repository._table_columns("source_metrics")
+            migration = repository._fetchone(
+                "SELECT name FROM schema_migrations WHERE name = ?", ("profile_source_layers_v1",)
+            )
+            source_migration = repository._fetchone(
+                "SELECT name FROM schema_migrations WHERE name = ?", ("source_funnel_metrics_v1",)
+            )
+        finally:
+            repository.close()
+
+        self.assertIn("source_layer_ids_json", columns)
+        self.assertEqual(repository._value(migration, "name"), "profile_source_layers_v1")
+        self.assertTrue(
+            {
+                "source_id",
+                "source_layer",
+                "credibility",
+                "matched_count",
+                "deduplicated_count",
+                "selected_count",
+            }.issubset(source_columns)
+        )
+        self.assertEqual(repository._value(source_migration, "name"), "source_funnel_metrics_v1")
 
     def test_stale_local_replica_profile_defaults_missing_lookback_column_to_three_days(self) -> None:
         user_id = self.repository.create_user_with_profile(
@@ -163,11 +344,13 @@ class PersonalizationRepositoryTests(unittest.TestCase):
         )
         row.pop("lookback_days")
         row.pop("ccf_conference_tiers_json")
+        row.pop("source_layer_ids_json")
 
         profile = self.repository._profile_from_row(row)
 
         self.assertEqual(profile.input.lookback_days, 3)
         self.assertEqual(profile.input.ccf_conference_tiers, ("A", "B"))
+        self.assertEqual(profile.input.source_layer_ids, ())
 
     def test_duplicate_automatic_claim_for_same_user_local_date_returns_existing_delivery(self) -> None:
         user_id = self.repository.create_user_with_profile(
@@ -333,6 +516,10 @@ class PersonalizationRepositoryTests(unittest.TestCase):
         )
         first = self.repository.create_manual_preview(first_user, date(2026, 7, 28))
         second = self.repository.create_manual_preview(second_user, date(2026, 7, 28))
+        first_source = main.source_status("arXiv", True, "arxiv", item_count=7)
+        first_source.matched_count = 5
+        first_source.deduplicated_count = 4
+        first_source.selected_count = 3
         self.repository.record_generation_metrics(
             first.report_run_id,
             collected_count=7,
@@ -342,7 +529,7 @@ class PersonalizationRepositoryTests(unittest.TestCase):
             selected_count=3,
             ai_generated=True,
             profile_filter_fallback=False,
-            source_statuses=[main.SourceStatus("arXiv", True, 7)],
+            source_statuses=[first_source],
         )
         self.repository.record_generation_metrics(
             second.report_run_id,
@@ -363,7 +550,23 @@ class PersonalizationRepositoryTests(unittest.TestCase):
         self.assertEqual(metrics["deduplicated_count"], 4)
         self.assertEqual(metrics["history_excluded_count"], 1)
         self.assertEqual(metrics["selected_count"], 3)
-        self.assertEqual(metrics["sources"], [{"name": "arXiv", "success": True, "item_count": 7, "error": ""}])
+        self.assertEqual(
+            metrics["sources"],
+            [
+                {
+                    "name": "arXiv",
+                    "source_id": "arxiv",
+                    "source_layer": "academic_research",
+                    "credibility": 3,
+                    "success": True,
+                    "item_count": 7,
+                    "matched_count": 5,
+                    "deduplicated_count": 4,
+                    "selected_count": 3,
+                    "error": "",
+                }
+            ],
+        )
 
     def test_operations_snapshot_and_pause_change_user_state(self) -> None:
         user_id = self.repository.create_user_with_profile(

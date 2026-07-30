@@ -9,6 +9,7 @@ from typing import Any
 import main
 
 from personalization.models import ResearchProfileInput
+from personalization.source_catalog import default_source_ids_for_layers
 
 
 _PREFERENCE_TERMS: dict[str, tuple[str, ...]] = {
@@ -42,7 +43,17 @@ def compose_effective_profile(profile: ResearchProfileInput, user_id: str) -> di
     effective["relevance_terms"] = list(
         dict.fromkeys([*effective["relevance_terms"], *profile.include_keywords])
     )
-    effective["enabled_source_ids"] = profile.source_ids
+    if profile.source_ids:
+        effective["enabled_source_ids"] = profile.source_ids
+    else:
+        executable_source_ids = set(main.available_source_ids(profile.base_profile))
+        effective["enabled_source_ids"] = tuple(
+            source_id
+            for source_id in default_source_ids_for_layers(profile.base_profile, profile.source_layer_ids)
+            if source_id in executable_source_ids
+        )
+    effective["source_layer_ids"] = profile.source_layer_ids
+    effective["source_selection_explicit"] = bool(profile.source_layer_ids or profile.source_ids)
     effective["ccf_conference_tiers"] = profile.ccf_conference_tiers
     # Research topics can be long free-form instructions. External source
     # queries use the structured keywords and bounded base-discipline terms
