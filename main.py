@@ -4369,7 +4369,7 @@ def generate_ai_summaries(
         f"你是{profile['ai_role']}。请基于输入论文/资讯元数据生成中文日报素材。"
         "要求准确、克制，不夸大结论；如果摘要不足，要说明信息有限。"
         f"标题风格要求：{profile.get('title_style', DEFAULT_TITLE_STYLE_GUIDE)}"
-        "只输出 JSON，不要输出 Markdown。"
+        "只输出 JSON，不要输出 Markdown。Return a valid JSON object."
     )
     (
         title_schema_text,
