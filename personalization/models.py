@@ -21,7 +21,7 @@ _TIME_PATTERN = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 _SOURCE_IDS = main.SUPPORTED_SOURCE_IDS
 _CONTENT_PREFERENCES = frozenset({"review", "mechanism", "methodology", "experiment"})
 _OUTPUT_FORMATS = frozenset({"docx", "pdf"})
-_LLM_PROVIDERS = frozenset({"openai", "deepseek"})
+_LLM_PROVIDERS = frozenset({"openai", "deepseek", "openrouter"})
 _CCF_TIER_ORDER = {"A": 0, "B": 1, "C": 2}
 
 

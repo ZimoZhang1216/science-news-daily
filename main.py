@@ -104,7 +104,7 @@ HISTORY_QUALITY_MARGIN = 22.0
 DEFAULT_OPENAI_MODEL = "gpt-5.4-mini"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
 DEFAULT_REPORT_EMAIL_TO = "2510248@mail.nankai.edu.cn"
-SUPPORTED_LLM_PROVIDERS = {"openai", "deepseek"}
+SUPPORTED_LLM_PROVIDERS = {"openai", "deepseek", "openrouter"}
 BANNED_TITLE_WORDS = {"震惊", "颠覆", "炸裂", "封神", "逆天", "重磅", "神作", "史诗级"}
 
 
@@ -4212,7 +4212,7 @@ def resolve_llm_config(
     provider = provider_override.strip().lower() or os.getenv("LLM_PROVIDER", "openai").strip().lower() or "openai"
     if provider not in SUPPORTED_LLM_PROVIDERS:
         LOGGER.warning(
-            "Unsupported LLM_PROVIDER=%s; supported values are openai or deepseek. "
+            "Unsupported LLM_PROVIDER=%s; supported values are openai, deepseek, or openrouter. "
             "Using fallback summaries.",
             provider,
         )
@@ -4225,6 +4225,15 @@ def resolve_llm_config(
             api_key=os.getenv("DEEPSEEK_API_KEY", ""),
             api_key_env="DEEPSEEK_API_KEY",
             base_url="https://api.deepseek.com",
+        )
+
+    if provider == "openrouter":
+        return LLMConfig(
+            provider="openrouter",
+            model=model_override or os.getenv("OPENROUTER_MODEL") or "deepseek/deepseek-chat",
+            api_key=os.getenv("OPENROUTER_API_KEY", ""),
+            api_key_env="OPENROUTER_API_KEY",
+            base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
         )
 
     return LLMConfig(
