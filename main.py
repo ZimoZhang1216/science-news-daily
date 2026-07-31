@@ -25,6 +25,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from personalization.ccf_catalogue import CcfConference, conferences_for_tiers
 from personalization.source_catalog import SOURCE_DEFINITIONS, source_definitions_for_profile
+from personalization.rss_registry import RSS_FEED_REGISTRY, rss_feeds_for_source
 
 MISSING_DEPENDENCIES: list[str] = []
 
@@ -759,26 +760,31 @@ RSS_FEEDS: list[dict[str, Any]] = [
         "source": "C&EN (ACS)",
         "url": "https://feeds.feedburner.com/cen_latestnews",
         "broad": False,
+        "source_id": "acs",
     },
     {
         "source": "Nature Chemistry",
         "url": "https://www.nature.com/nchem.rss",
         "broad": False,
+        "source_id": "nature_chemistry",
     },
     {
         "source": "Science",
         "url": "https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=science",
         "broad": True,
+        "source_id": "rss",
     },
     {
         "source": "Chemistry World News (RSC)",
         "url": "https://www.chemistryworld.com/409.rss",
         "broad": False,
+        "source_id": "chemistry_world",
     },
     {
         "source": "Chemistry World Research (RSC)",
         "url": "https://www.chemistryworld.com/410.rss",
         "broad": False,
+        "source_id": "chemistry_world",
     },
 ]
 
@@ -990,6 +996,7 @@ BIOLOGY_RSS_FEEDS: list[dict[str, Any]] = [
         "source": "Science",
         "url": "https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=science",
         "broad": True,
+        "source_id": "rss",
     },
     {"source": "Cell", "url": "https://www.cell.com/cell/current.rss", "broad": False},
 ]
@@ -1255,7 +1262,7 @@ BUSINESS_MANAGEMENT_SOURCE_WEIGHTS = {
 
 ACADEMIC_SOURCE_IDS = ("arxiv", "pubmed", "crossref", "rss", "openalex", "ccf_conferences")
 PUBLIC_SOURCE_IDS = ("official_rss", "hackernews", "github_releases")
-PUBLIC_API_SOURCE_IDS = ("europe_pmc", "biorxiv", "medrxiv", "clinical_trials")
+PUBLIC_API_SOURCE_IDS = ("europe_pmc", "biorxiv", "medrxiv", "clinical_trials", "zbmath", "nasa_ads", "openreview", "dblp", "semantic_scholar", "papers_with_code", "open_library", "dpla", "eric", "doaj", "noaa", "copernicus", "national_statistics", "international_statistics", "world_bank", "oecd", "bis", "imf", "fred", "usgs", "usda", "fao", "government_legislation", "acm", "acs", "aip", "aps", "asa", "asme", "cdc", "central_banks", "cepr", "cern", "cgiar", "chemistry_world", "cochrane", "earthdata", "energy_agencies", "energy_standards", "esa", "etsi", "exchanges", "faa", "fiscal_regulators", "ieee", "ietf", "ims", "industrial_automation_associations", "ipcc", "iso_standards_metadata", "itu", "jstor_metadata", "judicial_opinions", "mit_csail_news", "museums_heritage", "nasa", "national_libraries", "national_science_agencies", "nature_chemistry", "nber_working_papers", "nih", "project_euclid", "psycinfo_metadata", "repec", "rsc", "sae", "ssrn", "think_tanks", "transport_associations", "transport_departments", "unep", "unesco", "unicef", "united_nations", "usenix", "who", "wmo", "wto", "wvs", "3gpp")
 SUPPORTED_SOURCE_IDS = frozenset((*ACADEMIC_SOURCE_IDS, *PUBLIC_SOURCE_IDS, *PUBLIC_API_SOURCE_IDS))
 # These sources accept topic terms directly, so a user can opt into them even
 # when their base discipline has no pre-configured journal or feed catalogue.
@@ -1391,10 +1398,10 @@ COMPUTER_SCIENCE_CROSSREF_JOURNALS = [
     {"source": "IEEE Transactions on Knowledge and Data Engineering", "issns": ["1041-4347", "1558-2191"], "broad": False},
 ]
 COMPUTER_SCIENCE_RSS_FEEDS = [
-    {"source": "ACM Computing Surveys", "url": "https://dl.acm.org/action/showFeed?type=etoc&feed=rss&jc=csur", "broad": True},
+    {"source": "ACM Computing Surveys", "url": "https://dl.acm.org/action/showFeed?type=etoc&feed=rss&jc=csur", "broad": True, "source_id": "acm", "source_kind": "academic"},
 ]
 COMPUTER_SCIENCE_OFFICIAL_RSS_FEEDS = [
-    {"source": "GitHub Blog", "url": "https://github.blog/feed/", "broad": True},
+    {"source": "GitHub Blog", "url": "https://github.blog/feed/", "broad": True, "source_id": "official_rss"},
 ]
 COMPUTER_SCIENCE_GITHUB_REPOSITORIES = [
     "huggingface/transformers",
@@ -2394,18 +2401,20 @@ def available_source_ids(profile_key: str | dict[str, Any]) -> tuple[str, ...]:
     profile_key = profile.get("key")
     # A catalogue entry becomes selectable only after this orchestrator owns a
     # concrete public collector for it.  Scope alone must never create a new
-    # network request for a directory-only source.
     catalogue_ids: tuple[str, ...] = ()
     if isinstance(profile_key, str):
+        sources_in_scope = source_definitions_for_profile(profile_key)
         catalogue_ids = tuple(
             source.id
-            for source in source_definitions_for_profile(profile_key)
-            if source.id in PUBLIC_API_SOURCE_IDS
-            and source.collectable
+            for source in sources_in_scope
+            if source.collectable
+            and (
+                source.id in PUBLIC_API_SOURCE_IDS
+                or source.id in RSS_FEED_REGISTRY
+            )
         )
+
     return tuple(dict.fromkeys((*legacy_ids, *catalogue_ids)))
-
-
 def classify_field(title: str, abstract: str, profile: dict[str, Any]) -> str:
     haystack = f"{title} {abstract}".lower()
     scores: dict[str, int] = {}
@@ -6097,6 +6106,36 @@ def collect_items(
                 source_status("RSS", False, "rss", error=f"{type(exc).__name__}: {exc}")
             )
 
+    # Collect catalogue RSS feeds for enabled source IDs that have RSS URLs registered.
+    # Collect catalogue RSS feeds for sources that have URL registrations.
+    # Only run for sources not already covered by existing dedicated collectors.
+    _already_collected = {"arxiv", "pubmed", "crossref", "rss", "openalex", "ccf_conferences", "biorxiv", "medrxiv", "acs", "chemistry_world", "nature_chemistry", "official_rss"}
+    _collectable_profile_ids = {
+        source.id
+        for source in source_definitions_for_profile(profile["key"])
+        if source.collectable and source.id in RSS_FEED_REGISTRY
+    }
+    _catalog_rss_ids = _collectable_profile_ids if collect_all_sources else (
+        _collectable_profile_ids & enabled_source_ids
+    )
+    for source_id in sorted(_catalog_rss_ids - _already_collected):
+        catalog_feeds = rss_feeds_for_source(source_id)
+        if not catalog_feeds:
+            continue
+        feed_profile = {
+            **profile,
+            "rss_feeds": catalog_feeds,
+        }
+        try:
+            cat_items, cat_statuses = fetch_rss(session, since, until, args.source_limit, feed_profile)
+            LOGGER.info("Catalog RSS (%s) returned %d items", source_id, len(cat_items))
+            all_items.extend(apply_source_provenance(cat_items, source_id))
+            statuses.extend(cat_statuses)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.exception("Catalog RSS source %s failed and was skipped: %s", source_id, exc)
+            statuses.append(
+                source_status(f"RSS: {source_id}", False, source_id, error=f"{type(exc).__name__}: {exc}")
+            )
     supplementary_fetchers: list[tuple[str, str, Callable[[], list[NewsItem]]]] = []
     if profile.get("openalex_query_terms") and (
         collect_all_sources or "openalex" in enabled_source_ids

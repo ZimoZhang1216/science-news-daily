@@ -115,6 +115,8 @@ def _prompt(request: RecommendationRequest) -> tuple[str, str]:
         "research_focus 必须是 8 到 28 个字符的中文研究聚焦短语：概括研究对象或信息主题，"
         "不能逐字复述用户原文，不能包含“偏好”“信息来源”“优先级”“我想”或冒号。"
         "rationale 与 uncertainty 必须是简短中文说明。"
+        "source_ids 必须严格从 supported_source_ids_by_profile 中 base_profile 对应列表选择，"
+        "不得使用机构名称、会议名称或任何未列出的值。"
     )
     payload = {
         "research_topic": request.research_topic,
@@ -181,11 +183,11 @@ def _require_response_shape(response: dict[str, object]) -> None:
 def _normalise_research_focus(value: str, original_topic: str) -> str:
     focus = re.sub(r"\s+", " ", value).strip(" ：:；;。")
     if not 4 <= len(focus) <= 40:
-        raise RecommendationError("malformed model output: research_focus must be concise")
+        raise RecommendationError("research_focus must be concise (4-40 chars)")
     if focus.casefold() == original_topic.strip().casefold():
-        raise RecommendationError("malformed model output: research_focus copied the user description")
+        raise RecommendationError("research_focus copied the user description verbatim")
     if any(marker in focus for marker in ("偏好", "信息来源", "优先级", "我想", "：", ":")):
-        raise RecommendationError("malformed model output: research_focus contains configuration text")
+        raise RecommendationError("research_focus contains configuration text")
     return focus
 
 
@@ -202,11 +204,16 @@ def _build_recommendation(
 
     source_ids = response["source_ids"]
     assert isinstance(source_ids, list)
-    if invalid_sources := set(source_ids) - set(automatic_source_ids(base_profile)):
-        raise RecommendationError(
-            f"source_ids contain unsupported automatic values for {base_profile}: "
-            f"{', '.join(sorted(invalid_sources))}"
-        )
+    import logging
+    LOGGER = logging.getLogger(__name__)
+    allowed = set(automatic_source_ids(base_profile))
+    invalid_sources = set(source_ids) - allowed
+    if invalid_sources:
+        LOGGER.warning("filtered unsupported source_ids for %s: %s", base_profile, ", ".join(sorted(invalid_sources)))
+    source_ids = [s for s in source_ids if s in allowed]
+    if not source_ids:
+        LOGGER.warning("source_ids empty after filtering, fell back to defaults for %s", base_profile)
+        source_ids = list(allowed)
     source_layer_ids = response.get("source_layer_ids", [])
     assert isinstance(source_layer_ids, list)
     if invalid_layers := set(source_layer_ids) - set(automatic_source_layers(base_profile)):
@@ -315,13 +322,26 @@ def recommend_profile(
     if config is None:
         raise RecommendationError("configured LLM provider is unavailable")
     instructions, user_prompt = _prompt(request)
-    if request_json is None:
-        response = _request_with_configured_client(instructions, user_prompt)
-    else:
+    import logging
+    LOGGER = logging.getLogger(__name__)
+    for attempt in range(2):
+        if request_json is None:
+            response = _request_with_configured_client(instructions, user_prompt)
+        else:
+            try:
+                response = request_json(instructions, user_prompt)
+            except Exception as exc:
+                raise RecommendationError("model response was not a valid JSON object") from exc
+        if not isinstance(response, dict):
+            raise RecommendationError("malformed model output: expected a JSON object")
         try:
-            response = request_json(instructions, user_prompt)
-        except Exception as exc:  # noqa: BLE001 - injected transport follows the same public error boundary.
-            raise RecommendationError("model response was not a valid JSON object") from exc
-    if not isinstance(response, dict):
-        raise RecommendationError("malformed model output: expected a JSON object")
-    return _build_recommendation(request, response, config.provider, config.model)
+            return _build_recommendation(request, response, config.provider, config.model)
+        except RecommendationError as exc:
+            err_msg = str(exc)
+            if attempt == 0 and ("research_focus" in err_msg or "copied" in err_msg or "verbatim" in err_msg):
+                LOGGER.warning("retrying recommendation after focus error: %s", err_msg)
+                continue
+            if attempt == 0:
+                LOGGER.warning("retrying recommendation after: %s", err_msg)
+                continue
+            raise

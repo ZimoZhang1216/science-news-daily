@@ -356,7 +356,7 @@ def _profile_form(repository: PersonalizationRepository) -> None:
             st.session_state[_ONBOARDING_RECOMMENDATION_KEY] = recommend_profile(request)
             _clear_onboarding_suggestions()
         except (RecommendationError, ValueError) as exc:
-            st.error(_validation_message(exc) if isinstance(exc, ValueError) else "系统建议生成失败，请检查模型配置后重试。")
+            st.error(_recommendation_error_message(exc))
 
     recommendation = st.session_state.get(_ONBOARDING_RECOMMENDATION_KEY)
     if recommendation is None:
