@@ -4461,6 +4461,7 @@ def generate_ai_summaries(
                 except Exception as exc:  # noqa: BLE001 - some compatible providers reject response_format.
                     local_last_error = exc
                     request_kwargs.pop("response_format", None)
+                    request_kwargs["max_tokens"] = int(request_kwargs.get("max_tokens", 3000) * 2.5)
                     response = client.chat.completions.create(**request_kwargs)
                 raw_response = chat_response_text(response)
                 return parse_json_object(raw_response)
