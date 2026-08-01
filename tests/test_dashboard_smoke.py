@@ -481,6 +481,16 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertIn("必须填写", rendered)
         self.assertIn("生成建议", [element.label for element in app.button])
 
+    def test_user_page_renders_a_visible_three_step_creation_workflow(self) -> None:
+        app = self.local_dashboard_app()
+        app.sidebar.radio[0].set_value("用户画像").run()
+
+        rendered = " ".join(element.value for element in app.markdown)
+        self.assertIn("创建流程", rendered)
+        self.assertIn("1. 描述研究兴趣", rendered)
+        self.assertIn("2. 审阅 AI 建议", rendered)
+        self.assertIn("3. 保存并预览", rendered)
+
     def test_user_page_offers_ai_normalization_for_legacy_profiles(self) -> None:
         self.create_queued_preview()
         app = self.local_dashboard_app()

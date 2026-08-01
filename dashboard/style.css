@@ -146,6 +146,58 @@ div[data-testid="stForm"] {
   line-height: 1.55;
 }
 
+.workflow-overview {
+  margin: 1.25rem 0 1.5rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: linear-gradient(135deg, var(--surface), color-mix(in srgb, var(--interactive-hover) 52%, var(--surface)));
+}
+
+.workflow-overview-title {
+  color: var(--ink);
+  font-size: 0.88rem;
+  font-weight: 760;
+  letter-spacing: 0.03em;
+}
+
+.workflow-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.workflow-card {
+  min-height: 8.25rem;
+  padding: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+}
+
+.workflow-card span {
+  display: block;
+  margin-bottom: 0.45rem;
+  color: var(--teal);
+  font-size: 0.72rem;
+  font-weight: 760;
+  letter-spacing: 0.08em;
+}
+
+.workflow-card strong {
+  display: block;
+  color: var(--ink);
+  font-size: 0.94rem;
+}
+
+.workflow-card p {
+  margin: 0.45rem 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
 .user-row {
   margin: 0.7rem 0;
   padding: 0.85rem 0.9rem;
@@ -306,6 +358,14 @@ div[data-testid="stExpander"] details summary {
 
   .page-intro {
     margin-bottom: 1.35rem;
+  }
+
+  .workflow-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-card {
+    min-height: 0;
   }
 
   button[data-baseweb="tab"] {
