@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from datetime import UTC, date, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 from unittest.mock import patch
 
@@ -119,6 +120,9 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertIn('"A + B + C"', source)
         self.assertIn('base_profile == "computer_science"', source)
         self.assertIn('current.base_profile == "computer_science"', source)
+
+    def test_legacy_cached_profile_uses_the_default_candidate_budget(self) -> None:
+        self.assertEqual(views._candidate_limit_for_form(SimpleNamespace()), 300)
 
     def test_cached_local_repository_initializes_only_once_per_database_path(self) -> None:
         repository = unittest.mock.Mock()

@@ -626,7 +626,7 @@ def _edit_profile_form(repository: PersonalizationRepository, user_id: str, disp
                 "每次抓取候选条目上限",
                 min_value=50,
                 max_value=1000,
-                value=current.candidate_limit,
+                value=_candidate_limit_for_form(current),
                 step=50,
                 help="用于抓取与排序的候选池，不等于最终日报条目数。数值越高覆盖越广，但任务耗时也会增加。",
                 key=f"candidate-limit-{user_id}",
@@ -695,6 +695,13 @@ def _edit_profile_form(repository: PersonalizationRepository, user_id: str, disp
             st.error("保存到 Turso 暂时失败，请检查网络后重试。")
             return
         st.success(f"科研画像已保存为版本 {version}，云端计划已更新。")
+
+
+def _candidate_limit_for_form(profile: object) -> int:
+    """Allow Streamlit's cached pre-migration profile objects to render safely."""
+
+    value = getattr(profile, "candidate_limit", 300)
+    return value if isinstance(value, int) and 50 <= value <= 1000 else 300
 
 
 def render_users(repository: PersonalizationRepository | None) -> None:
