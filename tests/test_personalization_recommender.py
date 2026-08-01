@@ -87,6 +87,44 @@ class PersonalizationRecommenderTests(unittest.TestCase):
         self.assertEqual(recommendation.profile.lookback_days, 3)
         self.assertFalse(recommendation.schedule.enabled)
 
+    def test_recommender_keeps_a_broader_focus_and_exposes_optional_keywords(self) -> None:
+        config = main.LLMConfig("deepseek", "deepseek-v4-flash", "", "DEEPSEEK_API_KEY")
+        response = valid_response()
+        response["research_focus"] = "固态电池界面与离子传导"
+        response["optional_keywords"] = [
+            "electrode electrolyte interface",
+            "solid-state battery",
+            "SEI",
+        ]
+
+        with patch.object(main, "resolve_llm_config", return_value=config):
+            recommendation = recommend_profile(valid_request(), request_json=lambda *_: response)
+
+        self.assertEqual(recommendation.profile.research_topic, "固态电池界面与离子传导")
+        self.assertEqual(
+            recommendation.optional_keywords,
+            ("electrode electrolyte interface", "solid-state battery"),
+        )
+
+    def test_recommender_exposes_optional_safe_sources_without_enabling_them(self) -> None:
+        config = main.LLMConfig("deepseek", "deepseek-v4-flash", "", "DEEPSEEK_API_KEY")
+        response = valid_response()
+        response["optional_source_ids"] = ["rss", "crossref", "rsc"]
+
+        with patch.object(main, "resolve_llm_config", return_value=config):
+            recommendation = recommend_profile(valid_request(), request_json=lambda *_: response)
+
+        self.assertEqual(recommendation.optional_source_ids, ("rss", "rsc"))
+        self.assertNotIn("rss", recommendation.profile.source_ids)
+
+    def test_recommender_accepts_legacy_response_without_optional_keywords(self) -> None:
+        config = main.LLMConfig("deepseek", "deepseek-v4-flash", "", "DEEPSEEK_API_KEY")
+
+        with patch.object(main, "resolve_llm_config", return_value=config):
+            recommendation = recommend_profile(valid_request(), request_json=lambda *_: valid_response())
+
+        self.assertEqual(recommendation.optional_keywords, ())
+
     def test_recommender_rejects_a_journal_outside_the_selected_profile(self) -> None:
         config = main.LLMConfig("deepseek", "deepseek-v4-flash", "", "DEEPSEEK_API_KEY")
 

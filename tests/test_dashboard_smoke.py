@@ -124,6 +124,41 @@ class DashboardSmokeTests(unittest.TestCase):
     def test_legacy_cached_profile_uses_the_default_candidate_budget(self) -> None:
         self.assertEqual(views._candidate_limit_for_form(SimpleNamespace()), 300)
 
+    def test_keyword_choices_merge_only_operator_selected_expansions(self) -> None:
+        self.assertEqual(
+            views._merge_keyword_choices(
+                "solid electrolyte; SEI",
+                ["solid-state battery", "SEI"],
+            ),
+            ["solid electrolyte", "SEI", "solid-state battery"],
+        )
+
+    def test_source_choices_merge_only_operator_selected_expansions(self) -> None:
+        self.assertEqual(
+            views._merge_source_choices(["arxiv", "crossref"], ["rss", "arxiv"]),
+            ["arxiv", "crossref", "rss"],
+        )
+
+    def test_user_page_defines_three_profile_steps_and_optional_keyword_selector(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "dashboard" / "views.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("1. 研究兴趣", source)
+        self.assertIn("2. 信源与范围", source)
+        self.assertIn("3. 日报计划", source)
+        self.assertIn("相关扩展（可选）", source)
+        self.assertIn("相关信源（可选）", source)
+        self.assertGreaterEqual(source.count("1. 研究兴趣"), 2)
+
+    def test_dashboard_style_defines_shared_profile_workflow_tokens(self) -> None:
+        stylesheet = (Path(__file__).resolve().parents[1] / "dashboard" / "style.css").read_text(
+            encoding="utf-8"
+        )
+
+        for selector in (".page-intro", ".profile-step", ".user-row", ".action-danger"):
+            self.assertIn(selector, stylesheet)
+
     def test_cached_local_repository_initializes_only_once_per_database_path(self) -> None:
         repository = unittest.mock.Mock()
         dashboard_app._open_repository.clear()

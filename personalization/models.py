@@ -256,6 +256,8 @@ class ProfileRecommendation:
     schedule: ScheduleInput
     rationale: str
     uncertainty: str
+    optional_keywords: tuple[str, ...] = ()
+    optional_source_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.schedule.enabled:

@@ -73,8 +73,24 @@ html, body, .stApp {
 
 .block-container {
   max-width: 1440px;
-  padding-top: 5rem;
+  padding-top: 4.25rem;
   padding-bottom: 3rem;
+}
+
+.page-intro {
+  max-width: 48rem;
+  margin: 0 0 2rem;
+}
+
+.page-intro h1 {
+  margin: 0.25rem 0 0.55rem;
+  letter-spacing: -0.035em;
+}
+
+.page-intro p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.65;
 }
 
 h1, h2, h3, p, label, [data-testid="stMetricLabel"], [data-testid="stMetricValue"] {
@@ -114,8 +130,33 @@ h1, h2, h3, p, label, [data-testid="stMetricLabel"], [data-testid="stMetricValue
 div[data-testid="stForm"] {
   background: var(--surface);
   border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 1.25rem 1.3rem 0.55rem;
+  box-shadow: 0 12px 26px rgba(5, 20, 36, 0.08);
+}
+
+.profile-step {
+  margin: 0 0 0.9rem;
+  padding: 0.7rem 0.8rem;
+  border-left: 3px solid var(--teal);
+  border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--interactive-hover) 66%, transparent);
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.user-row {
+  margin: 0.7rem 0;
+  padding: 0.85rem 0.9rem;
+  border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 1.1rem 1.2rem 0.35rem;
+  background: var(--surface);
+}
+
+.action-danger {
+  color: var(--danger);
+  font-size: 0.83rem;
 }
 
 .stTextInput input, .stTextArea textarea, [data-baseweb="select"] > div {
@@ -173,6 +214,32 @@ div[data-testid="stForm"] {
 .stButton > button[kind="primary"]:hover {
   background: var(--teal-dark);
   border-color: var(--teal-dark);
+}
+
+button[data-baseweb="tab"] {
+  height: 2.9rem;
+  color: var(--muted) !important;
+  font-weight: 650;
+  padding: 0.65rem 1rem;
+}
+
+button[data-baseweb="tab"][aria-selected="true"] {
+  color: var(--ink) !important;
+}
+
+button[data-baseweb="tab"] + div {
+  background: var(--teal) !important;
+}
+
+div[data-testid="stExpander"] {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+div[data-testid="stExpander"] details summary {
+  color: var(--ink);
+  font-weight: 650;
 }
 
 .eyebrow {
@@ -235,5 +302,14 @@ div[data-testid="stForm"] {
 
   div[data-testid="stForm"] {
     padding: 0.9rem 0.85rem 0.25rem;
+  }
+
+  .page-intro {
+    margin-bottom: 1.35rem;
+  }
+
+  button[data-baseweb="tab"] {
+    font-size: 0.82rem;
+    padding-inline: 0.55rem;
   }
 }

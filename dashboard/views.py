@@ -233,6 +233,8 @@ _ONBOARDING_RECOMMENDATION_KEY = "onboarding_recommendation"
 _ONBOARDING_SUGGESTION_KEYS = (
     "onboarding_base_profile",
     "onboarding_include_keywords",
+    "onboarding_optional_keywords",
+    "onboarding_optional_source_ids",
     "onboarding_exclude_keywords",
     "onboarding_source_ids",
     "onboarding-source-layers",
@@ -272,6 +274,37 @@ def _clear_completed_onboarding() -> None:
         st.session_state.pop(key, None)
 
 
+def _merge_keyword_choices(
+    core_keywords: str | tuple[str, ...], selected_optional_keywords: list[str]
+) -> list[str]:
+    """Merge only operator-confirmed suggestions into the saved keyword input."""
+
+    values = core_keywords if isinstance(core_keywords, tuple) else core_keywords.split(";")
+    seen: set[str] = set()
+    merged: list[str] = []
+    for value in [*values, *selected_optional_keywords]:
+        clean = value.strip()
+        key = clean.casefold()
+        if clean and key not in seen:
+            seen.add(key)
+            merged.append(clean)
+    return merged
+
+
+def _merge_source_choices(
+    selected_source_ids: list[str], selected_optional_source_ids: list[str]
+) -> list[str]:
+    """Persist an expanded source only after the operator selects it."""
+
+    seen: set[str] = set()
+    merged: list[str] = []
+    for source_id in [*selected_source_ids, *selected_optional_source_ids]:
+        if source_id not in seen:
+            seen.add(source_id)
+            merged.append(source_id)
+    return merged
+
+
 def _format_local_next_run(next_run_at: datetime, timezone_name: str) -> str:
     local_time = next_run_at.astimezone(ZoneInfo(timezone_name))
     return f"{local_time:%Y年%m月%d日 %H:%M}（{timezone_name}）"
@@ -284,10 +317,23 @@ def _ccf_tier_label(tiers: tuple[str, ...]) -> str:
     return "A + B"
 
 
+def _render_page_intro(eyebrow: str, title: str, description: str) -> None:
+    """Use one concise heading treatment across every operations page."""
+
+    st.markdown(
+        (
+            '<div class="page-intro">'
+            f'<div class="eyebrow">{eyebrow}</div>'
+            f"<h1>{title}</h1>"
+            f"<p>{description}</p>"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def render_operations(repository: PersonalizationRepository | None) -> None:
-    st.markdown('<div class="eyebrow">运营概览</div>', unsafe_allow_html=True)
-    st.title("科研日报运营面板")
-    st.caption("查看用户专属日报、投递状态和数据源健康情况。")
+    _render_page_intro("运营概览", "科研日报运营面板", "查看用户专属日报、投递状态和数据源健康情况。")
     if repository is None:
         st.info("尚未配置 Turso 连接。请在“设置”页面查看所需变量。")
         return
@@ -378,8 +424,8 @@ def _profile_form(repository: PersonalizationRepository) -> None:
     profile_recommendation = recommendation.profile
     schedule_recommendation = recommendation.schedule
     st.markdown("#### 可修改的系统建议")
-    st.caption(profile_recommendation.research_topic)
-    st.info(f"推荐理由：{recommendation.rationale}\n\n不确定性：{recommendation.uncertainty}")
+    st.caption(f"AI 研究聚焦：{profile_recommendation.research_topic}")
+    st.info(f"推荐依据：{recommendation.rationale}\n\n边界提示：{recommendation.uncertainty}")
     base_profile = st.selectbox(
         "基础学科",
         sorted(main.REPORT_PROFILES),
@@ -388,126 +434,145 @@ def _profile_form(repository: PersonalizationRepository) -> None:
         key="onboarding_base_profile",
     )
     with st.form("save-recommended-profile"):
-        include_keywords = st.text_area(
-            "包含关键词",
-            value="; ".join(profile_recommendation.include_keywords),
-            key="onboarding_include_keywords",
+        interest_tab, sources_tab, plan_tab = st.tabs(
+            ["1. 研究兴趣", "2. 信源与范围", "3. 日报计划"]
         )
-        exclude_keywords = st.text_area(
-            "排除关键词",
-            value="; ".join(profile_recommendation.exclude_keywords),
-            key="onboarding_exclude_keywords",
-        )
-        source_ids, source_layer_ids = _profile_source_controls(
-            base_profile,
-            profile_recommendation.source_ids,
-            profile_recommendation.source_layer_ids,
-            key_prefix="onboarding",
-        )
-        ccf_conference_tiers = profile_recommendation.ccf_conference_tiers
-        if base_profile == "computer_science":
-            ccf_tier_label = st.selectbox(
-                "CCF 会议等级",
-                list(CCF_TIER_OPTIONS),
-                index=list(CCF_TIER_OPTIONS).index(_ccf_tier_label(ccf_conference_tiers)),
-                help=(
-                    "启用 CCF 推荐会议后，默认收录 A+B。资讯时间窗口按 DBLP 新收录时间计算；"
-                    "CCF 分级是选会参考，不代表单篇论文质量。"
-                ),
-                key="onboarding_ccf_conference_tiers",
+        with interest_tab:
+            st.markdown(
+                '<div class="profile-step">先确认研究兴趣。核心词会参与日报；相关扩展需由你勾选后才会保存。</div>',
+                unsafe_allow_html=True,
             )
-            ccf_conference_tiers = CCF_TIER_OPTIONS[ccf_tier_label]
-        journal_options = sorted(
-            {
-                issn
-                for journal in main.resolve_profile(base_profile)["crossref_journals"]
-                for issn in journal["issns"]
-            }
-        )
-        journal_ids = st.multiselect(
-            "指定期刊 ISSN",
-            journal_options,
-            default=[
-                journal_id
-                for journal_id in profile_recommendation.journal_ids
-                if journal_id in journal_options
-            ],
-            key="onboarding_journal_ids",
-        )
-        preferences = st.multiselect(
-            "内容偏好",
-            ["review", "mechanism", "methodology", "experiment"],
-            default=list(profile_recommendation.content_preferences),
-            format_func=lambda value: _label(PREFERENCE_LABELS, value),
-            key="onboarding_preferences",
-        )
-        max_items = st.slider(
-            "每份日报条目数",
-            min_value=1,
-            max_value=50,
-            value=profile_recommendation.max_items,
-            key="onboarding_max_items",
-        )
-        lookback_days = st.number_input(
-            "资讯时间窗口（天）",
-            min_value=1,
-            max_value=60,
-            value=profile_recommendation.lookback_days,
-            step=1,
-            help="控制每份日报收集过去多少天的资讯，不影响发送时间或频率。",
-            key="onboarding_lookback_days",
-        )
-        candidate_limit = st.slider(
-            "每次抓取候选条目上限",
-            min_value=50,
-            max_value=1000,
-            value=profile_recommendation.candidate_limit,
-            step=50,
-            help="用于抓取与排序的候选池，不等于最终日报条目数。数值越高覆盖越广，但任务耗时也会增加。",
-            key="onboarding_candidate_limit",
-        )
-        output_formats = st.multiselect(
-            "输出格式",
-            ["docx", "pdf"],
-            default=list(profile_recommendation.output_formats),
-            key="onboarding_output_formats",
-        )
-        model_left, model_right = st.columns(2)
-        provider_options = list(MODEL_PROVIDER_OPTIONS)
-        provider = model_left.selectbox(
-            "模型服务商",
-            provider_options,
-            index=provider_options.index(profile_recommendation.llm_provider),
-            key="onboarding_provider",
-        )
-        model = model_right.text_input(
-            "模型名称", value=profile_recommendation.llm_model, key="onboarding_model"
-        )
-        schedule_left, schedule_middle, schedule_right = st.columns(3)
-        frequency_options = ["daily", "weekdays", "weekly"]
-        frequency = schedule_left.selectbox(
-            "发送频率",
-            frequency_options,
-            index=frequency_options.index(schedule_recommendation.frequency),
-            format_func=lambda value: _label(FREQUENCY_LABELS, value),
-            key="onboarding_frequency",
-        )
-        weekday = schedule_middle.selectbox(
-            "每周发送日",
-            list(range(7)),
-            index=schedule_recommendation.weekday or 0,
-            format_func=lambda index: WEEKDAY_LABELS[index],
-            disabled=frequency != "weekly",
-            key="onboarding_weekday",
-        )
-        timezone_name = schedule_right.text_input(
-            "时区", value=schedule_recommendation.timezone, key="onboarding_timezone"
-        )
-        local_send_time = st.text_input(
-            "当地发送时间",
-            value=schedule_recommendation.local_send_time.strftime("%H:%M"),
-            key="onboarding_local_send_time",
-        )
+            include_keywords = st.text_area(
+                "核心关键词",
+                value="; ".join(profile_recommendation.include_keywords),
+                key="onboarding_include_keywords",
+            )
+            selected_optional_keywords = st.multiselect(
+                "相关扩展（可选）",
+                list(getattr(recommendation, "optional_keywords", ())),
+                default=[],
+                help="这些相邻主题不会自动加入日报；勾选后才会并入包含关键词。",
+                key="onboarding_optional_keywords",
+            )
+            exclude_keywords = st.text_area(
+                "排除关键词",
+                value="; ".join(profile_recommendation.exclude_keywords),
+                key="onboarding_exclude_keywords",
+            )
+        with sources_tab:
+            st.markdown(
+                '<div class="profile-step">选择已接入的公开稳定信源；社区信号会在日报中单独标识。</div>',
+                unsafe_allow_html=True,
+            )
+            optional_source_options = [
+                source_id
+                for source_id in getattr(recommendation, "optional_source_ids", ())
+                if source_id in main.available_source_ids(base_profile)
+            ]
+            selected_optional_source_ids = st.multiselect(
+                "相关信源（可选）",
+                optional_source_options,
+                default=[],
+                format_func=_source_label,
+                help="这些扩展来源不会自动启用；勾选后才会保存到此用户画像。",
+                key="onboarding_optional_source_ids",
+            )
+            source_ids, source_layer_ids = _profile_source_controls(
+                base_profile,
+                profile_recommendation.source_ids,
+                profile_recommendation.source_layer_ids,
+                key_prefix="onboarding",
+            )
+            ccf_conference_tiers = profile_recommendation.ccf_conference_tiers
+            if base_profile == "computer_science":
+                ccf_tier_label = st.selectbox(
+                    "CCF 会议等级",
+                    list(CCF_TIER_OPTIONS),
+                    index=list(CCF_TIER_OPTIONS).index(_ccf_tier_label(ccf_conference_tiers)),
+                    help=(
+                        "启用 CCF 推荐会议后，默认收录 A+B。资讯时间窗口按 DBLP 新收录时间计算；"
+                        "CCF 分级是选会参考，不代表单篇论文质量。"
+                    ),
+                    key="onboarding_ccf_conference_tiers",
+                )
+                ccf_conference_tiers = CCF_TIER_OPTIONS[ccf_tier_label]
+            journal_options = sorted(
+                {
+                    issn
+                    for journal in main.resolve_profile(base_profile)["crossref_journals"]
+                    for issn in journal["issns"]
+                }
+            )
+            journal_ids = st.multiselect(
+                "指定期刊 ISSN",
+                journal_options,
+                default=[
+                    journal_id
+                    for journal_id in profile_recommendation.journal_ids
+                    if journal_id in journal_options
+                ],
+                key="onboarding_journal_ids",
+            )
+        with plan_tab:
+            st.markdown(
+                '<div class="profile-step">计划在预览确认前不会自动发送日报。</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown("##### 内容范围")
+            preferences = st.multiselect(
+                "内容偏好",
+                ["review", "mechanism", "methodology", "experiment"],
+                default=list(profile_recommendation.content_preferences),
+                format_func=lambda value: _label(PREFERENCE_LABELS, value),
+                key="onboarding_preferences",
+            )
+            range_left, range_right = st.columns(2)
+            max_items = range_left.slider(
+                "每份日报条目数", 1, 50, profile_recommendation.max_items, key="onboarding_max_items"
+            )
+            lookback_days = range_right.number_input(
+                "资讯时间窗口（天）",
+                min_value=1,
+                max_value=60,
+                value=profile_recommendation.lookback_days,
+                step=1,
+                key="onboarding_lookback_days",
+            )
+            candidate_limit = st.slider(
+                "每次抓取候选条目上限",
+                min_value=50,
+                max_value=1000,
+                value=profile_recommendation.candidate_limit,
+                step=50,
+                help="数值越高覆盖越广，但任务耗时也会增加。",
+                key="onboarding_candidate_limit",
+            )
+            st.markdown("##### 输出与投递")
+            output_formats = st.multiselect(
+                "输出格式", ["docx", "pdf"], default=list(profile_recommendation.output_formats), key="onboarding_output_formats"
+            )
+            model_left, model_right = st.columns(2)
+            provider_options = list(MODEL_PROVIDER_OPTIONS)
+            provider = model_left.selectbox(
+                "模型服务商", provider_options,
+                index=provider_options.index(profile_recommendation.llm_provider), key="onboarding_provider"
+            )
+            model = model_right.text_input("模型名称", value=profile_recommendation.llm_model, key="onboarding_model")
+            schedule_left, schedule_middle, schedule_right = st.columns(3)
+            frequency_options = ["daily", "weekdays", "weekly"]
+            frequency = schedule_left.selectbox(
+                "发送频率", frequency_options,
+                index=frequency_options.index(schedule_recommendation.frequency),
+                format_func=lambda value: _label(FREQUENCY_LABELS, value), key="onboarding_frequency"
+            )
+            weekday = schedule_middle.selectbox(
+                "每周发送日", list(range(7)), index=schedule_recommendation.weekday or 0,
+                format_func=lambda index: WEEKDAY_LABELS[index], disabled=frequency != "weekly", key="onboarding_weekday"
+            )
+            timezone_name = schedule_right.text_input("时区", value=schedule_recommendation.timezone, key="onboarding_timezone")
+            local_send_time = st.text_input(
+                "当地发送时间", value=schedule_recommendation.local_send_time.strftime("%H:%M"), key="onboarding_local_send_time"
+            )
         save_submitted = st.form_submit_button("保存并生成预览", type="primary")
 
     if not save_submitted:
@@ -521,9 +586,9 @@ def _profile_form(repository: PersonalizationRepository) -> None:
         profile = ResearchProfileInput.from_form(
             base_profile=base_profile,
             research_topic=st.session_state["onboarding_topic"],
-            include_keywords=include_keywords,
+            include_keywords=_merge_keyword_choices(include_keywords, selected_optional_keywords),
             exclude_keywords=exclude_keywords,
-            source_ids=source_ids,
+            source_ids=_merge_source_choices(source_ids, selected_optional_source_ids),
             source_layer_ids=source_layer_ids,
             journal_ids=journal_ids,
             content_preferences=preferences,
@@ -578,85 +643,109 @@ def _edit_profile_form(repository: PersonalizationRepository, user_id: str, disp
             "每次保存都会创建不可变更的画像版本；已经生成的日报会保留当时使用的配置。"
         )
         with st.form(f"edit-profile-{user_id}"):
-            topic = st.text_input("研究方向或当前课题", value=current.research_topic)
-            include_keywords = st.text_area(
-                "包含关键词", value="; ".join(current.include_keywords)
-            )
-            exclude_keywords = st.text_area(
-                "排除关键词", value="; ".join(current.exclude_keywords)
-            )
-            source_ids, source_layer_ids = _profile_source_controls(
-                current.base_profile,
-                current.source_ids,
-                current.source_layer_ids,
-                key_prefix=f"edit-{user_id}",
-            )
-            ccf_conference_tiers = current.ccf_conference_tiers
-            if current.base_profile == "computer_science":
-                ccf_tier_label = st.selectbox(
-                    "CCF 会议等级",
-                    list(CCF_TIER_OPTIONS),
-                    index=list(CCF_TIER_OPTIONS).index(_ccf_tier_label(ccf_conference_tiers)),
-                    help=(
-                        "启用 CCF 推荐会议后，默认收录 A+B。资讯时间窗口按 DBLP 新收录时间计算；"
-                        "CCF 分级是选会参考，不代表单篇论文质量。"
-                    ),
-                    key=f"ccf-tiers-{user_id}",
+            st.markdown("#### 1. 研究兴趣")
+            interest_tab = st.container()
+            sources_tab = st.container()
+            plan_tab = st.container()
+            with interest_tab:
+                st.markdown(
+                    '<div class="profile-step">保持研究主题与关键词清晰；保存会创建新的画像版本。</div>',
+                    unsafe_allow_html=True,
                 )
-                ccf_conference_tiers = CCF_TIER_OPTIONS[ccf_tier_label]
-            journal_ids = st.text_area(
-                "指定期刊 ISSN", value="; ".join(current.journal_ids)
-            )
-            preferences = st.multiselect(
-                "内容偏好",
-                preference_options,
-                default=list(current.content_preferences),
-                format_func=lambda value: _label(PREFERENCE_LABELS, value),
-            )
-            max_items = st.slider("每份日报条目数", 1, 50, current.max_items)
-            lookback_days = st.number_input(
-                "资讯时间窗口（天）",
-                min_value=1,
-                max_value=60,
-                value=current.lookback_days,
-                step=1,
-                help="控制每份日报收集过去多少天的资讯，不影响发送时间或频率。",
-            )
-            candidate_limit = st.slider(
-                "每次抓取候选条目上限",
-                min_value=50,
-                max_value=1000,
-                value=_candidate_limit_for_form(current),
-                step=50,
-                help="用于抓取与排序的候选池，不等于最终日报条目数。数值越高覆盖越广，但任务耗时也会增加。",
-                key=f"candidate-limit-{user_id}",
-            )
-            model_left, model_right = st.columns(2)
-            provider = model_left.selectbox(
-                "模型服务商",
-                list(MODEL_PROVIDER_OPTIONS),
-                index=MODEL_PROVIDER_OPTIONS.index(current.llm_provider),
-            )
-            model = model_right.text_input("模型名称", value=current.llm_model)
-            output_formats = st.multiselect(
-                "输出格式", ["docx", "pdf"], default=list(current.output_formats)
-            )
-            schedule_left, schedule_middle, schedule_right = st.columns(3)
-            frequency = schedule_left.selectbox(
-                "发送频率",
-                ["daily", "weekdays", "weekly"],
-                index=["daily", "weekdays", "weekly"].index(schedule.frequency),
-                format_func=lambda value: _label(FREQUENCY_LABELS, value),
-            )
-            weekday = schedule_middle.selectbox(
-                "每周发送日",
-                list(range(7)),
-                index=schedule.weekday or 0,
-                format_func=lambda index: WEEKDAY_LABELS[index],
-                disabled=frequency != "weekly",
-            )
-            timezone = schedule_right.text_input("时区", value=schedule.timezone)
-            local_send_time = st.text_input("当地发送时间", value=schedule.local_send_time)
+                topic = st.text_input("研究方向或当前课题", value=current.research_topic)
+                include_keywords = st.text_area(
+                    "包含关键词", value="; ".join(current.include_keywords)
+                )
+                exclude_keywords = st.text_area(
+                    "排除关键词", value="; ".join(current.exclude_keywords)
+                )
+            with sources_tab:
+                st.markdown("#### 2. 信源与范围")
+                st.markdown(
+                    '<div class="profile-step">仅可保存已接入的自动抓取来源；授权来源会保持透明说明。</div>',
+                    unsafe_allow_html=True,
+                )
+                source_ids, source_layer_ids = _profile_source_controls(
+                    current.base_profile,
+                    current.source_ids,
+                    current.source_layer_ids,
+                    key_prefix=f"edit-{user_id}",
+                )
+                ccf_conference_tiers = current.ccf_conference_tiers
+                if current.base_profile == "computer_science":
+                    ccf_tier_label = st.selectbox(
+                        "CCF 会议等级",
+                        list(CCF_TIER_OPTIONS),
+                        index=list(CCF_TIER_OPTIONS).index(_ccf_tier_label(ccf_conference_tiers)),
+                        help=(
+                            "启用 CCF 推荐会议后，默认收录 A+B。资讯时间窗口按 DBLP 新收录时间计算；"
+                            "CCF 分级是选会参考，不代表单篇论文质量。"
+                        ),
+                        key=f"ccf-tiers-{user_id}",
+                    )
+                    ccf_conference_tiers = CCF_TIER_OPTIONS[ccf_tier_label]
+                journal_ids = st.text_area(
+                    "指定期刊 ISSN", value="; ".join(current.journal_ids)
+                )
+            with plan_tab:
+                st.markdown("#### 3. 日报计划")
+                st.markdown(
+                    '<div class="profile-step">调整内容范围、输出与投递计划不会改写历史日报。</div>',
+                    unsafe_allow_html=True,
+                )
+                st.markdown("##### 内容范围")
+                preferences = st.multiselect(
+                    "内容偏好",
+                    preference_options,
+                    default=list(current.content_preferences),
+                    format_func=lambda value: _label(PREFERENCE_LABELS, value),
+                )
+                range_left, range_right = st.columns(2)
+                max_items = range_left.slider("每份日报条目数", 1, 50, current.max_items)
+                lookback_days = range_right.number_input(
+                    "资讯时间窗口（天）",
+                    min_value=1,
+                    max_value=60,
+                    value=current.lookback_days,
+                    step=1,
+                    help="控制每份日报收集过去多少天的资讯，不影响发送时间或频率。",
+                )
+                candidate_limit = st.slider(
+                    "每次抓取候选条目上限",
+                    min_value=50,
+                    max_value=1000,
+                    value=_candidate_limit_for_form(current),
+                    step=50,
+                    help="用于抓取与排序的候选池，不等于最终日报条目数。数值越高覆盖越广，但任务耗时也会增加。",
+                    key=f"candidate-limit-{user_id}",
+                )
+                st.markdown("##### 输出与投递")
+                model_left, model_right = st.columns(2)
+                provider = model_left.selectbox(
+                    "模型服务商",
+                    list(MODEL_PROVIDER_OPTIONS),
+                    index=MODEL_PROVIDER_OPTIONS.index(current.llm_provider),
+                )
+                model = model_right.text_input("模型名称", value=current.llm_model)
+                output_formats = st.multiselect(
+                    "输出格式", ["docx", "pdf"], default=list(current.output_formats)
+                )
+                schedule_left, schedule_middle, schedule_right = st.columns(3)
+                frequency = schedule_left.selectbox(
+                    "发送频率",
+                    ["daily", "weekdays", "weekly"],
+                    index=["daily", "weekdays", "weekly"].index(schedule.frequency),
+                    format_func=lambda value: _label(FREQUENCY_LABELS, value),
+                )
+                weekday = schedule_middle.selectbox(
+                    "每周发送日",
+                    list(range(7)),
+                    index=schedule.weekday or 0,
+                    format_func=lambda index: WEEKDAY_LABELS[index],
+                    disabled=frequency != "weekly",
+                )
+                timezone = schedule_right.text_input("时区", value=schedule.timezone)
+                local_send_time = st.text_input("当地发送时间", value=schedule.local_send_time)
             submitted = st.form_submit_button("保存画像", type="primary")
 
         if not submitted:
@@ -704,9 +793,18 @@ def _candidate_limit_for_form(profile: object) -> int:
     return value if isinstance(value, int) and 50 <= value <= 1000 else 300
 
 
+def _clear_pending_action(session_key: str) -> None:
+    """Clear a confirmation state before Streamlit rebuilds the page."""
+
+    st.session_state.pop(session_key, None)
+
+
 def render_users(repository: PersonalizationRepository | None) -> None:
-    st.markdown('<div class="eyebrow">用户科研画像</div>', unsafe_allow_html=True)
-    st.title("用户管理")
+    _render_page_intro(
+        "用户科研画像",
+        "用户管理",
+        "通过 AI 建议建立可编辑画像，再确认可信信源与日报计划。",
+    )
     if repository is None:
         st.info("尚未配置 Turso 连接，暂时无法保存用户科研画像。")
         return
@@ -806,9 +904,12 @@ def render_users(repository: PersonalizationRepository | None) -> None:
                                 if delivery.created
                                 else "已重新触发队列中的手动发报任务。"
                             )
-            if cancel_column.button("取消", key=f"cancel-manual-send-{user.id}"):
-                st.session_state.pop("pending_manual_send_user_id", None)
-                st.rerun()
+            cancel_column.button(
+                "取消",
+                key=f"cancel-manual-send-{user.id}",
+                on_click=_clear_pending_action,
+                args=("pending_manual_send_user_id",),
+            )
 
         if pending_deletion_id != user.id:
             continue
@@ -816,6 +917,7 @@ def render_users(repository: PersonalizationRepository | None) -> None:
         st.warning(
             f"确认永久删除“{user.display_name}”：其画像、计划、预览和投递历史将无法恢复。"
         )
+        st.markdown('<p class="action-danger">删除后无法恢复，请仅在确认用户不再需要服务时继续。</p>', unsafe_allow_html=True)
         confirm_column, cancel_column = st.columns(2)
         if confirm_column.button("确认永久删除", key=f"confirm-delete-{user.id}", type="primary"):
             try:
@@ -829,9 +931,12 @@ def render_users(repository: PersonalizationRepository | None) -> None:
                 else:
                     st.session_state["user_deletion_completion"] = "该用户已不存在，面板已刷新。"
                 st.rerun()
-        if cancel_column.button("取消", key=f"cancel-delete-{user.id}"):
-            st.session_state.pop("pending_user_deletion_id", None)
-            st.rerun()
+        cancel_column.button(
+            "取消",
+            key=f"cancel-delete-{user.id}",
+            on_click=_clear_pending_action,
+            args=("pending_user_deletion_id",),
+        )
     selected_user = st.selectbox(
         "选择要编辑的用户", users, format_func=lambda user: user.display_name
     )
@@ -839,8 +944,7 @@ def render_users(repository: PersonalizationRepository | None) -> None:
 
 
 def render_reports(repository: PersonalizationRepository | None) -> None:
-    st.markdown('<div class="eyebrow">预览与投递</div>', unsafe_allow_html=True)
-    st.title("日报与投递")
+    _render_page_intro("预览与投递", "日报与投递", "生成预览、查看任务详情，并追踪每次投递状态。")
     if repository is None:
         st.info("尚未配置 Turso 连接，暂时无法创建日报任务。")
         return
@@ -982,8 +1086,7 @@ def _render_delivery_task_details(delivery: dict[str, object]) -> None:
 
 
 def render_sources(repository: PersonalizationRepository | None) -> None:
-    st.markdown('<div class="eyebrow">运行健康度</div>', unsafe_allow_html=True)
-    st.title("数据源与指标")
+    _render_page_intro("运行健康度", "数据源与指标", "查看各可信信源的抓取表现、筛选结果与失败原因。")
     if repository is None:
         st.info("尚未配置 Turso 连接，暂时没有可用的数据源指标。")
         return
@@ -1016,8 +1119,7 @@ def render_sources(repository: PersonalizationRepository | None) -> None:
 
 
 def render_settings(repository: PersonalizationRepository | None) -> None:
-    st.markdown('<div class="eyebrow">本地配置</div>', unsafe_allow_html=True)
-    st.title("设置")
+    _render_page_intro("本地配置", "设置", "仅显示连接与触发条件是否就绪，不展示任何密钥。")
     turso_ready = bool(os.getenv("TURSO_DATABASE_URL", "").strip() and os.getenv("TURSO_AUTH_TOKEN", "").strip())
     local_sqlite_ready = bool(os.getenv("PERSONAL_ADMIN_LOCAL_DB", "").strip())
     dispatch_ready = _dispatch_settings_or_none() is not None

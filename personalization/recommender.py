@@ -112,10 +112,13 @@ def _prompt(request: RecommendationRequest) -> tuple[str, str]:
         "推理步骤或链式思维。只返回一个严格 JSON object，不要 Markdown、代码块或额外文字。"
         "推荐必须只使用提供的 profile、source、source layer、content preference 和 ISSN。"
         "社区信号、需要授权或 API Key 的来源、以及尚未接入抓取器的目录来源不能推荐。"
-        "research_focus 必须是 8 到 28 个字符的中文研究聚焦短语：概括研究对象或信息主题，"
-        "不能逐字复述用户原文，不能包含“偏好”“信息来源”“优先级”“我想”或冒号。"
+        "research_focus 必须是 4 到 60 个字符的清晰研究聚焦短语：可保留用户准确术语或忠实概括，"
+        "不能包含“偏好”“信息来源”“优先级”“我想”或冒号。"
+        "include_keywords 只放高相关核心词；optional_keywords 可放相邻议题、同义词、方法、应用"
+        "或政策语境，供用户逐项选择，不能当作默认必选词。"
         "rationale 与 uncertainty 必须是简短中文说明。"
-        "source_ids 必须严格从 supported_source_ids_by_profile 中 base_profile 对应列表选择，"
+        "source_ids 与 optional_source_ids 必须严格从 supported_source_ids_by_profile 中 base_profile 对应列表选择；"
+        "source_ids 只放高相关默认来源，optional_source_ids 只放可供用户勾选的扩展来源，两者不得重复。"
         "不得使用机构名称、会议名称或任何未列出的值。"
     )
     payload = {
@@ -127,10 +130,12 @@ def _prompt(request: RecommendationRequest) -> tuple[str, str]:
         "allowed_journal_issns_by_profile": journal_catalogue,
         "response_schema": {
             "base_profile": "one supported profile ID",
-            "research_focus": "concise Chinese research focus, 8-28 characters, not copied user instructions",
+            "research_focus": "clear research focus, 4-60 characters; may faithfully retain user terminology",
             "include_keywords": ["strings"],
+            "optional_keywords": ["optional related strings for operator selection"],
             "exclude_keywords": ["strings"],
             "source_ids": ["source IDs allowed for base_profile"],
+            "optional_source_ids": ["optional source IDs for operator selection"],
             "source_layer_ids": ["non-community source layers allowed for base_profile"],
             "journal_ids": ["ISSNs allowed for base_profile"],
             "content_preferences": ["supported content preferences"],
@@ -157,6 +162,18 @@ def _require_response_shape(response: dict[str, object]) -> None:
         value = response[field]
         if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
             raise RecommendationError(f"malformed model output: {field} must be a list of strings")
+    optional_keywords = response.get("optional_keywords")
+    if optional_keywords is not None and (
+        not isinstance(optional_keywords, list)
+        or not all(isinstance(item, str) for item in optional_keywords)
+    ):
+        raise RecommendationError("malformed model output: optional_keywords must be a list of strings")
+    optional_source_ids = response.get("optional_source_ids")
+    if optional_source_ids is not None and (
+        not isinstance(optional_source_ids, list)
+        or not all(isinstance(item, str) for item in optional_source_ids)
+    ):
+        raise RecommendationError("malformed model output: optional_source_ids must be a list of strings")
     if "source_layer_ids" in response:
         source_layers = response["source_layer_ids"]
         if not isinstance(source_layers, list) or not all(
@@ -180,15 +197,56 @@ def _require_response_shape(response: dict[str, object]) -> None:
         raise RecommendationError("malformed model output: weekday must be an integer or null")
 
 
-def _normalise_research_focus(value: str, original_topic: str) -> str:
+def _normalise_research_focus(value: str, _original_topic: str) -> str:
     focus = re.sub(r"\s+", " ", value).strip(" ：:；;。")
-    if not 4 <= len(focus) <= 40:
-        raise RecommendationError("research_focus must be concise (4-40 chars)")
-    if focus.casefold() == original_topic.strip().casefold():
-        raise RecommendationError("research_focus copied the user description verbatim")
+    if not 4 <= len(focus) <= 60:
+        raise RecommendationError("research_focus must be concise (4-60 chars)")
     if any(marker in focus for marker in ("偏好", "信息来源", "优先级", "我想", "：", ":")):
         raise RecommendationError("research_focus contains configuration text")
     return focus
+
+
+def _normalise_optional_keywords(value: object, core_keywords: tuple[str, ...]) -> tuple[str, ...]:
+    """Return user-selectable related terms without silently altering a profile."""
+
+    if value is None:
+        return ()
+    assert isinstance(value, list)
+    seen = {keyword.casefold() for keyword in core_keywords}
+    optional_keywords: list[str] = []
+    for raw_value in value:
+        assert isinstance(raw_value, str)
+        keyword = re.sub(r"\s+", " ", raw_value).strip()
+        if not keyword or keyword.casefold() in seen:
+            continue
+        seen.add(keyword.casefold())
+        optional_keywords.append(keyword)
+        if len(optional_keywords) == 12:
+            break
+    return tuple(optional_keywords)
+
+
+def _normalise_optional_source_ids(
+    value: object, selected_source_ids: list[str], base_profile: str
+) -> tuple[str, ...]:
+    """Keep optional sources separate until an operator explicitly selects them."""
+
+    if value is None:
+        return ()
+    assert isinstance(value, list)
+    allowed_ids = set(automatic_source_ids(base_profile))
+    selected_ids = set(selected_source_ids)
+    optional_source_ids: list[str] = []
+    for source_id in value:
+        assert isinstance(source_id, str)
+        if source_id not in allowed_ids:
+            raise RecommendationError(
+                f"optional_source_ids contain unsupported automatic values for {base_profile}: {source_id}"
+            )
+        if source_id in selected_ids or source_id in optional_source_ids:
+            continue
+        optional_source_ids.append(source_id)
+    return tuple(optional_source_ids)
 
 
 def _build_recommendation(
@@ -263,7 +321,16 @@ def _build_recommendation(
     uncertainty = response["uncertainty"].strip()
     if not rationale or not uncertainty:
         raise RecommendationError("malformed model output: rationale and uncertainty are required")
-    return ProfileRecommendation(profile, schedule, rationale, uncertainty)
+    return ProfileRecommendation(
+        profile,
+        schedule,
+        rationale,
+        uncertainty,
+        _normalise_optional_keywords(response.get("optional_keywords"), profile.include_keywords),
+        _normalise_optional_source_ids(
+            response.get("optional_source_ids"), resolved_source_ids, base_profile
+        ),
+    )
 
 
 def _request_with_configured_client(instructions: str, user_prompt: str) -> dict[str, object]:
