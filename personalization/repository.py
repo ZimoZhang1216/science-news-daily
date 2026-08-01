@@ -1111,9 +1111,26 @@ class PersonalizationRepository:
 
             report_date = now_utc.astimezone(ZoneInfo(self._value(user, "timezone"))).date()
             profile_version = int(self._value(user, "profile_version"))
-            key = f"manual_send:{user_id}:{report_date.isoformat()}:email"
+            key_prefix = f"manual_send:{user_id}:{report_date.isoformat()}:email"
+            active_delivery = self._fetchone(
+                """
+                SELECT * FROM deliveries
+                WHERE user_id = ? AND report_date = ? AND channel = 'email' AND mode = 'manual'
+                  AND schedule_id = '' AND idempotency_key LIKE ? AND status != 'cancelled'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (user_id, report_date.isoformat(), f"{key_prefix}%"),
+            )
+            if active_delivery is not None:
+                return self._claim_from_row(active_delivery, created=False)
+
             run_id = self._create_report_run(user_id, profile_version, report_date, "manual")
             delivery_id = _new_id("dlv")
+            prior_delivery = self._fetchone(
+                "SELECT 1 FROM deliveries WHERE idempotency_key = ?", (key_prefix,)
+            )
+            key = key_prefix if prior_delivery is None else f"{key_prefix}:retry:{delivery_id}"
             self._execute(
                 """
                 INSERT INTO deliveries (

@@ -425,6 +425,24 @@ class PersonalizationRepositoryTests(unittest.TestCase):
         self.assertEqual(len(self.repository.list_deliveries_for_user(user_id)), 1)
         self.assertEqual(len(self.repository._fetchall("SELECT id FROM report_runs")), 1)
 
+    def test_manual_send_creates_a_replacement_after_the_todays_task_is_cancelled(self) -> None:
+        user_id = self.repository.create_user_with_profile(
+            self.user(), self.profile("battery"), self.daily_schedule()
+        )
+        now = datetime(2026, 7, 27, 16, 30, tzinfo=timezone.utc)
+        first = self.repository.create_manual_send(user_id, now)
+        self.assertTrue(self.repository.cancel_delivery(first.delivery_id, now + timedelta(minutes=1)))
+
+        replacement = self.repository.create_manual_send(user_id, now + timedelta(minutes=2))
+        repeated = self.repository.create_manual_send(user_id, now + timedelta(minutes=3))
+
+        self.assertTrue(replacement.created)
+        self.assertNotEqual(replacement.delivery_id, first.delivery_id)
+        self.assertEqual(self.repository.get_delivery(first.delivery_id).status, "cancelled")
+        self.assertEqual(self.repository.get_delivery(replacement.delivery_id).status, "queued")
+        self.assertFalse(repeated.created)
+        self.assertEqual(repeated.delivery_id, replacement.delivery_id)
+
     def test_manual_send_rejects_a_paused_user(self) -> None:
         user_id = self.repository.create_user_with_profile(
             self.user(), self.profile("battery"), self.daily_schedule()
