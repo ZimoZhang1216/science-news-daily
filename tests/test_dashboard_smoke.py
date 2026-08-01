@@ -35,23 +35,30 @@ class DashboardSmokeTests(unittest.TestCase):
         app.run()
         return app
 
-    def create_user(self, status: str = "active") -> str:
+    def create_user(
+        self,
+        status: str = "active",
+        llm_provider: str = "deepseek",
+        llm_model: str = "deepseek-v4-flash",
+        source_ids: tuple[str, ...] = ("arxiv",),
+        base_profile: str = "chemistry",
+    ) -> str:
         repository = PersonalizationRepository.for_sqlite(self.database_path)
         repository.initialize()
         try:
             return repository.create_user_with_profile(
                 UserInput.from_form("Alice", "alice@example.test", status),
                 ResearchProfileInput.from_form(
-                    base_profile="chemistry",
+                    base_profile=base_profile,
                     research_topic="Lithium metal batteries",
                     include_keywords="battery",
                     exclude_keywords="",
-                    source_ids=("arxiv",),
+                    source_ids=source_ids,
                     journal_ids=(),
                     content_preferences=("mechanism",),
                     max_items=12,
-                    llm_provider="deepseek",
-                    llm_model="deepseek-v4-flash",
+                    llm_provider=llm_provider,
+                    llm_model=llm_model,
                     output_formats=("docx", "pdf"),
                 ),
                 ScheduleInput.from_form("daily", None, "Asia/Shanghai", "07:30", False),
@@ -351,6 +358,27 @@ class DashboardSmokeTests(unittest.TestCase):
         self.assertIn("目录收录、尚未接入", source)
         self.assertIn("需要授权", source)
         self.assertIn("source_layer_ids=source_layer_ids", source)
+
+    def test_openrouter_profile_opens_the_source_selection_form(self) -> None:
+        self.create_user(llm_provider="openrouter", llm_model="deepseek/deepseek-chat")
+
+        app = self.local_dashboard_app()
+        app.sidebar.radio[0].set_value("用户画像").run()
+
+        provider = next(box for box in app.selectbox if box.label == "模型服务商")
+        self.assertEqual(provider.value, "openrouter")
+        self.assertIn("可信信源层级", [box.label for box in app.multiselect])
+
+    def test_legacy_directory_source_is_retained_in_the_edit_form(self) -> None:
+        self.create_user(
+            base_profile="economics",
+            source_ids=("international_statistics",),
+        )
+
+        app = self.local_dashboard_app()
+        app.sidebar.radio[0].set_value("用户画像").run()
+
+        self.assertIn("已有但暂未接入的来源", [box.label for box in app.multiselect])
 
     def test_rendered_dashboard_injects_a_dark_system_theme(self) -> None:
         app = self.local_dashboard_app()

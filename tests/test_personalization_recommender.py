@@ -141,9 +141,10 @@ class PersonalizationRecommenderTests(unittest.TestCase):
         self.assertEqual(recommendation.profile.source_layer_ids, ("academic_research",))
         self.assertEqual(recommendation.profile.ccf_conference_tiers, ("A", "B"))
         source_catalogue = captured_prompt["supported_source_ids_by_profile"]
-        self.assertEqual(
-            source_catalogue["computer_science"],
-            ["arxiv", "crossref", "rss", "ccf_conferences", "official_rss"],
+        self.assertTrue(
+            {"arxiv", "crossref", "rss", "ccf_conferences", "official_rss", "openreview", "dblp", "usenix"}.issubset(
+                source_catalogue["computer_science"]
+            )
         )
 
     def test_recommender_accepts_a_legacy_response_without_source_layer_ids(self) -> None:

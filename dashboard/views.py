@@ -66,6 +66,7 @@ CCF_TIER_OPTIONS = {
     "A + B": ("A", "B"),
     "A + B + C": ("A", "B", "C"),
 }
+MODEL_PROVIDER_OPTIONS = ("openai", "deepseek", "openrouter")
 EVENT_TYPE_LABELS = {
     "delivery_queued": "自动投递已进入队列",
     "preview_queued": "手动预览已进入队列",
@@ -184,6 +185,18 @@ def _profile_source_controls(
                 default=compatibility_ids,
                 format_func=_source_label,
                 key=f"{key_prefix}-compatibility-sources",
+            )
+        )
+    historical_unavailable_ids = sorted((selected_ids & catalogued_ids) - executable_ids)
+    if historical_unavailable_ids:
+        st.caption("这些已有来源会保留在画像中，但当前没有已接入的自动抓取器：")
+        chosen.extend(
+            st.multiselect(
+                "已有但暂未接入的来源",
+                historical_unavailable_ids,
+                default=historical_unavailable_ids,
+                format_func=_source_label,
+                key=f"{key_prefix}-historical-unavailable-sources",
             )
         )
     return list(dict.fromkeys(chosen)), layer_ids
@@ -451,7 +464,7 @@ def _profile_form(repository: PersonalizationRepository) -> None:
             key="onboarding_output_formats",
         )
         model_left, model_right = st.columns(2)
-        provider_options = ["openai", "deepseek"]
+        provider_options = list(MODEL_PROVIDER_OPTIONS)
         provider = model_left.selectbox(
             "模型服务商",
             provider_options,
@@ -602,8 +615,8 @@ def _edit_profile_form(repository: PersonalizationRepository, user_id: str, disp
             model_left, model_right = st.columns(2)
             provider = model_left.selectbox(
                 "模型服务商",
-                ["openai", "deepseek"],
-                index=["openai", "deepseek"].index(current.llm_provider),
+                list(MODEL_PROVIDER_OPTIONS),
+                index=MODEL_PROVIDER_OPTIONS.index(current.llm_provider),
             )
             model = model_right.text_input("模型名称", value=current.llm_model)
             output_formats = st.multiselect(

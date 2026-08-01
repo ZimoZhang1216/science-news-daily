@@ -10,6 +10,7 @@ from unittest.mock import patch
 from docx import Document
 
 import main
+from personalization.rss_registry import RSS_FEED_REGISTRY
 
 
 FIRST_LEVEL_PROFILE_IDS = {
@@ -38,26 +39,20 @@ class MultidisciplinaryCatalogueTests(unittest.TestCase):
         self.assertEqual(main.resolve_profile("business_management")["key"], "business_management")
 
     def test_computer_science_exposes_its_supported_source_layers(self) -> None:
-        self.assertEqual(
-            main.available_source_ids("computer_science"),
-            (
-                "arxiv",
-                "pubmed",
-                "crossref",
-                "rss",
-                "openalex",
-                "ccf_conferences",
-                "official_rss",
-                "hackernews",
-                "github_releases",
-            ),
+        source_ids = set(main.available_source_ids("computer_science"))
+        self.assertTrue(
+            {
+                "arxiv", "pubmed", "crossref", "rss", "openalex",
+                "ccf_conferences", "official_rss", "hackernews", "github_releases",
+            }.issubset(source_ids)
         )
+        self.assertTrue({"openreview", "dblp", "usenix"}.issubset(source_ids))
+        self.assertNotIn("acm", source_ids)
 
     def test_economics_exposes_shared_user_selectable_sources(self) -> None:
-        self.assertEqual(
-            main.available_source_ids("economics"),
-            ("arxiv", "pubmed", "openalex", "hackernews"),
-        )
+        source_ids = set(main.available_source_ids("economics"))
+        self.assertTrue({"arxiv", "pubmed", "openalex", "hackernews"}.issubset(source_ids))
+        self.assertTrue({"nber_working_papers", "imf", "world_bank"}.issubset(source_ids))
 
     def test_collect_items_keeps_legacy_empty_source_selection_collect_all_behavior(self) -> None:
         profile = {**main.resolve_profile("chemistry"), "enabled_source_ids": ()}
@@ -70,7 +65,7 @@ class MultidisciplinaryCatalogueTests(unittest.TestCase):
             patch.object(main, "fetch_arxiv", return_value=[arxiv_item]),
             patch.object(main, "fetch_pubmed", return_value=[pubmed_item]),
             patch.object(main, "fetch_crossref", return_value=([], [])),
-            patch.object(main, "fetch_rss", return_value=([], [])),
+            patch.object(main, "fetch_rss", return_value=([], [])) as fetch_rss,
             patch.object(main, "fetch_openalex", return_value=[]),
         ):
             items, _ = main.collect_items(
@@ -78,6 +73,7 @@ class MultidisciplinaryCatalogueTests(unittest.TestCase):
             )
 
         self.assertEqual([item.title for item in items], ["arXiv legacy result", "PubMed legacy result"])
+        self.assertEqual(fetch_rss.call_count, 1)
 
     def test_collect_items_skips_every_collector_for_an_explicit_empty_selection(self) -> None:
         profile = {
@@ -170,6 +166,48 @@ class PublicSourceFetcherTests(unittest.TestCase):
         self.assertEqual(items[0].source, "OpenAlex: Journal of Data Quality")
         self.assertEqual(items[0].authors, ["Ada Lovelace"])
         self.assertEqual(session.calls[0][1]["filter"], "from_publication_date:2026-07-28,to_publication_date:2026-07-29,type:article")
+
+    def test_who_public_api_maps_recent_official_news(self) -> None:
+        session = RecordingSession(
+            {
+                "https://www.who.int/api/hubs/newsitems": {
+                    "value": [
+                        {
+                            "Title": "WHO publishes a public-health update",
+                            "PublicationDate": "2026-07-28T12:00:00Z",
+                            "ItemDefaultUrl": "https://www.who.int/news/item/update",
+                            "Content": "Official public-health information.",
+                        },
+                        {
+                            "Title": "Old WHO update",
+                            "PublicationDate": "2026-07-20T12:00:00Z",
+                            "ItemDefaultUrl": "https://www.who.int/news/item/old",
+                        },
+                    ]
+                }
+            }
+        )
+
+        items = main.fetch_who_news(session, self.since, self.until, 10, self.profile)
+
+        self.assertEqual([item.title for item in items], ["WHO publishes a public-health update"])
+        self.assertEqual(items[0].source_id, "who")
+        self.assertEqual(items[0].source_kind, "official")
+
+    def test_registry_uses_current_public_bls_and_congress_feeds(self) -> None:
+        self.assertEqual(
+            RSS_FEED_REGISTRY["national_statistics"][0]["url"],
+            "https://www.bls.gov/feed/bls_latest.rss",
+        )
+        self.assertEqual(
+            RSS_FEED_REGISTRY["government_legislation"][0]["url"],
+            "https://www.congress.gov/rss/most-viewed-bills.xml",
+        )
+        self.assertEqual(
+            RSS_FEED_REGISTRY["bis"][0]["url"],
+            "https://www.bis.org/doclist/all_pressrels.rss",
+        )
+        self.assertNotIn("judicial_opinions", RSS_FEED_REGISTRY)
 
     def test_hacker_news_keeps_recent_stories_as_community_signals(self) -> None:
         session = RecordingSession(
@@ -437,6 +475,34 @@ class PublicSourceFetcherTests(unittest.TestCase):
         self.assertTrue(next(status for status in statuses if status.name == "Hacker News").success is False)
         self.assertEqual(next(status for status in statuses if status.name == "GitHub Releases").item_count, 1)
 
+    def test_collect_items_runs_a_selected_catalogue_rss_source(self) -> None:
+        """A selected source must not be skipped just because legacy RSS also knows it."""
+
+        profile = {
+            **main.resolve_profile("chemistry"),
+            "enabled_source_ids": ("acs",),
+            "source_selection_explicit": True,
+        }
+        article = main.NewsItem(
+            "Catalysis result",
+            "ACS Publications",
+            self.until,
+            "https://example.test/acs",
+            source_id="acs",
+            source_layer="academic_research",
+        )
+        status = main.source_status("RSS: ACS Publications", True, "acs", item_count=1)
+        with (
+            patch.object(main, "build_session", return_value=object()),
+            patch.object(main, "fetch_rss", return_value=([article], [status])),
+        ):
+            items, statuses = main.collect_items(
+                SimpleNamespace(source_limit=10), self.since, self.until, profile
+            )
+
+        self.assertEqual([item.source_id for item in items], ["acs"])
+        self.assertEqual([entry.source_id for entry in statuses], ["acs"])
+
     def test_collect_items_isolates_new_public_source_failures_and_never_runs_unregistered_catalogue_ids(self) -> None:
         profile = {
             **main.resolve_profile("medicine"),
@@ -457,6 +523,7 @@ class PublicSourceFetcherTests(unittest.TestCase):
             patch.object(main, "fetch_biorxiv", side_effect=RuntimeError("temporary preprint API error")),
             patch.object(main, "fetch_medrxiv", return_value=[]),
             patch.object(main, "fetch_clinical_trials", return_value=[clinical_trials_item]),
+            patch.object(main, "fetch_who_news", return_value=[]),
         ):
             items, statuses = main.collect_items(
                 SimpleNamespace(source_limit=10), self.since, self.until, profile
@@ -467,7 +534,9 @@ class PublicSourceFetcherTests(unittest.TestCase):
         trial_status = next(status for status in statuses if status.source_id == "clinical_trials")
         self.assertEqual(trial_status.source_layer, "official_data_policy")
         self.assertEqual(trial_status.credibility, 5)
-        self.assertNotIn("who", main.available_source_ids("medicine"))
+        source_ids = set(main.available_source_ids("medicine"))
+        self.assertIn("who", source_ids)
+        self.assertNotIn("cochrane", source_ids)
 
     def test_each_new_public_collector_records_its_own_failure_without_stopping_the_task(self) -> None:
         fetchers = {

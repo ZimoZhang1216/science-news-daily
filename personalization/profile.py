@@ -81,9 +81,16 @@ def compose_effective_profile(profile: ResearchProfileInput, user_id: str) -> di
 def item_matches_research_profile(item: main.NewsItem, profile: ResearchProfileInput) -> bool:
     """Apply user-selected include and exclude terms after base-profile collection."""
 
-    haystack = f"{item.title} {item.abstract}".casefold()
-    if any(_matches_keyword(haystack, term) for term in profile.exclude_keywords):
+    if item_is_excluded_from_research_profile(item, profile):
         return False
+    haystack = f"{item.title} {item.abstract}".casefold()
     return not profile.include_keywords or any(
         _matches_keyword(haystack, term) for term in profile.include_keywords
     )
+
+
+def item_is_excluded_from_research_profile(item: main.NewsItem, profile: ResearchProfileInput) -> bool:
+    """Keep explicit user exclusions in force for both strict and fallback selection."""
+
+    haystack = f"{item.title} {item.abstract}".casefold()
+    return any(_matches_keyword(haystack, term) for term in profile.exclude_keywords)

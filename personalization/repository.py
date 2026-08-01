@@ -330,6 +330,69 @@ class PersonalizationRepository:
             "INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES (?, ?)",
             ("source_funnel_metrics_v1", _timestamp()),
         )
+        self._advance_legacy_terminal_delivery_schedules()
+
+    def _advance_legacy_terminal_delivery_schedules(self) -> None:
+        """Repair schedules stranded by terminal failures created before retry exhaustion advanced them."""
+
+        migration_name = "advance_terminal_delivery_schedule_v1"
+        marker = self.connection.execute(
+            "SELECT 1 FROM schema_migrations WHERE name = ?", (migration_name,)
+        ).fetchone()
+        if marker is not None:
+            return
+        cursor = self.connection.execute("SELECT * FROM schedules WHERE enabled = 1")
+        fetchall = getattr(cursor, "fetchall", None)
+        if fetchall is None:
+            # Lightweight replica bootstrap doubles do not expose result rows.
+            # There is no persisted scheduler state to repair in that path.
+            self.connection.execute(
+                "INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+                (migration_name, _timestamp()),
+            )
+            return
+        schedules = [self._normalise_row(cursor, row) for row in fetchall()]
+        for schedule_row in schedules:
+            schedule_id = self._value(schedule_row, "id")
+            delivery_cursor = self.connection.execute(
+                """
+                SELECT * FROM deliveries
+                WHERE schedule_id = ? AND mode = 'automatic' AND status = 'failed'
+                ORDER BY updated_at DESC LIMIT 1
+                """,
+                (schedule_id,),
+            )
+            delivery_row = self._normalise_row(delivery_cursor, delivery_cursor.fetchone())
+            if delivery_row is None:
+                continue
+            failed_at = _to_datetime(self._value(delivery_row, "updated_at"))
+            next_run_at = _to_datetime(self._value(schedule_row, "next_run_at"))
+            if failed_at is None or next_run_at is None or next_run_at > failed_at:
+                continue
+            schedule = ScheduleInput.from_form(
+                frequency=self._value(schedule_row, "frequency"),
+                weekday=self._value(schedule_row, "weekday"),
+                timezone=self._value(schedule_row, "timezone"),
+                local_send_time=self._value(schedule_row, "local_send_time"),
+                enabled=True,
+            )
+            self.connection.execute(
+                """
+                UPDATE schedules SET last_run_at = ?, next_run_at = ?, updated_at = ?
+                WHERE id = ? AND enabled = 1 AND next_run_at <= ?
+                """,
+                (
+                    _timestamp(failed_at),
+                    _timestamp(compute_next_run(schedule, failed_at)),
+                    _timestamp(failed_at),
+                    schedule_id,
+                    _timestamp(failed_at),
+                ),
+            )
+        self.connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+            (migration_name, _timestamp()),
+        )
 
     def close(self) -> None:
         with self._connection_lock:
@@ -1656,6 +1719,34 @@ class PersonalizationRepository:
                 "UPDATE report_runs SET status = 'failed', error_summary = ?, finished_at = ? WHERE id = ?",
                 (error_summary[:500], timestamp, self._value(updated, "report_run_id")),
             )
+            if retry_exhausted and self._value(updated, "schedule_id"):
+                failed_at = (now_utc or _utc_now()).astimezone(UTC)
+                schedule_id = self._value(updated, "schedule_id")
+                self._execute(
+                    "UPDATE schedules SET last_run_at = ?, updated_at = ? WHERE id = ?",
+                    (timestamp, timestamp, schedule_id),
+                )
+                schedule_row = self._fetchone("SELECT * FROM schedules WHERE id = ?", (schedule_id,))
+                if schedule_row is not None and bool(self._value(schedule_row, "enabled")):
+                    schedule = ScheduleInput.from_form(
+                        frequency=self._value(schedule_row, "frequency"),
+                        weekday=self._value(schedule_row, "weekday"),
+                        timezone=self._value(schedule_row, "timezone"),
+                        local_send_time=self._value(schedule_row, "local_send_time"),
+                        enabled=True,
+                    )
+                    self._execute(
+                        """
+                        UPDATE schedules SET next_run_at = ?, updated_at = ?
+                        WHERE id = ? AND enabled = 1 AND next_run_at <= ?
+                        """,
+                        (
+                            _timestamp(compute_next_run(schedule, failed_at)),
+                            timestamp,
+                            schedule_id,
+                            timestamp,
+                        ),
+                    )
             self._append_event(
                 self._value(updated, "report_run_id"),
                 delivery_id,

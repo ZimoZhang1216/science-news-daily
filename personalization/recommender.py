@@ -204,16 +204,11 @@ def _build_recommendation(
 
     source_ids = response["source_ids"]
     assert isinstance(source_ids, list)
-    import logging
-    LOGGER = logging.getLogger(__name__)
-    allowed = set(automatic_source_ids(base_profile))
-    invalid_sources = set(source_ids) - allowed
-    if invalid_sources:
-        LOGGER.warning("filtered unsupported source_ids for %s: %s", base_profile, ", ".join(sorted(invalid_sources)))
-    source_ids = [s for s in source_ids if s in allowed]
-    if not source_ids:
-        LOGGER.warning("source_ids empty after filtering, fell back to defaults for %s", base_profile)
-        source_ids = list(allowed)
+    if invalid_sources := set(source_ids) - set(automatic_source_ids(base_profile)):
+        raise RecommendationError(
+            f"source_ids contain unsupported automatic values for {base_profile}: "
+            f"{', '.join(sorted(invalid_sources))}"
+        )
     source_layer_ids = response.get("source_layer_ids", [])
     assert isinstance(source_layer_ids, list)
     if invalid_layers := set(source_layer_ids) - set(automatic_source_layers(base_profile)):

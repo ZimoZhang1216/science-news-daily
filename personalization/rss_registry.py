@@ -120,13 +120,6 @@ RSS_FEED_REGISTRY: dict[str, list[dict[str, Any]]] = {
             "broad": True,
         },
     ],
-    "who": [
-        {
-            "source": "WHO News",
-            "url": "https://www.who.int/rss-feeds/news/en/",
-            "broad": True,
-        },
-    ],
     "cdc": [
         {
             "source": "CDC Newsroom",
@@ -481,7 +474,7 @@ RSS_FEED_REGISTRY.update({
     "bis": [
         {
             "source": "BIS Press Releases",
-            "url": "https://www.bis.org/press/rss/rss_bis.xml",
+            "url": "https://www.bis.org/doclist/all_pressrels.rss",
             "broad": True,
         },
     ],
@@ -551,7 +544,7 @@ RSS_FEED_REGISTRY.update({
     "national_statistics": [
         {
             "source": "BLS News Releases",
-            "url": "https://www.bls.gov/feed/bls_news_releases.xml",
+            "url": "https://www.bls.gov/feed/bls_latest.rss",
             "broad": True,
         },
     ],
@@ -665,14 +658,7 @@ RSS_FEED_REGISTRY.update({
     "government_legislation": [
         {
             "source": "US Congress Bills",
-            "url": "https://www.congress.gov/rss/amendments-to-the-constitution.xml",
-            "broad": True,
-        },
-    ],
-    "judicial_opinions": [
-        {
-            "source": "Supreme Court Opinions",
-            "url": "https://www.supremecourt.gov/orders/ordersrss.xml",
+            "url": "https://www.congress.gov/rss/most-viewed-bills.xml",
             "broad": True,
         },
     ],

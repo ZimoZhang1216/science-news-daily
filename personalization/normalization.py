@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import logging
+
+LOGGER = logging.getLogger(__name__)
 
 from personalization.models import ProfileRecommendation, RecommendationRequest
 from personalization.recommender import recommend_profile
@@ -42,7 +45,8 @@ def normalize_existing_profiles(
             )
             recommendation = recommender(request)
             repository.save_profile_version(user.id, recommendation.profile)
-        except Exception:  # noqa: BLE001 - one stale or malformed profile must not block the batch.
+        except Exception as exc:  # noqa: BLE001 - one stale or malformed profile must not block the batch.
+            LOGGER.warning("normalize user %s: %s: %s", user.id, type(exc).__name__, exc)
             failed += 1
         else:
             normalized += 1

@@ -55,6 +55,7 @@ class CustomRunnerTests(unittest.TestCase):
         profile: dict,
         history: dict[str, set[str]],
         item_filter,
+        supplement_filter,
     ) -> main.ReportGenerationResult:
         self.generated_options.append(options)
         output_path = options.output_dir / "report.docx"
@@ -104,6 +105,7 @@ class CustomRunnerTests(unittest.TestCase):
         profile: dict,
         history: dict[str, set[str]],
         item_filter,
+        supplement_filter,
     ) -> main.ReportGenerationResult:
         return main.ReportGenerationResult(
             output_path=None,

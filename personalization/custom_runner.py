@@ -10,7 +10,11 @@ from typing import Any, Callable
 
 import main
 
-from personalization.profile import compose_effective_profile, item_matches_research_profile
+from personalization.profile import (
+    compose_effective_profile,
+    item_is_excluded_from_research_profile,
+    item_matches_research_profile,
+)
 from personalization.repository import (
     DeliveryClaim,
     DeliveryExecutionContext,
@@ -25,6 +29,7 @@ class RunnerServices:
             main.ReportGenerationOptions,
             dict[str, Any],
             dict[str, set[str]],
+            Callable[[main.NewsItem], bool],
             Callable[[main.NewsItem], bool],
         ],
         main.ReportGenerationResult,
@@ -136,6 +141,10 @@ def _generate_claimed_report(
         effective_profile,
         repository.history_for_user(claim.user_id, claim.report_date, 10),
         lambda item: item_matches_research_profile(item, context.profile.input),
+        lambda item: (
+            not item_is_excluded_from_research_profile(item, context.profile.input)
+            and main.is_profile_relevant(item, effective_profile)
+        ),
     )
     repository.record_generation_metrics(
         claim.report_run_id,
@@ -152,8 +161,9 @@ def _generate_claimed_report(
         return None
     if result.failure_exit_code is not None or not result.ai_generated or result.output_path is None:
         stage = result.failure_stage or ("fetch" if result.failure_exit_code is not None else "ai")
+        failure_reason = result.failure_reason.strip() or f"{stage.title()} stage did not produce a deliverable report"
         repository.mark_retryable_failure(
-            claim.delivery_id, stage, f"{stage.title()} stage did not produce a deliverable report", now_utc
+            claim.delivery_id, stage, failure_reason, now_utc
         )
         return None
     pdf_path: Path | None = None

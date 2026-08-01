@@ -272,13 +272,16 @@ class TrustedSourceCatalogueTests(unittest.TestCase):
             }.issubset(source_ids)
         )
 
-    def test_available_source_ids_preserve_exact_legacy_business_management_ids(self) -> None:
-        """A catalogue scope must not make RSS executable when a profile has no feed configuration."""
+    def test_available_source_ids_keep_legacy_ids_and_registered_catalogue_feeds(self) -> None:
+        """A registered RSS source is selectable; a source without a collector is not."""
 
-        self.assertEqual(
-            main.available_source_ids("business_management"),
-            ("arxiv", "pubmed", "crossref", "openalex", "hackernews"),
-        )
+        source_ids = set(main.available_source_ids("business_management"))
+        self.assertTrue({"arxiv", "pubmed", "crossref", "openalex", "hackernews"}.issubset(source_ids))
+        self.assertIn("nber_working_papers", source_ids)
+        self.assertNotIn("rss", source_ids)
+        # NASA ADS is catalogued but needs a token and has no registered
+        # collector, so it must remain a transparent directory entry.
+        self.assertNotIn("nasa_ads", main.available_source_ids("natural_sciences"))
         self.assertEqual(
             main.available_source_ids({"rss_feeds": []}),
             ("arxiv", "pubmed", "openalex", "hackernews"),

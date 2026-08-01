@@ -122,6 +122,46 @@ class UnifiedSchedulerRepositoryTests(unittest.TestCase):
 
         self.assertIsNotNone(retry)
 
+    def test_retry_exhaustion_advances_the_schedule_to_its_next_period(self) -> None:
+        claim = self.repository.claim_next_due_delivery(self.now, "worker-a")
+        assert claim is not None
+        self.repository.mark_retryable_failure(claim.delivery_id, "fetch", "first failure", self.now)
+
+        second_attempt_at = self.now + timedelta(minutes=31)
+        second_claim = self.repository.claim_next_due_delivery(second_attempt_at, "worker-b")
+        assert second_claim is not None
+        self.repository.mark_retryable_failure(second_claim.delivery_id, "fetch", "second failure", second_attempt_at)
+
+        third_attempt_at = second_attempt_at + timedelta(minutes=61)
+        third_claim = self.repository.claim_next_due_delivery(third_attempt_at, "worker-c")
+        assert third_claim is not None
+        self.repository.mark_retryable_failure(third_claim.delivery_id, "fetch", "terminal failure", third_attempt_at)
+
+        delivery = self.repository.get_delivery(claim.delivery_id)
+        schedule = self.repository.get_schedule(self.user_id)
+        self.assertEqual(delivery.status, "failed")
+        self.assertEqual(schedule.next_run_at, datetime(2026, 7, 28, 23, 30, tzinfo=UTC))
+
+    def test_initialize_advances_a_legacy_terminal_failure_that_left_the_schedule_due(self) -> None:
+        claim = self.repository.claim_next_due_delivery(self.now, "worker-a")
+        assert claim is not None
+        self.repository.set_schedule_next_run(self.schedule.id, self.now - timedelta(minutes=1))
+        self.repository._execute(
+            "UPDATE deliveries SET status = 'failed', updated_at = ? WHERE id = ?",
+            (self.now.isoformat(), claim.delivery_id),
+        )
+        self.repository._execute(
+            "DELETE FROM schema_migrations WHERE name = 'advance_terminal_delivery_schedule_v1'"
+        )
+        self.repository.connection.commit()
+
+        self.repository.initialize()
+
+        self.assertEqual(
+            self.repository.get_schedule(self.user_id).next_run_at,
+            datetime(2026, 7, 28, 23, 30, tzinfo=UTC),
+        )
+
     def test_expired_sending_delivery_is_not_automatically_retried(self) -> None:
         claim = self.repository.claim_next_due_delivery(self.now, "worker-a")
         assert claim is not None
@@ -223,7 +263,7 @@ class UnifiedSchedulerRunnerTests(unittest.TestCase):
         self.repository.set_schedule_next_run(schedule.id, self.now - timedelta(minutes=1))
         return user_id
 
-    def _generator(self, options, profile, history, item_filter):
+    def _generator(self, options, profile, history, item_filter, supplement_filter):
         output_path = options.output_dir / "report.docx"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"docx")
@@ -320,10 +360,10 @@ class UnifiedSchedulerRunnerTests(unittest.TestCase):
         user_id = self._user("Alice")
         mail_attempts: list[str] = []
 
-        def generator(options, profile, history, item_filter):
+        def generator(options, profile, history, item_filter, supplement_filter):
             delivery = self.repository.list_deliveries_for_user(user_id)[0]
             self.assertTrue(self.repository.cancel_delivery(delivery.id, self.now))
-            return self._generator(options, profile, history, item_filter)
+            return self._generator(options, profile, history, item_filter, supplement_filter)
 
         services = self._services()
         services = RunnerServices(
@@ -355,7 +395,7 @@ class UnifiedSchedulerRunnerTests(unittest.TestCase):
         failing_user = self._user("Alice")
         successful_user = self._user("Bob")
 
-        def generator(options, profile, history, item_filter):
+        def generator(options, profile, history, item_filter, supplement_filter):
             if profile["custom_user_id"] == failing_user:
                 return main.ReportGenerationResult(
                     output_path=None,
@@ -367,7 +407,7 @@ class UnifiedSchedulerRunnerTests(unittest.TestCase):
                     ai_generated=False,
                     failure_exit_code=4,
                 )
-            return self._generator(options, profile, history, item_filter)
+            return self._generator(options, profile, history, item_filter, supplement_filter)
 
         services = self._services()
         services = RunnerServices(
@@ -395,7 +435,7 @@ class UnifiedSchedulerRunnerTests(unittest.TestCase):
     def test_word_generation_failure_is_recorded_as_word_stage(self) -> None:
         user_id = self._user("Alice")
 
-        def generator(options, profile, history, item_filter):
+        def generator(options, profile, history, item_filter, supplement_filter):
             return main.ReportGenerationResult(
                 output_path=None,
                 selected_items=[],
@@ -426,6 +466,45 @@ class UnifiedSchedulerRunnerTests(unittest.TestCase):
 
         self.assertEqual(summary.failed, 1)
         self.assertEqual(self.repository.list_deliveries_for_user(user_id)[0].error_stage, "word")
+
+    def test_ai_generation_failure_keeps_the_provider_reason_in_task_details(self) -> None:
+        user_id = self._user("Alice")
+
+        def generator(options, profile, history, item_filter, supplement_filter):
+            return main.ReportGenerationResult(
+                output_path=None,
+                selected_items=[],
+                source_statuses=[],
+                report_payload={"ai_generated": False, "ai_error": "deepseek: empty response content"},
+                collected_count=1,
+                selected_count=1,
+                ai_generated=False,
+                failure_exit_code=4,
+                failure_stage="ai",
+                failure_reason="deepseek: empty response content",
+            )
+
+        services = self._services()
+        summary = run_due_deliveries(
+            self.repository,
+            self.now,
+            RunnerServices(
+                generator=generator,
+                pdf_converter=services.pdf_converter,
+                mailer=services.mailer,
+                github_run_id=services.github_run_id,
+                output_root=services.output_root,
+            ),
+            max_jobs=1,
+            deadline=datetime.now(UTC) + timedelta(minutes=10),
+            execution_id="worker-a",
+        )
+
+        self.assertEqual(summary.failed, 1)
+        self.assertEqual(
+            self.repository.list_deliveries_for_user(user_id)[0].last_error,
+            "deepseek: empty response content",
+        )
 
     def test_smtp_transport_exception_is_not_automatically_retried(self) -> None:
         user_id = self._user("Alice")

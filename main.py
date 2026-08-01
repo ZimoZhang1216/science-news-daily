@@ -1262,8 +1262,18 @@ BUSINESS_MANAGEMENT_SOURCE_WEIGHTS = {
 
 ACADEMIC_SOURCE_IDS = ("arxiv", "pubmed", "crossref", "rss", "openalex", "ccf_conferences")
 PUBLIC_SOURCE_IDS = ("official_rss", "hackernews", "github_releases")
-PUBLIC_API_SOURCE_IDS = ("europe_pmc", "biorxiv", "medrxiv", "clinical_trials", "zbmath", "nasa_ads", "openreview", "dblp", "semantic_scholar", "papers_with_code", "open_library", "dpla", "eric", "doaj", "noaa", "copernicus", "national_statistics", "international_statistics", "world_bank", "oecd", "bis", "imf", "fred", "usgs", "usda", "fao", "government_legislation", "acm", "acs", "aip", "aps", "asa", "asme", "cdc", "central_banks", "cepr", "cern", "cgiar", "chemistry_world", "cochrane", "earthdata", "energy_agencies", "energy_standards", "esa", "etsi", "exchanges", "faa", "fiscal_regulators", "ieee", "ietf", "ims", "industrial_automation_associations", "ipcc", "iso_standards_metadata", "itu", "jstor_metadata", "judicial_opinions", "mit_csail_news", "museums_heritage", "nasa", "national_libraries", "national_science_agencies", "nature_chemistry", "nber_working_papers", "nih", "project_euclid", "psycinfo_metadata", "repec", "rsc", "sae", "ssrn", "think_tanks", "transport_associations", "transport_departments", "unep", "unesco", "unicef", "united_nations", "usenix", "who", "wmo", "wto", "wvs", "3gpp")
-SUPPORTED_SOURCE_IDS = frozenset((*ACADEMIC_SOURCE_IDS, *PUBLIC_SOURCE_IDS, *PUBLIC_API_SOURCE_IDS))
+PUBLIC_API_SOURCE_IDS = ("europe_pmc", "biorxiv", "medrxiv", "clinical_trials", "who")
+# These entries are executable through the single existing RSS collector.
+# Catalogue records without a registered feed stay visible but cannot become a
+# saved source selection or an AI recommendation.
+CATALOGUE_RSS_SOURCE_IDS = frozenset(RSS_FEED_REGISTRY)
+# Older saved profiles can contain a catalogue ID that is no longer backed by
+# a collector.  Keep those rows readable; the executable allowlist below is
+# still the only source of UI selection, AI recommendation, and collection.
+CATALOGUE_SOURCE_IDS = frozenset(source.id for source in SOURCE_DEFINITIONS)
+SUPPORTED_SOURCE_IDS = frozenset(
+    (*ACADEMIC_SOURCE_IDS, *PUBLIC_SOURCE_IDS, *PUBLIC_API_SOURCE_IDS, *CATALOGUE_SOURCE_IDS)
+)
 # These sources accept topic terms directly, so a user can opt into them even
 # when their base discipline has no pre-configured journal or feed catalogue.
 SHARED_USER_SOURCE_IDS = ("arxiv", "pubmed", "openalex", "hackernews")
@@ -2410,7 +2420,7 @@ def available_source_ids(profile_key: str | dict[str, Any]) -> tuple[str, ...]:
             if source.collectable
             and (
                 source.id in PUBLIC_API_SOURCE_IDS
-                or source.id in RSS_FEED_REGISTRY
+                or source.id in CATALOGUE_RSS_SOURCE_IDS
             )
         )
 
@@ -2897,6 +2907,52 @@ def fetch_clinical_trials(
         item.field_name = classify_field(item.title, item.abstract, profile)
         if is_profile_relevant(item, profile):
             items.append(item)
+    return items
+
+
+def fetch_who_news(
+    session: requests.Session,
+    since: datetime,
+    until: datetime,
+    max_items: int,
+    profile: dict[str, Any],
+) -> list[NewsItem]:
+    """Map WHO's public news API to official, date-bounded news items."""
+
+    response = session.get("https://www.who.int/api/hubs/newsitems", timeout=30)
+    response.raise_for_status()
+    payload = response.json()
+    records = payload.get("value", []) if isinstance(payload, dict) else []
+    items: list[NewsItem] = []
+    for record in records if isinstance(records, list) else []:
+        if not isinstance(record, dict):
+            continue
+        published = parse_datetime(
+            record.get("PublicationDate") or record.get("PublicationDateAndTime") or record.get("LastModified")
+        )
+        if published and not since <= published <= until:
+            continue
+        title = clean_text(record.get("Title", ""))
+        link = clean_text(record.get("ItemDefaultUrl") or record.get("Url") or "")
+        if link.startswith("/"):
+            link = f"https://www.who.int{link}"
+        if not title or not link:
+            continue
+        item = NewsItem(
+            title=title,
+            source="WHO News",
+            published=published,
+            link=link,
+            abstract=clean_text(record.get("Content") or record.get("Summary") or "")
+            or "WHO 官方公开资讯未提供摘要；请通过链接核验原文。",
+            source_kind="official",
+            source_id="who",
+            source_layer="official_data_policy",
+        )
+        item.field_name = classify_field(item.title, item.abstract, profile)
+        items.append(item)
+        if len(items) >= max_items:
+            break
     return items
 
 
@@ -4473,6 +4529,8 @@ def generate_ai_summaries(
                     request_kwargs["max_tokens"] = int(request_kwargs.get("max_tokens", 3000) * 2.5)
                     response = client.chat.completions.create(**request_kwargs)
                 raw_response = chat_response_text(response)
+                if not raw_response.strip():
+                    raise RuntimeError("empty response content")
                 return parse_json_object(raw_response)
             except Exception as exc:  # noqa: BLE001 - AI failure should not block the document.
                 local_last_error = exc
@@ -4634,7 +4692,10 @@ def generate_ai_summaries(
     if parsed is None:
         LOGGER.warning("%s summary generation failed; using fallback summaries: %s", llm_config.provider, last_error)
         apply_fallback_summaries(items, profile)
-        return fallback_report_payload(items, profile)
+        return {
+            **fallback_report_payload(items, profile),
+            "ai_error": f"{llm_config.provider}: {clean_text(str(last_error)) or 'unknown AI response error'}",
+        }
 
     parsed = repair_missing_ai_items(parsed)
 
@@ -6116,19 +6177,29 @@ def collect_items(
                 source_status("RSS", False, "rss", error=f"{type(exc).__name__}: {exc}")
             )
 
-    # Collect catalogue RSS feeds for enabled source IDs that have RSS URLs registered.
-    # Collect catalogue RSS feeds for sources that have URL registrations.
-    # Only run for sources not already covered by existing dedicated collectors.
-    _already_collected = {"arxiv", "pubmed", "crossref", "rss", "openalex", "ccf_conferences", "biorxiv", "medrxiv", "acs", "chemistry_world", "nature_chemistry", "official_rss"}
-    _collectable_profile_ids = {
-        source.id
-        for source in source_definitions_for_profile(profile["key"])
-        if source.collectable and source.id in RSS_FEED_REGISTRY
-    }
-    _catalog_rss_ids = _collectable_profile_ids if collect_all_sources else (
-        _collectable_profile_ids & enabled_source_ids
+    # Catalogue RSS feeds are another input to the existing RSS collector.
+    # Do not assume an ad-hoc or legacy profile dictionary carries a catalogue
+    # key; those profiles must keep their established collection behaviour.
+    profile_key = profile.get("key")
+    _collectable_profile_ids = (
+        {
+            source.id
+            for source in source_definitions_for_profile(profile_key)
+            if source.collectable and source.id in CATALOGUE_RSS_SOURCE_IDS
+        }
+        if isinstance(profile_key, str)
+        else set()
     )
-    for source_id in sorted(_catalog_rss_ids - _already_collected):
+    # Fixed five-subject reports retain their historical source set.  New
+    # catalogue RSS entries run only after a user explicitly selects them.
+    _catalog_rss_ids = (
+        _collectable_profile_ids & enabled_source_ids
+        if profile.get("source_selection_explicit", False)
+        else set()
+    )
+    # bioRxiv and medRxiv already have dedicated public collectors.  Their
+    # RSS mirrors must not create a second status row or duplicate raw items.
+    for source_id in sorted(_catalog_rss_ids - set(PUBLIC_API_SOURCE_IDS)):
         catalog_feeds = rss_feeds_for_source(source_id)
         if not catalog_feeds:
             continue
@@ -6201,6 +6272,10 @@ def collect_items(
     if "clinical_trials" in enabled_source_ids:
         supplementary_fetchers.append(
             ("ClinicalTrials.gov", "clinical_trials", lambda: fetch_clinical_trials(session, since, until, args.source_limit, profile))
+        )
+    if "who" in enabled_source_ids:
+        supplementary_fetchers.append(
+            ("WHO News", "who", lambda: fetch_who_news(session, since, until, args.source_limit, profile))
         )
 
     for source_name, source_id, fetcher in supplementary_fetchers:
@@ -6389,6 +6464,7 @@ class ReportGenerationResult:
     ai_generated: bool
     failure_exit_code: int | None
     failure_stage: str | None = None
+    failure_reason: str = ""
     matched_count: int = 0
     deduplicated_count: int = 0
     history_excluded_count: int = 0
@@ -6400,6 +6476,7 @@ def generate_report(
     profile: dict[str, Any],
     history: dict[str, set[str]] | None = None,
     item_filter: Callable[[NewsItem], bool] | None = None,
+    supplement_filter: Callable[[NewsItem], bool] | None = None,
 ) -> ReportGenerationResult:
     """Generate one report without sending email or persisting local history."""
 
@@ -6416,7 +6493,29 @@ def generate_report(
     filtered = [item for item in collected if item_filter is None or item_filter(item)]
     matched_count = len(filtered)
     profile_filter_fallback = False
-    if item_filter is not None and not filtered and collected:
+    minimum_strict_matches = min(3, options.max_items)
+    fallback_target = min(5, options.max_items)
+    if (
+        item_filter is not None
+        and supplement_filter is not None
+        and len(filtered) < minimum_strict_matches
+    ):
+        selected_ids = {id(item) for item in filtered}
+        supplements = [
+            item
+            for item in collected
+            if id(item) not in selected_ids and supplement_filter(item)
+        ]
+        needed = max(0, fallback_target - len(filtered))
+        if supplements and needed:
+            LOGGER.warning(
+                "Only %d item(s) matched custom keywords; supplementing with up to %d base-relevant item(s).",
+                len(filtered),
+                needed,
+            )
+            filtered.extend(supplements[:needed])
+            profile_filter_fallback = True
+    elif item_filter is not None and not filtered and collected:
         # Source collectors already enforce the base discipline profile.  A
         # strict user-keyword pass can otherwise turn a useful low-volume
         # daily into an empty report, so retain those base-relevant items.
@@ -6511,7 +6610,8 @@ def generate_report(
         )
 
     if options.require_ai and not report_payload.get("ai_generated"):
-        LOGGER.error("AI summary is required, but model generation was incomplete.")
+        failure_reason = clean_text(str(report_payload.get("ai_error", ""))) or "AI summary is required, but model generation was incomplete."
+        LOGGER.error("AI summary is required, but model generation was incomplete: %s", failure_reason)
         return ReportGenerationResult(
             output_path=None,
             selected_items=prepared,
@@ -6525,6 +6625,7 @@ def generate_report(
             ai_generated=False,
             failure_exit_code=4,
             failure_stage="ai",
+            failure_reason=failure_reason,
             profile_filter_fallback=profile_filter_fallback,
         )
 

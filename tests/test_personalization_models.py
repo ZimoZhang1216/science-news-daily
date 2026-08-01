@@ -1,3 +1,4 @@
+import os
 import unittest
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -45,6 +46,46 @@ class PersonalizationModelTests(unittest.TestCase):
     def test_recommendation_request_requires_the_three_operator_inputs(self) -> None:
         with self.assertRaisesRegex(ValueError, "research_topic is required"):
             RecommendationRequest.from_form("张三", "reader@example.com", "")
+
+    def test_empty_model_response_records_a_deliverable_failure_reason(self) -> None:
+        item = main.NewsItem(
+            "Battery interface transport",
+            "arXiv",
+            datetime(2026, 7, 28, tzinfo=timezone.utc),
+            "https://example.test/battery",
+            abstract="Battery ion transport study.",
+            item_id="N001",
+        )
+
+        class EmptyResponseClient:
+            calls = 0
+
+            class chat:
+                class completions:
+                    @staticmethod
+                    def create(**_kwargs):
+                        EmptyResponseClient.calls += 1
+                        return type(
+                            "Response",
+                            (),
+                            {"choices": [type("Choice", (), {"message": type("Message", (), {"content": ""})()})()]},
+                        )()
+
+        with (
+            patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}, clear=False),
+            patch.object(main, "OpenAI", return_value=EmptyResponseClient()),
+        ):
+            payload = main.generate_ai_summaries(
+                [item],
+                "deepseek-v4-flash",
+                10,
+                main.resolve_profile("chemistry"),
+                provider_override="deepseek",
+            )
+
+        self.assertFalse(payload["ai_generated"])
+        self.assertEqual(payload["ai_error"], "deepseek: empty response content")
+        self.assertEqual(EmptyResponseClient.calls, 2)
 
     def test_recommendation_result_uses_a_disabled_schedule(self) -> None:
         result = ProfileRecommendation(
@@ -130,6 +171,24 @@ class PersonalizationModelTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "source_layer_ids"):
             self.valid_profile(source_layer_ids=("untrusted_layer",))
+
+    def test_profile_input_preserves_a_legacy_directory_only_source(self) -> None:
+        profile = ResearchProfileInput.from_form(
+            base_profile="economics",
+            research_topic="宏观经济与金融动态",
+            include_keywords="",
+            exclude_keywords="",
+            source_ids=("international_statistics",),
+            journal_ids=(),
+            content_preferences=(),
+            max_items=12,
+            llm_provider="openai",
+            llm_model="gpt-5.4-mini",
+            output_formats=("docx",),
+        )
+
+        self.assertEqual(profile.source_ids, ("international_statistics",))
+        self.assertNotIn("international_statistics", main.available_source_ids("economics"))
 
     def test_ccf_source_requires_the_computer_science_profile(self) -> None:
         with self.assertRaisesRegex(ValueError, "ccf_conferences"):
@@ -231,13 +290,16 @@ class PersonalizationProfileTests(unittest.TestCase):
         self.assertEqual([journal["source"] for journal in effective["crossref_journals"]], ["JACS"])
         self.assertIn("mechanism", effective["custom_preference_terms"])
 
-    def test_academic_layer_resolves_only_registered_default_sources(self) -> None:
+    def test_academic_layer_resolves_registered_public_default_sources(self) -> None:
         profile = self.make_profile(source_layer_ids=("academic_research",))
 
         effective = compose_effective_profile(profile, "usr_001")
 
         self.assertEqual(effective["source_layer_ids"], ("academic_research",))
-        self.assertEqual(effective["enabled_source_ids"], ("arxiv", "pubmed", "crossref", "rss"))
+        self.assertEqual(
+            effective["enabled_source_ids"],
+            ("arxiv", "pubmed", "crossref", "rss", "acs", "rsc", "nature_chemistry"),
+        )
         self.assertTrue(effective["source_selection_explicit"])
 
     def test_concrete_sources_override_layer_defaults_without_expansion(self) -> None:
@@ -464,6 +526,49 @@ class ReportGenerationApiTests(unittest.TestCase):
             ),
             (1, 1, 1),
         )
+
+    def test_generate_report_supplements_a_small_keyword_match_without_readding_exclusions(self) -> None:
+        published = datetime(2026, 7, 28, tzinfo=timezone.utc)
+        items = [
+            main.NewsItem("Battery interface transport", "arXiv", published, "https://e.test/1", abstract="Battery study."),
+            main.NewsItem("Battery electrolyte mechanics", "arXiv", published, "https://e.test/2", abstract="Battery study."),
+            main.NewsItem("Catalysis reaction mechanism", "arXiv", published, "https://e.test/3", abstract="Catalysis study."),
+            main.NewsItem("Molecular synthesis method", "arXiv", published, "https://e.test/4", abstract="Synthesis study."),
+            main.NewsItem("Electrolyte ion transport", "arXiv", published, "https://e.test/5", abstract="Electrolyte study."),
+            main.NewsItem("Battery review", "arXiv", published, "https://e.test/6", abstract="Excluded review."),
+        ]
+        options = main.ReportGenerationOptions(
+            days=3,
+            max_items=10,
+            min_items=1,
+            source_limit=10,
+            max_ai_items=10,
+            llm_provider="openai",
+            model="",
+            report_date=date(2026, 7, 28),
+            output_dir=Path(self.tempdir.name),
+            require_ai=False,
+            no_openai=False,
+        )
+        output_path = Path(self.tempdir.name) / "report.docx"
+        with (
+            patch.object(main, "collect_items", return_value=(items, [main.SourceStatus("arXiv", True, len(items))])),
+            patch("network_check.run_network_checks", return_value=type("Diagnostics", (), {"network_ok": True, "summary_lines": lambda self: []})()),
+            patch.object(main, "generate_ai_summaries", return_value=main.fallback_report_payload(items, self.profile)),
+            patch.object(main, "apply_ai_scientific_notation", return_value=False),
+            patch.object(main, "create_document", return_value=output_path),
+        ):
+            result = main.generate_report(
+                options,
+                self.profile,
+                item_filter=lambda item: "battery" in item.title.casefold() and "review" not in item.title.casefold(),
+                supplement_filter=lambda item: "review" not in item.title.casefold(),
+            )
+
+        self.assertEqual(result.matched_count, 2)
+        self.assertEqual(result.selected_count, 5)
+        self.assertTrue(result.profile_filter_fallback)
+        self.assertNotIn("Battery review", [item.title for item in result.selected_items])
 
     def test_generate_report_attributes_the_source_funnel_to_one_canonical_duplicate(self) -> None:
         """A duplicate must contribute its post-dedup counters to one source only."""
