@@ -942,6 +942,28 @@ class PersonalizationRepositoryTests(unittest.TestCase):
         )
         self.assertEqual(self.repository._value(report_run, "status"), "failed")
 
+    def test_successful_preview_retry_clears_the_previous_failure_details(self) -> None:
+        user_id = self.repository.create_user_with_profile(
+            self.user(), self.profile("battery"), self.disabled_daily_schedule()
+        )
+        preview = self.repository.create_manual_preview(user_id, date(2026, 7, 28))
+        self.assertIsNotNone(self.repository.claim_delivery(preview.delivery_id))
+        self.repository.mark_retryable_failure(preview.delivery_id, "fetch", "no matching items")
+        self.assertEqual(self.repository.retry_delivery(preview.delivery_id), "preview")
+        self.assertIsNotNone(self.repository.claim_delivery(preview.delivery_id))
+
+        self.assertTrue(
+            self.repository.mark_preview_ready(
+                preview.delivery_id, preview.report_run_id, "preview-artifact", "preview-run"
+            )
+        )
+
+        delivery = self.repository.get_delivery(preview.delivery_id)
+        self.assertEqual(delivery.status, "preview_ready")
+        self.assertEqual(delivery.last_error, "")
+        self.assertEqual(delivery.error_stage, "")
+        self.assertEqual(delivery.next_retry_at, "")
+
     @unittest.skipUnless(importlib.util.find_spec("libsql"), "libsql is not installed")
     def test_real_libsql_tuple_rows_are_read_by_column_name(self) -> None:
         import libsql

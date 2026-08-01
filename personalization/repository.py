@@ -1498,7 +1498,8 @@ class PersonalizationRepository:
             cursor = self._execute(
                 """
                 UPDATE deliveries
-                SET status = 'preview_ready', artifact_name = ?, artifact_run_id = ?, updated_at = ?
+                SET status = 'preview_ready', artifact_name = ?, artifact_run_id = ?,
+                    last_error = '', error_stage = '', next_retry_at = '', updated_at = ?
                 WHERE id = ? AND status = 'claimed'
                 RETURNING *
                 """,
