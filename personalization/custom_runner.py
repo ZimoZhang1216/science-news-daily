@@ -12,7 +12,7 @@ import main
 
 from personalization.profile import (
     compose_effective_profile,
-    item_is_excluded_from_research_profile,
+    item_is_custom_fallback_relevant,
     item_matches_research_profile,
 )
 from personalization.repository import (
@@ -141,10 +141,7 @@ def _generate_claimed_report(
         effective_profile,
         repository.history_for_user(claim.user_id, claim.report_date, 10),
         lambda item: item_matches_research_profile(item, context.profile.input),
-        lambda item: (
-            not item_is_excluded_from_research_profile(item, context.profile.input)
-            and main.is_profile_relevant(item, effective_profile)
-        ),
+        lambda item: item_is_custom_fallback_relevant(item, context.profile.input, effective_profile),
     )
     repository.record_generation_metrics(
         claim.report_run_id,

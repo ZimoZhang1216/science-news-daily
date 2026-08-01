@@ -209,6 +209,33 @@ class PublicSourceFetcherTests(unittest.TestCase):
         )
         self.assertNotIn("judicial_opinions", RSS_FEED_REGISTRY)
 
+    def test_explicit_official_source_keeps_current_affairs_before_profile_keyword_filter(self) -> None:
+        profile = {
+            **main.resolve_profile("law"),
+            "source_selection_explicit": True,
+            "rss_feeds": [
+                {
+                    "source": "UN News",
+                    "url": "https://example.test/un-news.rss",
+                    "source_id": "united_nations",
+                    "broad": True,
+                }
+            ],
+        }
+        entry = SimpleNamespace(
+            published="2026-07-28T12:00:00Z",
+            title="Middle East ceasefire talks resume at the United Nations",
+            summary="Diplomatic developments and official statements.",
+            link="https://example.test/un-news/1",
+        )
+        response = SimpleNamespace(content=b"<rss />", raise_for_status=lambda: None)
+        session = SimpleNamespace(get=lambda *_args, **_kwargs: response)
+        with patch.object(main.feedparser, "parse", return_value=SimpleNamespace(entries=[entry])):
+            items, statuses = main.fetch_rss(session, self.since, self.until, 10, profile)
+
+        self.assertEqual([item.title for item in items], [entry.title])
+        self.assertEqual(statuses[0].item_count, 1)
+
     def test_hacker_news_keeps_recent_stories_as_community_signals(self) -> None:
         session = RecordingSession(
             {

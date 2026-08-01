@@ -94,3 +94,17 @@ def item_is_excluded_from_research_profile(item: main.NewsItem, profile: Researc
 
     haystack = f"{item.title} {item.abstract}".casefold()
     return any(_matches_keyword(haystack, term) for term in profile.exclude_keywords)
+
+
+def item_is_custom_fallback_relevant(
+    item: main.NewsItem,
+    profile: ResearchProfileInput,
+    effective_profile: dict[str, Any],
+) -> bool:
+    """Treat an explicitly selected source or layer as a relevance signal after exclusions."""
+
+    if item_is_excluded_from_research_profile(item, profile):
+        return False
+    if profile.source_ids or profile.source_layer_ids:
+        return True
+    return main.is_profile_relevant(item, effective_profile)

@@ -15,6 +15,7 @@ from personalization.models import (
     ScheduleInput,
     UserInput,
 )
+import personalization.profile as profile_rules
 from personalization.profile import compose_effective_profile, item_matches_research_profile
 
 
@@ -275,6 +276,38 @@ class PersonalizationProfileTests(unittest.TestCase):
                 profile,
             )
         )
+
+    def test_explicit_source_selection_allows_current_affairs_fallback_but_keeps_exclusions(self) -> None:
+        profile = ResearchProfileInput.from_form(
+            base_profile="law",
+            research_topic="国际时事政治",
+            include_keywords="国际政治,外交,联合国,政策",
+            exclude_keywords="sports",
+            source_ids=("united_nations",),
+            journal_ids=(),
+            content_preferences=(),
+            max_items=12,
+            llm_provider="openai",
+            llm_model="gpt-5.4-mini",
+            output_formats=("docx",),
+            source_layer_ids=("official_data_policy",),
+        )
+        effective = compose_effective_profile(profile, "usr_001")
+        current_affairs = main.NewsItem(
+            "Middle East ceasefire talks resume at the United Nations",
+            "UN News",
+            None,
+            "https://example.test/un/1",
+            abstract="Diplomatic developments.",
+            source_id="united_nations",
+        )
+        excluded = main.NewsItem(
+            "Sports diplomacy highlights", "UN News", None, "https://example.test/un/2"
+        )
+
+        self.assertTrue(hasattr(profile_rules, "item_is_custom_fallback_relevant"))
+        self.assertTrue(profile_rules.item_is_custom_fallback_relevant(current_affairs, profile, effective))
+        self.assertFalse(profile_rules.item_is_custom_fallback_relevant(excluded, profile, effective))
 
     def test_selected_sources_and_preference_change_only_the_effective_profile(self) -> None:
         profile = self.make_profile(

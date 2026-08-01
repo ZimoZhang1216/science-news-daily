@@ -3492,7 +3492,11 @@ def fetch_rss(
                     source_layer=source_layer,
                 )
                 item.field_name = classify_field(item.title, item.abstract, profile)
-                if not feed_config.get("broad") or is_profile_relevant(item, profile):
+                if (
+                    not feed_config.get("broad")
+                    or profile.get("source_selection_explicit")
+                    or is_profile_relevant(item, profile)
+                ):
                     items.append(item)
                     count += 1
             LOGGER.info("%s RSS: %d items", feed_config["source"], count)
