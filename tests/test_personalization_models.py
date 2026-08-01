@@ -24,6 +24,7 @@ class PersonalizationModelTests(unittest.TestCase):
         self,
         *,
         lookback_days: int = 3,
+        candidate_limit: int = 300,
         ccf_conference_tiers: tuple[str, ...] = ("A", "B"),
         source_layer_ids: str | tuple[str, ...] = (),
     ) -> ResearchProfileInput:
@@ -36,6 +37,7 @@ class PersonalizationModelTests(unittest.TestCase):
             journal_ids=(),
             content_preferences=(),
             max_items=12,
+            candidate_limit=candidate_limit,
             llm_provider="openai",
             llm_model="gpt-5.4-mini",
             output_formats=("docx",),
@@ -149,6 +151,35 @@ class PersonalizationModelTests(unittest.TestCase):
             self.valid_profile(lookback_days=0)
         with self.assertRaisesRegex(ValueError, "lookback_days"):
             self.valid_profile(lookback_days=61)
+
+    def test_profile_input_persists_a_bounded_candidate_collection_budget(self) -> None:
+        profile = self.valid_profile(candidate_limit=500)
+
+        self.assertEqual(profile.candidate_limit, 500)
+        with self.assertRaisesRegex(ValueError, "candidate_limit"):
+            self.valid_profile(candidate_limit=49)
+        with self.assertRaisesRegex(ValueError, "candidate_limit"):
+            self.valid_profile(candidate_limit=1001)
+
+    def test_user_keywords_take_priority_in_external_source_queries(self) -> None:
+        profile = ResearchProfileInput.from_form(
+            base_profile="chemistry",
+            research_topic="Flexible electronics",
+            include_keywords="flexible electronics; electronic skin",
+            exclude_keywords="",
+            source_ids=("openalex",),
+            journal_ids=(),
+            content_preferences=(),
+            max_items=12,
+            candidate_limit=300,
+            llm_provider="openai",
+            llm_model="gpt-5.4-mini",
+            output_formats=("docx",),
+        )
+
+        effective = compose_effective_profile(profile, "usr_test")
+
+        self.assertEqual(effective["openalex_query_terms"][:2], ["flexible electronics", "electronic skin"])
 
     def test_profile_input_defaults_to_ccf_a_and_b_and_validates_tiers(self) -> None:
         self.assertEqual(self.valid_profile().ccf_conference_tiers, ("A", "B"))

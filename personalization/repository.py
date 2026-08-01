@@ -250,6 +250,7 @@ class PersonalizationRepository:
         )
         for column_name, definition in (
             ("lookback_days", "INTEGER NOT NULL DEFAULT 3"),
+            ("candidate_limit", "INTEGER NOT NULL DEFAULT 300"),
             ("ccf_conference_tiers_json", "TEXT NOT NULL DEFAULT '[\"A\", \"B\"]'"),
             ("source_layer_ids_json", "TEXT NOT NULL DEFAULT '[]'"),
         ):
@@ -494,6 +495,10 @@ class PersonalizationRepository:
             # migration; preserve legacy three-day behaviour until its next sync.
             lookback_days = 3
         try:
+            candidate_limit = int(self._value(row, "candidate_limit"))
+        except (AttributeError, KeyError, TypeError, ValueError):
+            candidate_limit = 300
+        try:
             ccf_conference_tiers = _load_list(self._value(row, "ccf_conference_tiers_json"))
         except (AttributeError, KeyError, TypeError, ValueError):
             # A local read replica can temporarily lag this additive schema
@@ -515,6 +520,7 @@ class PersonalizationRepository:
             content_preferences=_load_list(self._value(row, "content_preferences_json")),
             max_items=int(self._value(row, "max_items")),
             lookback_days=lookback_days,
+            candidate_limit=candidate_limit,
             ccf_conference_tiers=ccf_conference_tiers,
             llm_provider=self._value(row, "llm_provider"),
             llm_model=self._value(row, "llm_model"),
@@ -536,10 +542,10 @@ class PersonalizationRepository:
             INSERT INTO research_profiles (
                 id, user_id, version, is_current, base_profile, research_topic,
                 include_keywords_json, exclude_keywords_json, source_ids_json, source_layer_ids_json,
-                journal_ids_json, content_preferences_json, max_items, lookback_days,
+                journal_ids_json, content_preferences_json, max_items, lookback_days, candidate_limit,
                 ccf_conference_tiers_json,
                 llm_provider, llm_model, output_formats_json, created_at
-            ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 profile_id,
@@ -555,6 +561,7 @@ class PersonalizationRepository:
                 json.dumps(profile.content_preferences),
                 profile.max_items,
                 profile.lookback_days,
+                profile.candidate_limit,
                 json.dumps(profile.ccf_conference_tiers),
                 profile.llm_provider,
                 profile.llm_model,

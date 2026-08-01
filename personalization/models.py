@@ -118,6 +118,7 @@ class ResearchProfileInput:
     content_preferences: tuple[str, ...]
     max_items: int
     lookback_days: int
+    candidate_limit: int
     ccf_conference_tiers: tuple[str, ...]
     llm_provider: str
     llm_model: str
@@ -140,6 +141,7 @@ class ResearchProfileInput:
         llm_model: str,
         output_formats: str | Sequence[str],
         lookback_days: int = 3,
+        candidate_limit: int = 300,
         ccf_conference_tiers: str | Sequence[str] = ("A", "B"),
         source_layer_ids: str | Sequence[str] = (),
     ) -> "ResearchProfileInput":
@@ -152,6 +154,8 @@ class ResearchProfileInput:
             raise ValueError("max_items must be between 1 and 50")
         if isinstance(lookback_days, bool) or not isinstance(lookback_days, int) or not 1 <= lookback_days <= 60:
             raise ValueError("lookback_days must be between 1 and 60")
+        if isinstance(candidate_limit, bool) or not isinstance(candidate_limit, int) or not 50 <= candidate_limit <= 1000:
+            raise ValueError("candidate_limit must be between 50 and 1000")
 
         normalised_sources = _normalise_string_list(source_ids)
         invalid_sources = set(normalised_sources) - _SOURCE_IDS
@@ -202,6 +206,7 @@ class ResearchProfileInput:
             content_preferences=normalised_preferences,
             max_items=max_items,
             lookback_days=lookback_days,
+            candidate_limit=candidate_limit,
             ccf_conference_tiers=_normalise_ccf_conference_tiers(ccf_conference_tiers),
             llm_provider=provider,
             llm_model=model,

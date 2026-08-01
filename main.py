@@ -2509,6 +2509,14 @@ def is_profile_relevant(item: NewsItem, profile: dict[str, Any]) -> bool:
     )
 
 
+def should_collect_profile_candidate(item: NewsItem, profile: dict[str, Any]) -> bool:
+    """Keep user-selected trusted sources broad; apply the final profile filter later."""
+
+    if is_profile_excluded(item, profile):
+        return False
+    return bool(profile.get("source_selection_explicit")) or is_profile_relevant(item, profile)
+
+
 def should_include_crossref_item(
     item: NewsItem, journal: dict[str, Any], profile: dict[str, Any]
 ) -> bool:
@@ -2544,42 +2552,47 @@ def fetch_arxiv(
     search_terms = []
     for term in profile["arxiv_query_terms"]:
         search_terms.append(arxiv_query_fragment(term))
-    params = {
-        "search_query": " OR ".join(search_terms),
-        "start": 0,
-        "max_results": min(max(max_items, 10), 100),
-        "sortBy": "submittedDate",
-        "sortOrder": "descending",
-    }
-    response = session.get("https://export.arxiv.org/api/query", params=params, timeout=30)
-    response.raise_for_status()
-    feed = feedparser.parse(response.text)
     items: list[NewsItem] = []
-    for entry in feed.entries:
-        published = parse_datetime(getattr(entry, "published", None)) or parse_datetime(
-            getattr(entry, "updated", None)
-        )
-        if published and not (since <= published <= until):
-            continue
-        title = clean_text(getattr(entry, "title", ""))
-        abstract = clean_text(getattr(entry, "summary", ""))
-        link = clean_text(getattr(entry, "link", ""))
-        authors = [clean_text(author.get("name", "")) for author in getattr(entry, "authors", [])]
-        if not title or not link:
-            continue
-        item = NewsItem(
-            title=title,
-            source="arXiv",
-            published=published,
-            link=link,
-            abstract=abstract,
-            authors=[author for author in authors if author],
-            source_id="arxiv",
-            source_layer="academic_research",
-        )
-        item.field_name = classify_field(item.title, item.abstract, profile)
-        if is_profile_relevant(item, profile):
-            items.append(item)
+    page_size = 100
+    for start in range(0, max_items, page_size):
+        params = {
+            "search_query": " OR ".join(search_terms),
+            "start": start,
+            "max_results": min(page_size, max_items - start),
+            "sortBy": "submittedDate",
+            "sortOrder": "descending",
+        }
+        response = session.get("https://export.arxiv.org/api/query", params=params, timeout=30)
+        response.raise_for_status()
+        feed = feedparser.parse(response.text)
+        entries = list(feed.entries)
+        for entry in entries:
+            published = parse_datetime(getattr(entry, "published", None)) or parse_datetime(
+                getattr(entry, "updated", None)
+            )
+            if published and not (since <= published <= until):
+                continue
+            title = clean_text(getattr(entry, "title", ""))
+            abstract = clean_text(getattr(entry, "summary", ""))
+            link = clean_text(getattr(entry, "link", ""))
+            authors = [clean_text(author.get("name", "")) for author in getattr(entry, "authors", [])]
+            if not title or not link:
+                continue
+            item = NewsItem(
+                title=title,
+                source="arXiv",
+                published=published,
+                link=link,
+                abstract=abstract,
+                authors=[author for author in authors if author],
+                source_id="arxiv",
+                source_layer="academic_research",
+            )
+            item.field_name = classify_field(item.title, item.abstract, profile)
+            if should_collect_profile_candidate(item, profile):
+                items.append(item)
+        if len(entries) < page_size:
+            break
     return items
 
 
@@ -2634,7 +2647,7 @@ def fetch_pubmed(
                 "db": "pubmed",
                 "term": query,
                 "retmode": "json",
-                "retmax": min(max(max_items, 10), 100),
+                "retmax": min(max(max_items, 10), 1000),
                 "sort": "pub date",
             }
         ),
@@ -2645,56 +2658,59 @@ def fetch_pubmed(
     if not id_list:
         return []
 
-    fetch_response = session.get(
-        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
-        params=pubmed_params({"db": "pubmed", "id": ",".join(id_list), "retmode": "xml"}),
-        timeout=45,
-    )
-    fetch_response.raise_for_status()
-    root = ET.fromstring(fetch_response.content)
     items: list[NewsItem] = []
-    for article in root.findall(".//PubmedArticle"):
-        pmid = text_from_xml(article.find(".//PMID"))
-        title = text_from_xml(article.find(".//ArticleTitle"))
-        journal = text_from_xml(article.find(".//Journal/Title")) or "PubMed"
-        published = parse_pubmed_date(article)
-        if published and not (since <= published <= until):
-            continue
-        abstract_parts = []
-        for abstract_element in article.findall(".//Abstract/AbstractText"):
-            label = clean_text(abstract_element.attrib.get("Label", ""))
-            text = text_from_xml(abstract_element)
-            if not text:
-                continue
-            abstract_parts.append(f"{label}: {text}" if label else text)
-        authors = []
-        for author in article.findall(".//Author"):
-            last_name = text_from_xml(author.find("LastName"))
-            initials = text_from_xml(author.find("Initials"))
-            full = " ".join(part for part in [last_name, initials] if part)
-            if full:
-                authors.append(full)
-        doi = ""
-        for article_id in article.findall(".//ArticleId"):
-            if article_id.attrib.get("IdType") == "doi":
-                doi = text_from_xml(article_id)
-                break
-        if not title or not pmid:
-            continue
-        item = NewsItem(
-            title=title,
-            source=f"PubMed: {journal}",
-            published=published,
-            link=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
-            abstract=" ".join(abstract_parts),
-            doi=doi,
-            authors=authors,
-            source_id="pubmed",
-            source_layer="academic_research",
+    for offset in range(0, len(id_list), 200):
+        fetch_response = session.get(
+            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+            params=pubmed_params(
+                {"db": "pubmed", "id": ",".join(id_list[offset : offset + 200]), "retmode": "xml"}
+            ),
+            timeout=45,
         )
-        item.field_name = classify_field(item.title, item.abstract, profile)
-        if is_profile_relevant(item, profile):
-            items.append(item)
+        fetch_response.raise_for_status()
+        root = ET.fromstring(fetch_response.content)
+        for article in root.findall(".//PubmedArticle"):
+            pmid = text_from_xml(article.find(".//PMID"))
+            title = text_from_xml(article.find(".//ArticleTitle"))
+            journal = text_from_xml(article.find(".//Journal/Title")) or "PubMed"
+            published = parse_pubmed_date(article)
+            if published and not (since <= published <= until):
+                continue
+            abstract_parts = []
+            for abstract_element in article.findall(".//Abstract/AbstractText"):
+                label = clean_text(abstract_element.attrib.get("Label", ""))
+                text = text_from_xml(abstract_element)
+                if not text:
+                    continue
+                abstract_parts.append(f"{label}: {text}" if label else text)
+            authors = []
+            for author in article.findall(".//Author"):
+                last_name = text_from_xml(author.find("LastName"))
+                initials = text_from_xml(author.find("Initials"))
+                full = " ".join(part for part in [last_name, initials] if part)
+                if full:
+                    authors.append(full)
+            doi = ""
+            for article_id in article.findall(".//ArticleId"):
+                if article_id.attrib.get("IdType") == "doi":
+                    doi = text_from_xml(article_id)
+                    break
+            if not title or not pmid:
+                continue
+            item = NewsItem(
+                title=title,
+                source=f"PubMed: {journal}",
+                published=published,
+                link=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+                abstract=" ".join(abstract_parts),
+                doi=doi,
+                authors=authors,
+                source_id="pubmed",
+                source_layer="academic_research",
+            )
+            item.field_name = classify_field(item.title, item.abstract, profile)
+            if should_collect_profile_candidate(item, profile):
+                items.append(item)
     return items
 
 
@@ -2753,7 +2769,7 @@ def fetch_europe_pmc(
             source_layer="academic_research",
         )
         item.field_name = classify_field(item.title, item.abstract, profile)
-        if is_profile_relevant(item, profile):
+        if should_collect_profile_candidate(item, profile):
             items.append(item)
     return items
 
@@ -2803,7 +2819,7 @@ def fetch_preprint_server(
             source_layer="academic_research",
         )
         item.field_name = classify_field(item.title, item.abstract, profile)
-        if is_profile_relevant(item, profile):
+        if should_collect_profile_candidate(item, profile):
             items.append(item)
             if len(items) >= max_items:
                 break
@@ -2905,7 +2921,7 @@ def fetch_clinical_trials(
             source_layer="official_data_policy",
         )
         item.field_name = classify_field(item.title, item.abstract, profile)
-        if is_profile_relevant(item, profile):
+        if should_collect_profile_candidate(item, profile):
             items.append(item)
     return items
 
@@ -3097,73 +3113,78 @@ def fetch_openalex(
     terms = list(dict.fromkeys(profile.get("openalex_query_terms", ())))[:3]
     if not terms:
         return []
-    per_query = max(5, min(30, max_items // len(terms) + 3))
+    per_query = max(5, (max_items + len(terms) - 1) // len(terms))
     items: list[NewsItem] = []
     seen: set[str] = set()
     for term in terms:
-        params: dict[str, Any] = {
-            "search": term,
-            "filter": (
-                f"from_publication_date:{since.date().isoformat()},"
-                f"to_publication_date:{until.date().isoformat()},type:article"
-            ),
-            "sort": "publication_date:desc",
-            "per_page": per_query,
-        }
-        api_key = os.getenv("OPENALEX_API_KEY", "").strip()
-        if api_key:
-            params["api_key"] = api_key
-        response = session.get("https://api.openalex.org/works", params=params, timeout=30)
-        response.raise_for_status()
-        works = response.json().get("results", [])
-        if not isinstance(works, list):
-            continue
-        for work in works:
-            if not isinstance(work, dict) or work.get("type") != "article":
-                continue
-            published = parse_datetime(work.get("publication_date"))
-            if published and not (since <= published <= until):
-                continue
-            title = clean_text(work.get("display_name", "") or work.get("title", ""))
-            doi = clean_text(work.get("doi", "")).removeprefix("https://doi.org/")
-            work_id = clean_text(work.get("id", ""))
-            identity = doi.lower() or work_id.lower() or title.lower()
-            if not title or not identity or identity in seen:
-                continue
-            primary_location = work.get("primary_location")
-            location = primary_location if isinstance(primary_location, dict) else {}
-            source_info = location.get("source")
-            source_record = source_info if isinstance(source_info, dict) else {}
-            venue = clean_text(source_record.get("display_name", "")) or "Scholarly index"
-            link = clean_text(location.get("landing_page_url", "")) or (
-                f"https://doi.org/{doi}" if doi else work_id
-            )
-            authors = []
-            for authorship in work.get("authorships", [])[:8]:
-                if not isinstance(authorship, dict):
+        for offset in range(0, per_query, 200):
+            requested_page_size = min(200, per_query - offset)
+            params: dict[str, Any] = {
+                "search": term,
+                "filter": (
+                    f"from_publication_date:{since.date().isoformat()},"
+                    f"to_publication_date:{until.date().isoformat()},type:article"
+                ),
+                "sort": "publication_date:desc",
+                "per_page": requested_page_size,
+                "page": offset // 200 + 1,
+            }
+            api_key = os.getenv("OPENALEX_API_KEY", "").strip()
+            if api_key:
+                params["api_key"] = api_key
+            response = session.get("https://api.openalex.org/works", params=params, timeout=30)
+            response.raise_for_status()
+            works = response.json().get("results", [])
+            if not isinstance(works, list):
+                break
+            for work in works:
+                if not isinstance(work, dict) or work.get("type") != "article":
                     continue
-                author = authorship.get("author")
-                if isinstance(author, dict):
-                    name = clean_text(author.get("display_name", ""))
-                    if name:
-                        authors.append(name)
-            item = NewsItem(
-                title=title,
-                source=f"OpenAlex: {venue}",
-                published=published,
-                link=link,
-                abstract=openalex_abstract(work.get("abstract_inverted_index"))
-                or "OpenAlex 元数据未提供摘要；请通过链接查看原文。",
-                doi=doi,
-                authors=authors,
-                source_kind="academic",
-                source_id="openalex",
-                source_layer="academic_research",
-            )
-            item.field_name = classify_field(item.title, item.abstract, profile)
-            if is_profile_relevant(item, profile):
-                items.append(item)
-                seen.add(identity)
+                published = parse_datetime(work.get("publication_date"))
+                if published and not (since <= published <= until):
+                    continue
+                title = clean_text(work.get("display_name", "") or work.get("title", ""))
+                doi = clean_text(work.get("doi", "")).removeprefix("https://doi.org/")
+                work_id = clean_text(work.get("id", ""))
+                identity = doi.lower() or work_id.lower() or title.lower()
+                if not title or not identity or identity in seen:
+                    continue
+                primary_location = work.get("primary_location")
+                location = primary_location if isinstance(primary_location, dict) else {}
+                source_info = location.get("source")
+                source_record = source_info if isinstance(source_info, dict) else {}
+                venue = clean_text(source_record.get("display_name", "")) or "Scholarly index"
+                link = clean_text(location.get("landing_page_url", "")) or (
+                    f"https://doi.org/{doi}" if doi else work_id
+                )
+                authors = []
+                for authorship in work.get("authorships", [])[:8]:
+                    if not isinstance(authorship, dict):
+                        continue
+                    author = authorship.get("author")
+                    if isinstance(author, dict):
+                        name = clean_text(author.get("display_name", ""))
+                        if name:
+                            authors.append(name)
+                item = NewsItem(
+                    title=title,
+                    source=f"OpenAlex: {venue}",
+                    published=published,
+                    link=link,
+                    abstract=openalex_abstract(work.get("abstract_inverted_index"))
+                    or "OpenAlex 元数据未提供摘要；请通过链接查看原文。",
+                    doi=doi,
+                    authors=authors,
+                    source_kind="academic",
+                    source_id="openalex",
+                    source_layer="academic_research",
+                )
+                item.field_name = classify_field(item.title, item.abstract, profile)
+                if should_collect_profile_candidate(item, profile):
+                    items.append(item)
+                    seen.add(identity)
+            if len(works) < requested_page_size:
+                break
     return items
 
 
@@ -3264,7 +3285,7 @@ def _dblp_page_items(
             source_layer="academic_research",
         )
         item.field_name = classify_field(item.title, item.abstract, profile)
-        if is_profile_relevant(item, profile):
+        if should_collect_profile_candidate(item, profile):
             items.append(item)
     return items
 
@@ -3386,7 +3407,7 @@ def fetch_hackernews(
                 source_layer="community_signal",
             )
             item.field_name = classify_field(item.title, item.abstract, profile)
-            if is_profile_relevant(item, profile):
+            if should_collect_profile_candidate(item, profile):
                 items.append(item)
                 seen.add(story_id)
     return items
@@ -3448,7 +3469,7 @@ def fetch_github_releases(
                 source_layer="industry_engineering",
             )
             item.field_name = classify_field(item.title, item.abstract, profile)
-            if is_profile_relevant(item, profile):
+            if should_collect_profile_candidate(item, profile):
                 items.append(item)
     return items
 

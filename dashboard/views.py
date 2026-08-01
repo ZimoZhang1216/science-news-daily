@@ -457,6 +457,15 @@ def _profile_form(repository: PersonalizationRepository) -> None:
             help="控制每份日报收集过去多少天的资讯，不影响发送时间或频率。",
             key="onboarding_lookback_days",
         )
+        candidate_limit = st.slider(
+            "每次抓取候选条目上限",
+            min_value=50,
+            max_value=1000,
+            value=profile_recommendation.candidate_limit,
+            step=50,
+            help="用于抓取与排序的候选池，不等于最终日报条目数。数值越高覆盖越广，但任务耗时也会增加。",
+            key="onboarding_candidate_limit",
+        )
         output_formats = st.multiselect(
             "输出格式",
             ["docx", "pdf"],
@@ -520,6 +529,7 @@ def _profile_form(repository: PersonalizationRepository) -> None:
             content_preferences=preferences,
             max_items=max_items,
             lookback_days=lookback_days,
+            candidate_limit=candidate_limit,
             ccf_conference_tiers=ccf_conference_tiers,
             llm_provider=provider,
             llm_model=model,
@@ -612,6 +622,15 @@ def _edit_profile_form(repository: PersonalizationRepository, user_id: str, disp
                 step=1,
                 help="控制每份日报收集过去多少天的资讯，不影响发送时间或频率。",
             )
+            candidate_limit = st.slider(
+                "每次抓取候选条目上限",
+                min_value=50,
+                max_value=1000,
+                value=current.candidate_limit,
+                step=50,
+                help="用于抓取与排序的候选池，不等于最终日报条目数。数值越高覆盖越广，但任务耗时也会增加。",
+                key=f"candidate-limit-{user_id}",
+            )
             model_left, model_right = st.columns(2)
             provider = model_left.selectbox(
                 "模型服务商",
@@ -654,6 +673,7 @@ def _edit_profile_form(repository: PersonalizationRepository, user_id: str, disp
                 content_preferences=preferences,
                 max_items=max_items,
                 lookback_days=lookback_days,
+                candidate_limit=candidate_limit,
                 ccf_conference_tiers=ccf_conference_tiers,
                 llm_provider=provider,
                 llm_model=model,
@@ -918,7 +938,7 @@ def _render_delivery_task_details(delivery: dict[str, object]) -> None:
         counts[3].metric("历史重复未入选", int(metrics["history_excluded_count"]))
         counts[4].metric("最终入选", int(metrics["selected_count"]))
         if metrics.get("profile_filter_fallback"):
-            st.info("本次没有条目命中用户关键词，已按原有规则回退到所属学科的相关资讯。")
+            st.info("本次没有条目命中用户关键词，已从你勾选的可信信源和所属学科关联资讯中补充候选。")
 
         source_rows = metrics.get("sources", [])
         if source_rows:

@@ -235,6 +235,24 @@ class CustomRunnerTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(self.generated_options[-1].days, 60)
 
+    def test_preview_uses_the_saved_candidate_collection_budget(self) -> None:
+        current = self.repository.get_current_profile(self.user_id).input
+        self.repository.save_profile_version(self.user_id, replace(current, candidate_limit=500))
+        claim = self.repository.create_manual_preview(self.user_id, date(2026, 7, 28))
+        services = RunnerServices(
+            generator=self.successful_generator,
+            pdf_converter=self.successful_pdf,
+            mailer=self.fail_if_called,
+            github_run_id="123",
+            output_root=self.output_dir,
+        )
+
+        with mock.patch.dict("os.environ", {"CHEM_NEWS_SOURCE_LIMIT": "1"}):
+            exit_code = generate_preview(self.repository, claim.delivery_id, services)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(self.generated_options[-1].source_limit, 500)
+
     def test_preview_with_an_unsupported_saved_profile_becomes_retryable(self) -> None:
         """A profile introduced by a newer deployment must not leave a claimed preview stuck."""
 

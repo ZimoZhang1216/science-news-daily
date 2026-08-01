@@ -236,6 +236,33 @@ class PublicSourceFetcherTests(unittest.TestCase):
         self.assertEqual([item.title for item in items], [entry.title])
         self.assertEqual(statuses[0].item_count, 1)
 
+    def test_explicit_academic_source_keeps_a_candidate_before_base_profile_filter(self) -> None:
+        profile = {
+            **main.resolve_profile("law"),
+            "source_selection_explicit": True,
+            "openalex_query_terms": ["international affairs"],
+        }
+        session = RecordingSession(
+            {
+                "https://api.openalex.org/works": {
+                    "results": [
+                        {
+                            "display_name": "Ceasefire monitoring agreement announced",
+                            "publication_date": "2026-07-28",
+                            "type": "article",
+                            "id": "https://openalex.org/W-current-affairs",
+                            "primary_location": {"landing_page_url": "https://example.test/affairs"},
+                        }
+                    ]
+                }
+            }
+        )
+
+        items = main.fetch_openalex(session, self.since, self.until, 300, profile)
+
+        self.assertEqual([item.title for item in items], ["Ceasefire monitoring agreement announced"])
+        self.assertEqual(session.calls[0][1]["per_page"], 200)
+
     def test_hacker_news_keeps_recent_stories_as_community_signals(self) -> None:
         session = RecordingSession(
             {

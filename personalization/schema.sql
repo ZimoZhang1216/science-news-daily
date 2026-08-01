@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS research_profiles (
     content_preferences_json TEXT NOT NULL,
     max_items INTEGER NOT NULL,
     lookback_days INTEGER NOT NULL DEFAULT 3,
+    candidate_limit INTEGER NOT NULL DEFAULT 300,
     ccf_conference_tiers_json TEXT NOT NULL DEFAULT '["A", "B"]',
     llm_provider TEXT NOT NULL,
     llm_model TEXT NOT NULL,

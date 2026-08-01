@@ -108,7 +108,7 @@ def _generation_options(context: DeliveryExecutionContext, output_root: Path) ->
         days=profile.lookback_days,
         max_items=profile.max_items,
         min_items=1,
-        source_limit=_positive_env_int("CHEM_NEWS_SOURCE_LIMIT", 80),
+        source_limit=profile.candidate_limit,
         max_ai_items=profile.max_items,
         llm_provider=profile.llm_provider,
         model=profile.llm_model,
