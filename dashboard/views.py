@@ -402,6 +402,19 @@ def _profile_form(repository: PersonalizationRepository) -> None:
         "先填写接收人；再用一段话描述用户想追踪的研究兴趣。AI 会提炼学科、关键词和信源建议，"
         "但不会自动保存或发送。"
     )
+    st.markdown(
+        """
+        <section class="workflow-overview">
+          <div class="workflow-overview-title">创建流程</div>
+          <div class="workflow-grid">
+            <div class="workflow-card"><span>01</span><strong>1. 描述研究兴趣</strong><p>用自然语言说明课题、问题或希望追踪的变化。</p></div>
+            <div class="workflow-card"><span>02</span><strong>2. 审阅 AI 建议</strong><p>确认核心词；低置信度关键词和信源由你自行勾选。</p></div>
+            <div class="workflow-card"><span>03</span><strong>3. 保存并预览</strong><p>先生成 PDF 预览，确认后才启用固定频率投递。</p></div>
+          </div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
     with st.form("recommend-profile"):
         left, right = st.columns(2)
         display_name = left.text_input("用户名称", key="onboarding_display_name")
