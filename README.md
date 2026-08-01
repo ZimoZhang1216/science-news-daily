@@ -1,25 +1,50 @@
 # 科研资讯日报自动化项目
 
-这个项目会从 arXiv、PubMed、Crossref 期刊元数据和 RSS 源检索近 24 小时到 3 天内的前沿论文/科研资讯，调用 OpenAI 或 DeepSeek 生成中文标题、简短中文摘要和分领域摘要，并输出 Word 文档。化学、有机化学、生物和统计学日报统一使用严谨的学术亮点标题，突出可核对的研究对象、方法、机制、模型或证据边界。当前支持化学、有机化学、生物、统计学四套日报；配置 SMTP 后，本地仍保存 `.docx`，邮件附件会自动转换为 `.pdf`。
+这个项目会从 arXiv、PubMed、Crossref 期刊元数据、OpenAlex 学术索引和公开 RSS 源检索近 24 小时到 3 天内的前沿论文/科研资讯，调用 OpenAI 或 DeepSeek 生成中文标题、简短中文摘要和分领域摘要，并输出 Word 文档。固定日报仍保留化学、有机化学、生物、统计学和工商管理五套；用户专属日报则支持完整学科目录和可编辑研究画像。配置 SMTP 后，本地仍保存 `.docx`，邮件附件会自动转换为 `.pdf`。
 
 默认输出：
 
 ```text
 ./output/chem_news_YYYY-MM-DD.docx
+./output/organic_chem_news_YYYY-MM-DD.docx
 ./output/bio_news_YYYY-MM-DD.docx
 ./output/stat_news_YYYY-MM-DD.docx
+./output/business_news_YYYY-MM-DD.docx
 ```
 
 默认输出目录位于项目内，避免定时任务写入 `~/Documents` 或 iCloud 目录时遇到权限问题。仍可通过 `--output-dir` 手动指定其他目录。
 
 ## 支持学科与来源
 
+固定日报继续使用原有五个专业 profile，不受用户专属画像扩展影响：
+
 - 化学：arXiv、PubMed、JACS、Angewandte Chemie、Nature Chemistry、Science、ACS、RSC 和 Chemistry World。
 - 有机化学：Organic Letters、The Journal of Organic Chemistry、JACS、Angewandte Chemie、Nature Chemistry、Chemical Science、ACS Catalysis、arXiv/PubMed 有机合成与药物化学关键词、Chemistry World。
 - 生物：arXiv q-bio、PubMed、Nature、Science、Cell、Nature Biotechnology、Nature Methods、Nature Genetics、Nature Medicine、PLOS Biology、eLife 等。
 - 统计学：arXiv stat/math.ST、PubMed 生物统计关键词、Annals of Statistics、Biometrika、JASA、JRSS B、Statistical Science、Bayesian Analysis、Bernoulli、JMLR 等。
+- 工商管理：arXiv 管理研究关键词，以及 Crossref 中 36 本已核验 ISSN 的英文管理学、组织行为、人力资源、营销、创新创业、运营、信息系统和公司治理期刊。
+
+用户专属日报在上述专业 profile 外，提供以下 14 个一级学科入口：哲学、经济学、法学、教育学、文学、历史学、理学、工学、农学、医学、管理学、艺术学、交叉学科、军事学。每个入口可再由用户主题、包含/排除关键词和来源偏好细化。计算机科学是工学下的专门入口，覆盖 AI/智能体、数据管理与时空数据、系统软件和人机交互。
+
+信息来源按五个证据层级分开标记，并在“用户画像”页面按层级和具体来源分别多选：
+
+- `官方数据与政策`：监管、公共卫生、资助、统计和标准机构的公开 API、RSS 与公告。首批已接入的公开登记来源为 ClinicalTrials.gov；其他目录项会明确显示为“尚未启用”，不会触发隐藏抓取。
+- `学术研究`：arXiv、PubMed、Crossref、公开 RSS、CCF/DBLP，以及首批接入的 Europe PMC、bioRxiv 和 medRxiv。预印本和索引记录不等同于同行评议结论。
+- `机构研究`：大学研究中心、智库、国际组织报告和工作论文目录；只有具备稳定公开采集器的来源才会成为默认选项。
+- `行业、工程与开源动态`：官方产品发布、技术组织、标准与白名单开源发布；它们用于工程情报，不替代研究或政策原文。
+- `社区信号`：公开 Hacker News 及可追溯社区线索。它永远单独展示、不作为同等级证据，也不会被 AI 默认推荐；运营人员仍可手动选择已接入的社区源。
+
+来源目录会显示获取方式、是否需要 Key、更新频率、默认可信度、版权/访问限制和失败降级策略。需要机构订阅、登录授权或仅有目录记录的来源会标记为“需要授权”或“尚未启用”，不会伪装成稳定抓取源。AI 只会推荐当前学科中已注册、公开可访问、默认启用且非社区的来源；建议始终可以在保存前人工修改。
+
+旧版模型响应没有 `source_layer_ids` 时仍可保存为兼容画像版本；历史画像、固定五学科日报、调度、预览、PDF 与邮件流程不受此设置影响。测试使用注入的 mock 模型与邮件路径，不调用付费模型、不发送真实邮件。
+
+计算机科学画像的 `CCF 推荐会议（DBLP 新收录）` 可选择 A、A+B（默认）或 A+B+C。目录用于会议范围筛选，不保证单篇论文质量，也不替代原文核验。OpenAlex 作为跨学科索引，在配置其免费 Key 后可由运营人员手动启用；它不等同于同行评议结论。
+
+不接入需要登录、身份难核验或接口不稳定的平台，例如 X、微信、小红书、私有群组。用户不能让系统抓取任意账号或任意 URL。
 
 说明：出版商页面经常有访问限制或反爬策略，因此脚本优先使用 Crossref/RSS/API 等稳定接口。某个来源失败时会记录日志并跳过，不会中断整份日报。
+
+工商管理 Crossref 配置只接入 36 本可验证的英文期刊。中文推荐期刊暂未接入，因为当前公开元数据接口的覆盖和可核验性不足；`International Journal of Operations & Production Management` 也未接入，因为现有 Crossref ISSN 映射错误，可能把无关内容混入日报。
 
 ## 安装
 
@@ -61,7 +86,9 @@ export DEEPSEEK_MODEL="deepseek-v4-flash"
 export NCBI_EMAIL="you@example.com"
 export NCBI_API_KEY="你的 NCBI API Key"
 export CROSSREF_MAILTO="you@example.com"
-export REPORT_PROFILE="chemistry"  # 可选：chemistry、organic_chemistry、biology、statistics
+export OPENALEX_API_KEY="你的 OpenAlex API Key"
+export GITHUB_SOURCE_TOKEN="可选的 GitHub token，仅用于公开 release 查询"
+export REPORT_PROFILE="chemistry"  # 可选 profile 由 `python main.py --help` 列出
 export CHEM_NEWS_DAYS="3"
 export CHEM_NEWS_MAX_ITEMS="30"
 export SCIENCE_NEWS_MIN_ITEMS="15"
@@ -70,7 +97,7 @@ export SCIENCE_NEWS_HISTORY_DIR=".report-history"
 export CHEM_NEWS_MAX_AI_ITEMS="30"
 ```
 
-`NCBI_EMAIL` 和 `CROSSREF_MAILTO` 不是必需项，但建议填写，便于遵守 PubMed/Crossref 的礼貌访问规范。
+`NCBI_EMAIL` 和 `CROSSREF_MAILTO` 不是必需项，但建议填写，便于遵守 PubMed/Crossref 的礼貌访问规范。启用 OpenAlex 来源时需要设置 `OPENALEX_API_KEY`；可以在 [OpenAlex Settings](https://openalex.org/settings/api) 创建免费 key。`GITHUB_SOURCE_TOKEN` 为可选项，只会随 GitHub Release 请求发送，用于提高公开 GitHub API 的限额；不会发送给其他来源，也绝不能提交到仓库。
 
 如果对应供应商的 API Key 存在，脚本会调用模型 API 生成中文标题、今日重点、分领域摘要和简短中文摘要。如果没有配置 API Key，默认本地运行会自动使用规则模板生成标题和 fallback summaries，不会因为缺少 Key 直接崩溃。所有学科标题都会优先突出研究对象、方法、材料/体系、机制、模型、数据类型或证据边界，避免营销号式反问和悬念表达。
 
@@ -96,6 +123,7 @@ CHEM_REPORT_EMAIL_TO=chem-reader@example.com
 ORGANIC_REPORT_EMAIL_TO=organic-reader@example.com
 BIO_REPORT_EMAIL_TO=bio-reader@example.com
 STAT_REPORT_EMAIL_TO=stat-reader@example.com
+BUSINESS_REPORT_EMAIL_TO=business-reader@example.com
 SMTP_HOST=smtp.example.com
 SMTP_PORT=465
 SMTP_USERNAME=your_email@example.com
@@ -112,7 +140,8 @@ EMAIL_ENABLED=true
 - `SMTP_PASSWORD` 应使用邮箱服务商提供的 SMTP 授权码/app password，不要使用网页登录密码。
 - `CHEM_REPORT_EMAIL_TO`、`BIO_REPORT_EMAIL_TO`、`STAT_REPORT_EMAIL_TO` 分别控制化学、生物、统计学收件人。
 - `ORGANIC_REPORT_EMAIL_TO` 控制有机化学日报目标收件人。
-- `REPORT_EMAIL_TO` 是通用目标收件人兜底；任一学科的专属收件人为空或被 SMTP 全部拒收时，会尝试回退到 `REPORT_EMAIL_TO`。
+- `BUSINESS_REPORT_EMAIL_TO` 是工商管理日报的专属目标收件人；工商管理不会回退到 `REPORT_EMAIL_TO`，避免把管理类日报误发给通用收件人。
+- `REPORT_EMAIL_TO` 是化学、有机化学、生物和统计学的通用目标收件人兜底；这些学科的专属收件人为空或被 SMTP 全部拒收时，会尝试回退到 `REPORT_EMAIL_TO`。
 - 邮件附件只发送 PDF；本地输出目录仍保留对应 `.docx`。
 - PDF 转换依赖 LibreOffice。macOS 可安装 LibreOffice；如果命令不在 PATH，可设置 `LIBREOFFICE_PATH=/Applications/LibreOffice.app/Contents/MacOS/soffice`。
 - 默认本地运行时，如果 SMTP 未配置、PDF 转换失败，或日报没有完整 AI 总结，脚本只会记录 `Email not sent`，不会影响 Word 生成。
@@ -127,12 +156,14 @@ EMAIL_ENABLED=true
 python main.py
 ```
 
-生成有机化学、生物或统计学日报：
+生成有机化学、生物、统计学、工商管理或计算机科学日报：
 
 ```bash
 python main.py --profile organic_chemistry
 python main.py --profile biology
 python main.py --profile statistics
+python main.py --profile business_management
+python main.py --profile computer_science
 ```
 
 只看最近 24 小时：
@@ -153,6 +184,9 @@ python main.py --no-openai --verbose
 python main.py --profile chemistry --output-dir ./output --no-email
 python main.py --profile organic_chemistry --output-dir ./output --no-email
 python main.py --profile biology --output-dir ./output --no-email
+python main.py --profile statistics --output-dir ./output --no-email
+python main.py --profile business_management --output-dir ./output --no-email
+python main.py --profile computer_science --output-dir ./output --no-email
 ```
 
 指定输出目录：
@@ -189,7 +223,7 @@ macOS/Linux 可以用 cron，例如每天早上 8 点运行：
 
 ## GitHub Actions 自动运行
 
-项目现在把 GitHub Actions 拆成 9 个独立 workflow，避免“手动测试、私人邮箱、每日自动任务”互相干扰。
+项目现在把 GitHub Actions 拆成固定日报、手动预览和统一用户调度等独立 workflow，避免“手动测试、私人邮箱、每日自动任务”互相干扰。
 
 单科目标收件人 workflow：
 
@@ -197,6 +231,7 @@ macOS/Linux 可以用 cron，例如每天早上 8 点运行：
 - `.github/workflows/target-organic-chemistry.yml`：`Organic Chemistry News - Target Email`，发送到 `ORGANIC_REPORT_EMAIL_TO`；为空或拒收时回落到 `REPORT_EMAIL_TO`。
 - `.github/workflows/target-biology.yml`：`Biology News - Target Email`，发送到 `BIO_REPORT_EMAIL_TO`；为空或拒收时回落到 `REPORT_EMAIL_TO`。
 - `.github/workflows/target-statistics.yml`：`Statistics News - Target Email`，发送到 `STAT_REPORT_EMAIL_TO`；为空或拒收时回落到 `REPORT_EMAIL_TO`。
+- `.github/workflows/target-business-management.yml`：`Business Management News - Target Email`，只发送到 `BUSINESS_REPORT_EMAIL_TO`，不回落到 `REPORT_EMAIL_TO`。
 
 单科私人邮箱 workflow：
 
@@ -204,13 +239,15 @@ macOS/Linux 可以用 cron，例如每天早上 8 点运行：
 - `.github/workflows/personal-organic-chemistry.yml`：`Organic Chemistry News - Personal Email`，发送到 `PERSONAL_REPORT_EMAIL_TO`。
 - `.github/workflows/personal-biology.yml`：`Biology News - Personal Email`，发送到 `PERSONAL_REPORT_EMAIL_TO`。
 - `.github/workflows/personal-statistics.yml`：`Statistics News - Personal Email`，发送到 `PERSONAL_REPORT_EMAIL_TO`。
+- `.github/workflows/personal-business-management.yml`：`Business Management News - Personal Email`，把 `PERSONAL_REPORT_EMAIL_TO` 作为工商管理专属收件人。
 
 每日自动 workflow：
 
 - `.github/workflows/cronjob-daily.yml`：`Cronjob Daily Research News`，专门给 cron-job.org 等外部定时器触发。
 - 监听 `repository_dispatch` 的 `event_type=science-news-daily`，也保留 `workflow_dispatch` 便于手动测试。
-- 每次运行固定生成化学、有机化学、生物、统计学四份日报，并分别发送到目标收件人，不使用 `PERSONAL_REPORT_EMAIL_TO`。
+- 每次运行固定生成化学、有机化学、生物、统计学四份日报；仅当 `BUSINESS_REPORT_EMAIL_TO` 非空时追加工商管理日报。未配置该变量不会令既有四科失败，也不会把工商管理日报发给 `REPORT_EMAIL_TO`。
 - `repository_dispatch` 成功后会保存当天 marker，避免外部定时器重复请求导致当天重复发送。
+- 同一次外部唤醒还会运行数据库驱动的用户计划调度器；固定日报的当天 marker 不会跳过用户计划扫描。
 
 所有发邮件 workflow 都强制使用：
 
@@ -238,7 +275,8 @@ python main.py --profile <profile> --output-dir ./output --require-email --requi
 - `ORGANIC_REPORT_EMAIL_TO`：有机化学日报目标收件人；为空或 SMTP 全部拒收时回落到 `REPORT_EMAIL_TO`。
 - `BIO_REPORT_EMAIL_TO`：生物日报目标收件人；为空或 SMTP 全部拒收时回落到 `REPORT_EMAIL_TO`。
 - `STAT_REPORT_EMAIL_TO`：统计学日报目标收件人；为空或 SMTP 全部拒收时回落到 `REPORT_EMAIL_TO`。
-- `PERSONAL_REPORT_EMAIL_TO`：私人手动 workflow 专用收件人，供四条 `personal-*` workflow 使用。
+- `BUSINESS_REPORT_EMAIL_TO`：工商管理日报目标收件人；不回落到 `REPORT_EMAIL_TO`。每日 workflow 仅在该 Secret 非空时运行工商管理。
+- `PERSONAL_REPORT_EMAIL_TO`：私人手动 workflow 专用收件人，供五条 `personal-*` workflow 使用。
 - `SMTP_HOST`、`SMTP_PORT`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`SMTP_FROM`、`SMTP_SECURITY`：用于发送 PDF 附件邮件。
 
 workflow 会把 Secrets 注入为环境变量：
@@ -254,6 +292,7 @@ CHEM_REPORT_EMAIL_TO: ${{ secrets.CHEM_REPORT_EMAIL_TO }}
 ORGANIC_REPORT_EMAIL_TO: ${{ secrets.ORGANIC_REPORT_EMAIL_TO }}
 BIO_REPORT_EMAIL_TO: ${{ secrets.BIO_REPORT_EMAIL_TO }}
 STAT_REPORT_EMAIL_TO: ${{ secrets.STAT_REPORT_EMAIL_TO }}
+BUSINESS_REPORT_EMAIL_TO: ${{ secrets.BUSINESS_REPORT_EMAIL_TO }}
 PERSONAL_REPORT_EMAIL_TO: ${{ secrets.PERSONAL_REPORT_EMAIL_TO }}
 SMTP_HOST: ${{ secrets.SMTP_HOST }}
 SMTP_PORT: ${{ secrets.SMTP_PORT }}
@@ -269,7 +308,13 @@ workflow 会安装 LibreOffice Writer 和 Noto CJK 字体，用于把本地保�
 
 ### 外部定时器触发
 
-使用 cron-job.org、UptimeRobot、服务器 cron、Cloudflare Workers Cron Trigger 等外部定时器，每天北京时间 07:30 调用 GitHub `repository_dispatch` API。仓库内的自动入口只有 `.github/workflows/cronjob-daily.yml`，不会再由各个单科手动 workflow 接收外部定时器事件。
+使用 cron-job.org、UptimeRobot、服务器 cron、Cloudflare Workers Cron Trigger 等外部定时器，每 30 分钟调用 GitHub `repository_dispatch` API。仓库内的自动入口只有 `.github/workflows/cronjob-daily.yml`；外部定时器不需要知道用户、计划或收件人。
+
+例如 cron 表达式为：
+
+```cron
+*/30 * * * *
+```
 
 先创建一个 GitHub fine-grained personal access token：
 
@@ -295,7 +340,7 @@ workflow 会安装 LibreOffice Writer 和 Noto CJK 字体，用于把本地保�
 }
 ```
 
-外部定时器不需要传 `profiles`；`Cronjob Daily Research News` 会自动运行化学、有机化学、生物、统计学四份日报并发送四封 PDF 附件邮件。
+外部定时器不需要传 `profiles`；`Cronjob Daily Research News` 会固定运行化学、有机化学、生物、统计学四份日报，并在 `BUSINESS_REPORT_EMAIL_TO` 已配置时追加工商管理日报。同时，它会在 Turso/SQLite 中领取有限数量的到期用户计划。单次最多领取 `MAX_JOBS_PER_RUN`（默认 10）个用户任务，并在 `MAX_RUNTIME_MINUTES`（默认 80）预算内停止领取新任务；未领取任务保留到下一次唤醒。
 
 服务器上也可以用 curl 测试：
 
@@ -331,17 +376,91 @@ curl -L -X POST \
 1. 打开对应的 workflow run。
 2. 在页面底部找到 `Artifacts`。
 3. 下载对应 artifact，例如 `chemistry-target-output`、`biology-personal-output` 或 `cronjob-science-news-daily-output`。
-4. 解压后即可看到生成的 `.docx`；如果本次完成了邮件 PDF 转换，也会包含同名 `.pdf`。正常情况会包含 `chem_news_YYYY-MM-DD.docx`、`bio_news_YYYY-MM-DD.docx`、`stat_news_YYYY-MM-DD.docx`；抓取为 0 条时会生成对应失败报告。
+4. 解压后即可看到生成的 `.docx`；如果本次完成了邮件 PDF 转换，也会包含同名 `.pdf`。正常情况会包含对应学科的 `chem_news_YYYY-MM-DD.docx`、`organic_chem_news_YYYY-MM-DD.docx`、`bio_news_YYYY-MM-DD.docx`、`stat_news_YYYY-MM-DD.docx` 或 `business_news_YYYY-MM-DD.docx`；抓取为 0 条时会生成对应失败报告，例如 `business_news_运行失败报告.docx`。
 
 GitHub Actions 只调用公开 API/RSS/元数据接口和你配置的模型 API，不会自动登录学校账号，也不会下载受版权保护的 PDF。
+
+## 专属日报运营面板
+
+仓库新增了一个本地 Streamlit 运营面板，用于维护客户级科研日报。它不会替换现有的 5 套固定学科画像和 11 个 workflow；专属日报仍复用既有的抓取、排序、AI、DOCX、PDF 和 SMTP 路径，只是按保存的客户画像筛选与发送。
+
+面板支持创建和版本化客户科研画像：基础学科、研究主题、包含/排除词、来源、期刊 ISSN、内容偏好、条目上限、模型、输出格式和发送计划。创建时可以用一段自然语言描述客户想追踪的研究兴趣；AI 只会生成可编辑的学科、关键词和信源建议，不能自动保存、发信或使用未在系统白名单中的来源。保存新版画像不会改写已经生成的历史日报配置。
+
+### 新用户开通与预览确认
+
+专属日报必须按以下顺序开通：
+
+```text
+必填信息 → 使用当前配置 provider 的大模型建议（可编辑） → 生成预览（不发邮件）
+→ 启用计划 → 下一个固定发送时间自动邮件
+```
+
+先填写姓名、收件邮箱和一段研究兴趣描述，再由面板生成可编辑的研究画像与计划建议；保存画像后只会创建预览任务。研究兴趣只用于提炼关键词、信源与筛选条件，绝不会直接作为日报主标题；主标题由模型基于当期实际入选内容生成，模型不可用时使用基础学科的通用标题。预览会生成并上传 DOCX 与 PDF artifact，绝不会向收件人发邮件；PDF 转换失败时预览会标记为可重试，而不会把只有 Word 的结果标为完成。确认预览内容后，点击“启用固定频率计划”才会启用计划；系统会重新计算严格晚于启用时刻的下一次固定发送时间，并由统一 `Cronjob Daily Research News` workflow 的 30 分钟唤醒在该时间后自动发送。
+
+面板的“系统建议”与日报 runner 共用当前配置的模型供应商和凭据：使用 `LLM_PROVIDER` 选择 `openai` 或 `deepseek`，并配置对应的 `OPENAI_API_KEY` 或 `DEEPSEEK_API_KEY`（以及可选模型名）。若当前 provider 缺少或无法使用模型 Key，面板不会静默使用规则模板或其他 fallback 生成建议；它会保留必填信息并提示修正模型配置后重试。
+
+在私有 `.env` 中配置以下变量；`.env.example` 只保留空变量名：
+
+```text
+TURSO_DATABASE_URL=
+TURSO_AUTH_TOKEN=
+MAX_JOBS_PER_RUN=10
+MAX_RUNTIME_MINUTES=80
+CUSTOM_DELIVERY_LEASE_MINUTES=120
+PERSONAL_ADMIN_GITHUB_REPOSITORY=owner/repository
+GITHUB_DISPATCH_TOKEN=
+```
+
+`TURSO_*` 用于保存画像、计划、报告历史和投递状态。日常面板会在本机维护一个 Turso 读取副本：切换页面、查看用户和投递记录只读取本地副本；点击侧栏的“同步当前状态”才会刷新 GitHub Actions 写入的云端状态。首次启动不会自动联网；首次或缓存为空时，点击该按钮即可建立可读取副本。需要自定义本机缓存位置时，可设置 `PERSONAL_ADMIN_REPLICA_PATH`。`PERSONAL_ADMIN_GITHUB_REPOSITORY` 与 `GITHUB_DISPATCH_TOKEN` 使本地面板可以请求专用的 `Custom User Research Daily` GitHub workflow。Token 只能保存在本地环境，不能写入仓库。
+
+当前使用的 libsql Embedded Replica 只将读取保存在本机；用户画像、计划和暂停状态的写入会直接提交到 Turso 云端主库。因此同步按钮用于拉取最新状态，而不是上传待提交修改。同步临时失败时，面板仍会显示上次已同步的数据；如果尚未成功同步过，面板会显示可重试的空状态，不会执行数据库查询或触发任务。对于一个尚未初始化的空 Turso 数据库，首次成功点击同步会建立项目既有表结构，再读取本地副本。
+
+本地开发可以不使用 Turso，而使用被 Git 忽略的 SQLite 文件：
+
+```bash
+export PERSONAL_ADMIN_LOCAL_DB=".personal-admin/dashboard.db"
+streamlit run dashboard/app.py
+```
+
+同一个 `PERSONAL_ADMIN_LOCAL_DB` 也可让 `custom_user_daily.py scan` 使用 SQLite，便于本地调度验证；GitHub Actions 生产运行仍使用 Turso。两种模式共用同一套迁移、幂等键和条件领取逻辑。
+
+每个用户画像还可设置“资讯时间窗口（天）”，范围为 1–60 天，默认 3 天。它只决定日报生成时向前收集多久的资讯；不改变用户的发送频率、当地发送时间、外部 cronjob 的 30 分钟唤醒或跨日报去重窗口。该值随画像版本保存：编辑后只影响之后新建的预览和自动日报；旧用户和旧版本会自动按 3 天兼容。
+
+计算机科学画像选择 `CCF 推荐会议（DBLP 新收录）` 后，可在“CCF 会议等级”中选择 `A`、`A + B`（默认）或 `A + B + C`。时间窗口在该来源上表示 **DBLP 收录时间**，而非出版社正式发表日期；系统会排除名称或记录键可识别的 workshop、demo、short paper、companion 等非主会轨道。新建的计算机科学画像默认勾选该来源并采用 A+B；已有用户不会被自动加入，编辑并保存画像后才生效。
+
+日常使用配置 Turso 后，去掉 `PERSONAL_ADMIN_LOCAL_DB` 并执行相同命令：
+
+```bash
+streamlit run dashboard/app.py
+```
+
+自动用户计划不再使用独立的 GitHub `schedule`。外部 cronjob 每 30 分钟触发统一 workflow，调度器只扫描 `active` 用户的启用计划和已到期的 UTC `next_run_at`。手动 `Custom User Research Daily` workflow 保留预览、立即发报和重试 dispatch，仅用于运营操作。
+
+### 立即手动发报
+
+“用户画像”页面只会向状态为“已启用”的用户显示“手动发报”。点击后必须再次点击“确认立即发送”，系统才会创建任务并请求 GitHub Actions 生成 PDF、通过既有 SMTP 路径发送；在确认前不会创建任务或发送邮件。已暂停或到期的用户没有这个入口。
+
+每位用户在其 **IANA 时区的同一自然日** 最多只有一项立即发报任务。重复确认会复用当天已有任务；若任务仍在“等待执行”，可以在补齐 GitHub 设置或上次触发失败后重新触发同一任务，数据库的原子领取仍保证只产生一次邮件尝试。任务一旦离开“等待执行”就只显示当前状态，不会再次触发 workflow。该手动任务不关联固定计划，因此不会推进或改写 `next_run_at`；用户原有的固定频率发送仍按原时间独立执行。
+
+“日报与投递”页面会显示任务状态、失败阶段、最近错误和下一次重试时间。立即发报遇到报告生成、PDF 转换或 SMTP 异常时会记录相应失败阶段并转为可重试状态；处于“等待重试”的手动任务可以点击“重新执行”。处于“等待执行”“执行中”或“等待重试”的任务可以终止。邮件已进入“正在发送”后无法安全撤回，页面会明确提示；已终止任务不会继续进入邮件发送。手动任务的重试与终止只影响该任务，不会改变固定计划。
+
+每个自动投递使用“用户 ID + 计划 ID + UTC 应执行周期 + 渠道”的唯一幂等键；数据库使用条件更新记录执行 ID、锁定者、锁定时间和尝试次数，多个 workflow 不能领取同一周期。成功投递后才会按用户时区推进 `next_run_at`，因此延迟唤醒只补当前欠送周期，不会跳过失败任务或一次性补发多期。失败会记录抓取、AI、Word、PDF、邮件或数据库阶段，并按 30、60 分钟的退避重试，最多 3 次；第三次失败会转为最终失败，等待运营处理而不会伪装成“等待重试”。`claimed` 任务超过 `CUSTOM_DELIVERY_LEASE_MINUTES` 会进入下一轮可重试状态；已进入 SMTP `sending` 后超时、SMTP 传输异常或邮件成功后数据库状态写入异常，都会标为“投递结果未知”，默认不自动重发，避免 SMTP 已接收但数据库尚未写回时的重复邮件。只有 SMTP 明确返回未发送时才进入自动重试；“结果未知”需要运营者人工核验后处理。
+
+启用统一调度前，把数据库、模型和 SMTP 变量作为 GitHub Actions secrets 配置，并额外加入 `TURSO_DATABASE_URL` 与 `TURSO_AUTH_TOKEN`。可将 `MAX_JOBS_PER_RUN`、`MAX_RUNTIME_MINUTES` 和 `CUSTOM_DELIVERY_LEASE_MINUTES` 配置为 GitHub Actions repository variables。运行摘要只输出任务数量，不输出邮箱、SMTP 密码、API Key 或 Turso Token。
+
+操作建议：编辑正在服务的客户前先在 Users 页面暂停该客户；保存后会创建新的画像版本，下一次新建报告才使用新版。手动预览 artifact 在 GitHub Actions 中保留 14 天；过期后需要重新生成预览。日报与投递页面可终止“等待执行”“执行中”或“等待重试”的任务：数据库会原子地取消该任务，正在生成的 workflow 不会再进入邮件发送；自动计划会跳过当前周期并计算下一次运行。SMTP 已开始发送时不能安全撤回，因此只会显示状态说明。用户的发送时间在界面按其 IANA 时区显示，数据库保存 UTC；夏令时歧义时间取第一次出现，不存在的本地时间向前顺延。自动投递失败最多自动重试 3 次，且不会在同一轮扫描立即再次发送。
+
+“日报与投递”中的每条新任务均可展开“任务详情”：它显示本次抓取原始条目、画像匹配、去重后、因历史重复未入选、最终入选五个数量，以及仅属于该任务的数据源成功/失败、原始条目数和失败原因。抓取、AI、Word、PDF 或邮件阶段失败时，已获得的来源诊断仍会保留；历史任务会明确显示为“创建时尚未记录抓取指标”，不会和其他用户或其他日期的指标混在一起。全局“数据源与指标”页面仍用于查看跨任务的整体健康度。
+
+早期版本创建的用户若把完整需求直接存入“研究方向”，可在用户管理页点击“用 AI 统一优化已有用户”，或运行 `python custom_user_daily.py normalize-profiles`。它会逐个调用当前配置的大模型，将每位用户的原始描述提炼为统一、简短的“研究聚焦”，并重新推荐关键词、信源和内容偏好；每人只新增一个不可变画像版本，不修改用户状态、发送时间、计划、报告历史或投递记录。输出仅包含总数、成功数和失败数，不打印用户邮箱或原始描述；单个用户失败不会阻塞其余用户。
 
 ## 输出结构
 
 Word 文档包含：
 
-- 标题：化学科研资讯日报
+- 对应学科的日报标题
 - 日期
-- 今日重点 5 条
+- 今日重点（最多 5 条，按实际收录数量显示）
 - 分领域摘要
 - 每条资讯的中文标题、原始英文标题、来源、发布日期、DOI/链接、简短中文摘要和原文摘要
 

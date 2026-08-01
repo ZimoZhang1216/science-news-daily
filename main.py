@@ -23,6 +23,10 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
+from personalization.ccf_catalogue import CcfConference, conferences_for_tiers
+from personalization.source_catalog import SOURCE_DEFINITIONS, source_definitions_for_profile
+from personalization.rss_registry import RSS_FEED_REGISTRY, rss_feeds_for_source
+
 MISSING_DEPENDENCIES: list[str] = []
 
 try:
@@ -100,8 +104,21 @@ HISTORY_QUALITY_MARGIN = 22.0
 DEFAULT_OPENAI_MODEL = "gpt-5.4-mini"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
 DEFAULT_REPORT_EMAIL_TO = "2510248@mail.nankai.edu.cn"
-SUPPORTED_LLM_PROVIDERS = {"openai", "deepseek"}
+SUPPORTED_LLM_PROVIDERS = {"openai", "deepseek", "openrouter"}
 BANNED_TITLE_WORDS = {"震惊", "颠覆", "炸裂", "封神", "逆天", "重磅", "神作", "史诗级"}
+
+
+def resolve_cjk_font(platform: str | None = None) -> str:
+    target_platform = platform or sys.platform
+    if target_platform == "darwin":
+        return "Hiragino Sans GB"
+    if target_platform.startswith("win"):
+        return "Microsoft YaHei"
+    return "Noto Sans CJK SC"
+
+
+CJK_FONT_NAME = resolve_cjk_font()
+
 ELEMENT_SYMBOLS = {
     "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne",
     "Na", "Mg", "Al", "Si", "P", "S", "Cl", "Ar",
@@ -339,11 +356,39 @@ STATISTICS_TERM_TRANSLATIONS: list[tuple[str, str]] = [
     ("meta-analysis", "Meta分析"),
 ]
 
+BUSINESS_MANAGEMENT_TERM_TRANSLATIONS: list[tuple[str, str]] = [
+    ("strategic management", "战略管理"),
+    ("competitive strategy", "竞争战略"),
+    ("corporate strategy", "公司战略"),
+    ("organizational behavior", "组织行为"),
+    ("organizational culture", "组织文化"),
+    ("human resource management", "人力资源管理"),
+    ("employee creativity", "员工创造力"),
+    ("employee innovation", "员工创新"),
+    ("work engagement", "工作投入"),
+    ("career mobility", "职业流动"),
+    ("career advancement", "职业晋升"),
+    ("executive career", "高管职业发展"),
+    ("marketing strategy", "营销战略"),
+    ("consumer behavior", "消费者行为"),
+    ("digital marketing", "数字营销"),
+    ("innovation management", "创新管理"),
+    ("business model innovation", "商业模式创新"),
+    ("entrepreneurship", "创业"),
+    ("supply chain management", "供应链管理"),
+    ("supply chain resilience", "供应链韧性"),
+    ("digital transformation", "数字化转型"),
+    ("algorithmic management", "算法管理"),
+    ("corporate governance", "公司治理"),
+    ("esg", "ESG"),
+]
+
 PROFILE_TERM_TRANSLATIONS = {
     "chemistry": CHEMISTRY_TERM_TRANSLATIONS,
     "organic_chemistry": CHEMISTRY_TERM_TRANSLATIONS,
     "biology": BIOLOGY_TERM_TRANSLATIONS,
     "statistics": STATISTICS_TERM_TRANSLATIONS,
+    "business_management": BUSINESS_MANAGEMENT_TERM_TRANSLATIONS,
 }
 
 GENERIC_TITLE_BODIES = {
@@ -715,26 +760,31 @@ RSS_FEEDS: list[dict[str, Any]] = [
         "source": "C&EN (ACS)",
         "url": "https://feeds.feedburner.com/cen_latestnews",
         "broad": False,
+        "source_id": "acs",
     },
     {
         "source": "Nature Chemistry",
         "url": "https://www.nature.com/nchem.rss",
         "broad": False,
+        "source_id": "nature_chemistry",
     },
     {
         "source": "Science",
         "url": "https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=science",
         "broad": True,
+        "source_id": "rss",
     },
     {
         "source": "Chemistry World News (RSC)",
         "url": "https://www.chemistryworld.com/409.rss",
         "broad": False,
+        "source_id": "chemistry_world",
     },
     {
         "source": "Chemistry World Research (RSC)",
         "url": "https://www.chemistryworld.com/410.rss",
         "broad": False,
+        "source_id": "chemistry_world",
     },
 ]
 
@@ -946,6 +996,7 @@ BIOLOGY_RSS_FEEDS: list[dict[str, Any]] = [
         "source": "Science",
         "url": "https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=science",
         "broad": True,
+        "source_id": "rss",
     },
     {"source": "Cell", "url": "https://www.cell.com/cell/current.rss", "broad": False},
 ]
@@ -1116,6 +1167,300 @@ STATISTICS_SOURCE_WEIGHTS = {
     "arXiv": 52,
 }
 
+BUSINESS_MANAGEMENT_FIELD_KEYWORDS = {
+    "战略与组织": ["strategic management", "competitive strategy", "corporate strategy", "organizational theory", "organizational culture", "business strategy"],
+    "组织行为与人力资源": ["organizational behavior", "leadership", "employee behavior", "employee creativity", "employee innovation", "team performance", "organizational justice", "work engagement", "job performance", "human resource management", "talent management", "career mobility", "career advancement", "executive career"],
+    "市场营销": ["marketing strategy", "consumer behavior", "brand management", "digital marketing", "social media marketing", "influencer marketing", "customer engagement", "customer experience", "advertising effectiveness", "platform marketing"],
+    "创新与创业": ["innovation management", "business model innovation", "digital innovation", "entrepreneurship", "entrepreneurial orientation", "startup", "venture creation", "technology management", "research and development management"],
+    "运营与供应链": ["operations management", "supply chain management", "supply chain resilience", "service operations", "inventory management", "production management", "sustainable supply chain"],
+    "数字化与信息系统": ["digital transformation", "artificial intelligence in management", "generative ai", "human ai collaboration", "algorithmic management", "digital platform", "information systems", "technology adoption"],
+    "公司治理与可持续管理": ["corporate governance", "corporate social responsibility", "esg", "sustainable management", "stakeholder management", "board of directors", "executive compensation", "top management team"],
+}
+BUSINESS_MANAGEMENT_TERMS = sorted({term.lower() for values in BUSINESS_MANAGEMENT_FIELD_KEYWORDS.values() for term in values} | {"firm", "company", "business", "organization", "organisation", "corporate", "management", "manager", "employee", "workplace", "consumer", "market", "stakeholder"})
+BUSINESS_MANAGEMENT_ARXIV_QUERY_TERMS = ["strategic management", "organizational behavior", "human resource management", "marketing strategy", "innovation management", "entrepreneurship", "digital transformation", "supply chain management", "corporate governance"]
+BUSINESS_MANAGEMENT_PUBMED_QUERY_TERMS: list[str] = []
+BUSINESS_MANAGEMENT_RSS_FEEDS: list[dict[str, Any]] = []
+
+BUSINESS_MANAGEMENT_CROSSREF_JOURNALS: list[dict[str, Any]] = [
+    {"source": "International Journal of Management Reviews", "issns": ["1460-8545"], "broad": False},
+    {"source": "Academy of Management Annals", "issns": ["1941-6520"], "broad": False},
+    {"source": "Journal of Management", "issns": ["0149-2063"], "broad": False},
+    {"source": "Academy of Management Perspectives", "issns": ["1558-9080"], "broad": False},
+    {"source": "Academy of Management Journal", "issns": ["0001-4273"], "broad": False},
+    {"source": "Academy of Management Review", "issns": ["0363-7425"], "broad": False},
+    {"source": "Journal of Business Research", "issns": ["0148-2963"], "broad": False},
+    {"source": "Strategic Management Journal", "issns": ["0143-2095"], "broad": False},
+    {"source": "Strategic Entrepreneurship Journal", "issns": ["1932-4391"], "broad": False},
+    {"source": "Long Range Planning", "issns": ["0024-6301"], "broad": False},
+    {"source": "Journal of Applied Psychology", "issns": ["0021-9010"], "broad": False},
+    {"source": "Personnel Psychology", "issns": ["0031-5826"], "broad": False},
+    {"source": "Organizational Behavior and Human Decision Processes", "issns": ["0749-5978"], "broad": False},
+    {"source": "Journal of Organizational Behavior", "issns": ["0894-3796"], "broad": False},
+    {"source": "Human Relations", "issns": ["0018-7267"], "broad": False},
+    {"source": "Human Resource Management Review", "issns": ["1053-4822"], "broad": False},
+    {"source": "Annual Review of Organizational Psychology and Organizational Behavior", "issns": ["2327-0608"], "broad": False},
+    {"source": "Journal of Marketing", "issns": ["0022-2429"], "broad": False},
+    {"source": "Journal of Marketing Research", "issns": ["0022-2437"], "broad": False},
+    {"source": "Journal of Consumer Research", "issns": ["0093-5301"], "broad": False},
+    {"source": "Marketing Science", "issns": ["0732-2399"], "broad": False},
+    {"source": "Journal of the Academy of Marketing Science", "issns": ["0092-0703"], "broad": False},
+    {"source": "International Journal of Research in Marketing", "issns": ["0167-8116"], "broad": False},
+    {"source": "Research Policy", "issns": ["0048-7333"], "broad": False},
+    {"source": "Technovation", "issns": ["0166-4972"], "broad": False},
+    {"source": "Journal of Business Venturing", "issns": ["0883-9026"], "broad": False},
+    {"source": "Entrepreneurship Theory and Practice", "issns": ["1042-2587"], "broad": False},
+    {"source": "Journal of Operations Management", "issns": ["0272-6963"], "broad": False},
+    {"source": "Production and Operations Management", "issns": ["1059-1478"], "broad": False},
+    {"source": "Manufacturing & Service Operations Management", "issns": ["1523-4614"], "broad": False},
+    {"source": "Management Science", "issns": ["0025-1909"], "broad": False},
+    {"source": "MIS Quarterly", "issns": ["0276-7783"], "broad": False},
+    {"source": "Information Systems Research", "issns": ["1047-7047"], "broad": False},
+    {"source": "Journal of Management Information Systems", "issns": ["0742-1222"], "broad": False},
+    {"source": "Journal of the Association for Information Systems", "issns": ["1536-9323"], "broad": False},
+    {"source": "Information & Management", "issns": ["0378-7206"], "broad": False},
+]
+
+BUSINESS_MANAGEMENT_SOURCE_WEIGHTS = {
+    "International Journal of Management Reviews": 84,
+    "Academy of Management Annals": 82,
+    "Journal of Management": 80,
+    "Academy of Management Perspectives": 74,
+    "Academy of Management Journal": 78,
+    "Academy of Management Review": 78,
+    "Journal of Business Research": 66,
+    "Strategic Management Journal": 78,
+    "Strategic Entrepreneurship Journal": 74,
+    "Long Range Planning": 72,
+    "Journal of Applied Psychology": 76,
+    "Personnel Psychology": 74,
+    "Organizational Behavior and Human Decision Processes": 74,
+    "Journal of Organizational Behavior": 72,
+    "Human Relations": 70,
+    "Human Resource Management Review": 78,
+    "Annual Review of Organizational Psychology and Organizational Behavior": 78,
+    "Journal of Marketing": 78,
+    "Journal of Marketing Research": 78,
+    "Journal of Consumer Research": 76,
+    "Marketing Science": 76,
+    "Journal of the Academy of Marketing Science": 76,
+    "International Journal of Research in Marketing": 74,
+    "Research Policy": 78,
+    "Technovation": 68,
+    "Journal of Business Venturing": 76,
+    "Entrepreneurship Theory and Practice": 74,
+    "Journal of Operations Management": 78,
+    "Production and Operations Management": 76,
+    "Manufacturing & Service Operations Management": 74,
+    "Management Science": 78,
+    "MIS Quarterly": 78,
+    "Information Systems Research": 76,
+    "Journal of Management Information Systems": 72,
+    "Journal of the Association for Information Systems": 72,
+    "Information & Management": 66,
+    "arXiv": 48,
+}
+
+ACADEMIC_SOURCE_IDS = ("arxiv", "pubmed", "crossref", "rss", "openalex", "ccf_conferences")
+PUBLIC_SOURCE_IDS = ("official_rss", "hackernews", "github_releases")
+PUBLIC_API_SOURCE_IDS = ("europe_pmc", "biorxiv", "medrxiv", "clinical_trials", "who")
+# These entries are executable through the single existing RSS collector.
+# Catalogue records without a registered feed stay visible but cannot become a
+# saved source selection or an AI recommendation.
+CATALOGUE_RSS_SOURCE_IDS = frozenset(RSS_FEED_REGISTRY)
+# Older saved profiles can contain a catalogue ID that is no longer backed by
+# a collector.  Keep those rows readable; the executable allowlist below is
+# still the only source of UI selection, AI recommendation, and collection.
+CATALOGUE_SOURCE_IDS = frozenset(source.id for source in SOURCE_DEFINITIONS)
+SUPPORTED_SOURCE_IDS = frozenset(
+    (*ACADEMIC_SOURCE_IDS, *PUBLIC_SOURCE_IDS, *PUBLIC_API_SOURCE_IDS, *CATALOGUE_SOURCE_IDS)
+)
+# These sources accept topic terms directly, so a user can opt into them even
+# when their base discipline has no pre-configured journal or feed catalogue.
+SHARED_USER_SOURCE_IDS = ("arxiv", "pubmed", "openalex", "hackernews")
+
+SOURCE_KIND_LABELS = {
+    "academic": "学术研究",
+    "official": "官方发布",
+    "community": "社区信号",
+}
+SOURCE_LAYER_LABELS = {
+    "official_data_policy": "官方数据与政策",
+    "academic_research": "学术研究",
+    "institutional_research": "机构研究",
+    "industry_engineering": "行业、工程与开源动态",
+    "community_signal": "社区信号",
+}
+_LEGACY_KIND_TO_SOURCE_LAYER = {
+    "academic": "academic_research",
+    "official": "official_data_policy",
+    "community": "community_signal",
+}
+
+SOURCE_DEFINITIONS_BY_ID = {source.id: source for source in SOURCE_DEFINITIONS}
+
+
+def source_provenance(source_id: str) -> tuple[str, int]:
+    """Return the trusted-layer metadata for an executable source ID."""
+
+    source = SOURCE_DEFINITIONS_BY_ID.get(source_id)
+    if source is None:
+        return "academic_research", 0
+    return source.layer, source.credibility
+
+
+def item_source_layer(item: NewsItem) -> str:
+    """Return an evidence layer while retaining old records with only source_kind."""
+
+    legacy_layer = _LEGACY_KIND_TO_SOURCE_LAYER.get(item.source_kind, "academic_research")
+    if not item.source_id and item.source_layer == "academic_research":
+        return legacy_layer
+    return item.source_layer if item.source_layer in SOURCE_LAYER_LABELS else legacy_layer
+
+
+def item_credibility(item: NewsItem) -> int:
+    """Use catalogue credibility when available; old source-kind records stay transparent."""
+
+    if item.source_id:
+        _, credibility = source_provenance(item.source_id)
+        if credibility:
+            return credibility
+    return {"official_data_policy": 5, "academic_research": 3, "institutional_research": 3,
+            "industry_engineering": 3, "community_signal": 1}[item_source_layer(item)]
+
+
+def apply_source_provenance(items: list[NewsItem], source_id: str) -> list[NewsItem]:
+    """Attach stable catalogue provenance to collector results and test doubles."""
+
+    source_layer, _ = source_provenance(source_id)
+    for item in items:
+        item.source_id = source_id
+        item.source_layer = source_layer
+    return items
+
+
+def source_status(
+    name: str,
+    success: bool,
+    source_id: str,
+    item_count: int = 0,
+    error: str = "",
+) -> SourceStatus:
+    """Build a provenance-aware status without changing legacy call sites."""
+
+    source_layer, credibility = source_provenance(source_id)
+    return SourceStatus(
+        name=name,
+        success=success,
+        item_count=item_count,
+        error=error,
+        source_id=source_id,
+        source_layer=source_layer,
+        credibility=credibility,
+    )
+
+PROFILE_LABELS = {
+    "chemistry": "化学（专业）",
+    "organic_chemistry": "有机化学（专业）",
+    "biology": "生物学（专业）",
+    "statistics": "统计学（专业）",
+    "business_management": "工商管理（专业）",
+    "philosophy": "哲学",
+    "economics": "经济学",
+    "law": "法学",
+    "education": "教育学",
+    "literature": "文学",
+    "history": "历史学",
+    "natural_sciences": "理学",
+    "engineering": "工学",
+    "agriculture": "农学",
+    "medicine": "医学",
+    "management": "管理学",
+    "arts": "艺术学",
+    "interdisciplinary_studies": "交叉学科",
+    "military_science": "军事学",
+    "computer_science": "计算机科学（工学专业）",
+}
+
+GENERIC_ACADEMIC_SOURCE_WEIGHTS = {
+    "Crossref": 62,
+    "OpenAlex": 58,
+    "CCF": 76,
+    "arXiv": 52,
+    "PubMed": 58,
+    "RSS": 42,
+    "Hacker News": 24,
+    "GitHub Release": 28,
+}
+
+COMPUTER_SCIENCE_FIELD_KEYWORDS = {
+    "人工智能与智能体": ["artificial intelligence", "machine learning", "large language model", "llm", "agent", "reasoning", "retrieval"],
+    "数据管理与时空数据": ["data cleaning", "data repair", "data quality", "data management", "database", "spatial data", "spatio-temporal", "trajectory"],
+    "系统与软件工程": ["distributed system", "operating system", "software engineering", "programming language", "compiler", "security"],
+    "图形与人机交互": ["computer graphics", "visualization", "human-computer interaction", "virtual reality"],
+}
+COMPUTER_SCIENCE_TERMS = tuple(
+    dict.fromkeys(keyword.lower() for keywords in COMPUTER_SCIENCE_FIELD_KEYWORDS.values() for keyword in keywords)
+)
+COMPUTER_SCIENCE_CROSSREF_JOURNALS = [
+    {"source": "ACM Computing Surveys", "issns": ["0360-0300", "1557-7341"], "broad": True},
+    {"source": "ACM Transactions on Database Systems", "issns": ["0362-5915", "1557-4643"], "broad": False},
+    {"source": "The VLDB Journal", "issns": ["1066-8888", "0949-877X"], "broad": False},
+    {"source": "IEEE Transactions on Knowledge and Data Engineering", "issns": ["1041-4347", "1558-2191"], "broad": False},
+]
+COMPUTER_SCIENCE_RSS_FEEDS = [
+    {"source": "ACM Computing Surveys", "url": "https://dl.acm.org/action/showFeed?type=etoc&feed=rss&jc=csur", "broad": True, "source_id": "acm", "source_kind": "academic"},
+]
+COMPUTER_SCIENCE_OFFICIAL_RSS_FEEDS = [
+    {"source": "GitHub Blog", "url": "https://github.blog/feed/", "broad": True, "source_id": "official_rss"},
+]
+COMPUTER_SCIENCE_GITHUB_REPOSITORIES = [
+    "huggingface/transformers",
+    "pytorch/pytorch",
+    "langchain-ai/langchain",
+]
+
+
+def _academic_profile(
+    *,
+    key: str,
+    title: str,
+    meta_fields: str,
+    default_field: str,
+    keywords: list[str],
+) -> dict[str, Any]:
+    """Build a conservative first-level discipline profile around OpenAlex."""
+
+    field_keywords = {default_field: keywords}
+    return {
+        "key": key,
+        "title": title,
+        "failure_title": f"{title}运行失败报告",
+        "output_prefix": key,
+        "header_label": f"{key.upper()} NEWS DAILY",
+        "meta_fields": meta_fields,
+        "field_keywords": field_keywords,
+        "relevance_terms": keywords,
+        "arxiv_query_terms": [],
+        "pubmed_query_terms": [],
+        "crossref_journals": [],
+        "rss_feeds": [],
+        "openalex_query_terms": keywords,
+        "official_rss_feeds": [],
+        "community_query_terms": [],
+        "github_repositories": [],
+        "source_weights": GENERIC_ACADEMIC_SOURCE_WEIGHTS,
+        "default_field": default_field,
+        "ai_role": f"{title}科研编辑",
+        "ai_task": f"生成{title}科研资讯日报摘要",
+        "title_style": (
+            "标题必须基于题名或摘要中的可核对对象、方法、数据或证据边界；"
+            "不得使用夸张、悬念或营销表达，也不得补写未出现的结论。"
+        ),
+        "email_env": "CUSTOM_REPORT_EMAIL_TO",
+        "default_email_to": "",
+        "allow_default_email_fallback": False,
+    }
+
 REPORT_PROFILES: dict[str, dict[str, Any]] = {
     "chemistry": {
         "key": "chemistry",
@@ -1237,7 +1582,165 @@ REPORT_PROFILES: dict[str, dict[str, Any]] = {
         "email_env": "STAT_REPORT_EMAIL_TO",
         "default_email_to": "",
     },
+    "business_management": {
+        "key": "business_management",
+        "title": "工商管理科研资讯日报",
+        "failure_title": "工商管理科研资讯日报运行失败报告",
+        "output_prefix": "business_news",
+        "header_label": "BUSINESS NEWS DAILY",
+        "meta_fields": "战略与组织、组织行为与人力资源、市场营销、创新与创业、运营与供应链、数字化与信息系统、公司治理与可持续管理",
+        "field_keywords": BUSINESS_MANAGEMENT_FIELD_KEYWORDS,
+        "relevance_terms": BUSINESS_MANAGEMENT_TERMS,
+        "arxiv_query_terms": BUSINESS_MANAGEMENT_ARXIV_QUERY_TERMS,
+        "pubmed_query_terms": BUSINESS_MANAGEMENT_PUBMED_QUERY_TERMS,
+        "crossref_journals": BUSINESS_MANAGEMENT_CROSSREF_JOURNALS,
+        "rss_feeds": BUSINESS_MANAGEMENT_RSS_FEEDS,
+        "source_weights": BUSINESS_MANAGEMENT_SOURCE_WEIGHTS,
+        "default_field": "综合工商管理",
+        "ai_role": "工商管理领域科研编辑",
+        "ai_task": "生成工商管理科研资讯日报摘要",
+        "title_style": (
+            "工商管理标题采用严谨、保守的学术亮点风格，仅突出公开题名或摘要可核对的研究问题、"
+            "理论、数据、方法、结果或证据边界。优先使用“期刊名：研究对象/管理问题/方法的学术亮点”结构；"
+            "不要使用营销号、悬念、夸张或泛化表达，不添加输入中没有的样本量、理论、显著性、作者、DOI或因果结论。"
+        ),
+        "filter_crossref_items": True,
+        "exclude_terms": ["macroeconomic", "monetary policy", "gdp", "inflation", "exchange rate", "stock price", "stock return", "asset pricing", "portfolio", "investment advice", "water management", "waste management", "disease management", "pain management", "forest management", "energy management", "conference announcement", "call for papers", "book review", "erratum", "correction", "editorial"],
+        "hard_exclude_terms": ["conference announcement", "call for papers", "book review", "erratum", "correction", "editorial"],
+        "management_context_terms": ["firm", "company", "business", "organization", "organisation", "employee", "workplace", "leadership", "team", "manager", "marketing", "consumer", "customer", "operations", "supply chain", "corporate", "governance", "stakeholder", "entrepreneur", "startup", "strategy", "innovation", "digital transformation"],
+        "strong_operations_context_terms": ["operations management", "service operations", "production operations"],
+        "summary_rules": [
+            "工商管理日报 comment 只能根据公开题名和摘要区分研究问题、可确认的理论/数据/方法、核心结果、额外管理启示和限制。",
+            "公开题名或摘要缺少上述任一项时，直接说明信息有限，不得补写或推测。",
+            "不得新增输入中没有的样本量、理论、显著性、作者、DOI或因果结论。",
+        ],
+        "email_env": "BUSINESS_REPORT_EMAIL_TO",
+        "default_email_to": "",
+        "allow_default_email_fallback": False,
+    },
 }
+
+REPORT_PROFILES.update(
+    {
+        "philosophy": _academic_profile(
+            key="philosophy",
+            title="哲学科研资讯日报",
+            meta_fields="伦理学、认识论、逻辑学、科学哲学、政治哲学",
+            default_field="哲学",
+            keywords=["philosophy", "ethics", "epistemology", "logic", "metaphysics"],
+        ),
+        "economics": _academic_profile(
+            key="economics",
+            title="经济学科研资讯日报",
+            meta_fields="微观、宏观、计量、发展、劳动、公共经济",
+            default_field="经济学",
+            keywords=["economics", "econometrics", "microeconomics", "macroeconomics", "development economics"],
+        ),
+        "law": _academic_profile(
+            key="law",
+            title="法学科研资讯日报",
+            meta_fields="法理、宪法、民商、刑法、国际法、数字法治",
+            default_field="法学",
+            keywords=["law", "legal", "jurisprudence", "constitutional law", "international law"],
+        ),
+        "education": _academic_profile(
+            key="education",
+            title="教育学科研资讯日报",
+            meta_fields="学习科学、课程与教学、教育技术、教育评估、高等教育",
+            default_field="教育学",
+            keywords=["education", "learning science", "pedagogy", "educational technology", "education policy"],
+        ),
+        "literature": _academic_profile(
+            key="literature",
+            title="文学科研资讯日报",
+            meta_fields="比较文学、文艺理论、语言文学、数字人文、文本研究",
+            default_field="文学",
+            keywords=["literature", "literary studies", "comparative literature", "literary theory", "digital humanities"],
+        ),
+        "history": _academic_profile(
+            key="history",
+            title="历史学科研资讯日报",
+            meta_fields="史学理论、中国史、世界史、考古、数字史学",
+            default_field="历史学",
+            keywords=["history", "historiography", "archaeology", "historical research", "digital history"],
+        ),
+        "natural_sciences": _academic_profile(
+            key="natural_sciences",
+            title="理学科研资讯日报",
+            meta_fields="数学、物理、天文、地球科学、化学、生命科学",
+            default_field="理学",
+            keywords=["mathematics", "physics", "astronomy", "earth science", "natural science"],
+        ),
+        "engineering": _academic_profile(
+            key="engineering",
+            title="工学科研资讯日报",
+            meta_fields="机械、电子、信息、材料、土木、能源、环境",
+            default_field="工学",
+            keywords=["engineering", "materials engineering", "electrical engineering", "mechanical engineering", "environmental engineering"],
+        ),
+        "agriculture": _academic_profile(
+            key="agriculture",
+            title="农学科研资讯日报",
+            meta_fields="作物、园艺、植物保护、畜牧、食品、农业资源与环境",
+            default_field="农学",
+            keywords=["agriculture", "crop science", "plant science", "animal science", "food science"],
+        ),
+        "medicine": _academic_profile(
+            key="medicine",
+            title="医学科研资讯日报",
+            meta_fields="临床医学、基础医学、公共卫生、药学、护理、精准医学",
+            default_field="医学",
+            keywords=["medicine", "clinical research", "public health", "biomedical", "precision medicine"],
+        ),
+        "management": _academic_profile(
+            key="management",
+            title="管理学科研资讯日报",
+            meta_fields="组织、战略、运营、信息系统、公共管理、图情档案",
+            default_field="管理学",
+            keywords=["management", "organization", "operations management", "information systems", "public administration"],
+        ),
+        "arts": _academic_profile(
+            key="arts",
+            title="艺术学科研资讯日报",
+            meta_fields="艺术理论、音乐、戏剧影视、美术设计、文化遗产",
+            default_field="艺术学",
+            keywords=["arts", "art history", "musicology", "film studies", "design research"],
+        ),
+        "interdisciplinary_studies": _academic_profile(
+            key="interdisciplinary_studies",
+            title="交叉学科科研资讯日报",
+            meta_fields="计算社会科学、数字人文、复杂系统、科学技术与社会、交叉方法",
+            default_field="交叉学科",
+            keywords=["interdisciplinary", "computational social science", "complex systems", "digital humanities", "science and technology studies"],
+        ),
+        "military_science": _academic_profile(
+            key="military_science",
+            title="军事学科研资讯日报",
+            meta_fields="战略研究、国防管理、安全研究、军事技术史",
+            default_field="军事学",
+            keywords=["military science", "security studies", "defense studies", "strategic studies", "defence policy"],
+        ),
+        "computer_science": {
+            **_academic_profile(
+                key="computer_science",
+                title="计算机科学科研资讯日报",
+                meta_fields="AI与智能体、数据管理与时空数据、系统软件、图形与人机交互",
+                default_field="综合计算机科学",
+                keywords=list(COMPUTER_SCIENCE_TERMS),
+            ),
+            "field_keywords": COMPUTER_SCIENCE_FIELD_KEYWORDS,
+            "relevance_terms": COMPUTER_SCIENCE_TERMS,
+            "arxiv_query_terms": ["cat:cs.AI", "cat:cs.DB", "cat:cs.SE", "cat:cs.DC", "cat:cs.HC"],
+            "crossref_journals": COMPUTER_SCIENCE_CROSSREF_JOURNALS,
+            "rss_feeds": COMPUTER_SCIENCE_RSS_FEEDS,
+            "official_rss_feeds": COMPUTER_SCIENCE_OFFICIAL_RSS_FEEDS,
+            "community_query_terms": ["artificial intelligence", "AI agent", "data engineering", "database"],
+            "github_repositories": COMPUTER_SCIENCE_GITHUB_REPOSITORIES,
+            "ccf_conference_tiers": ("A", "B"),
+            "source_weights": GENERIC_ACADEMIC_SOURCE_WEIGHTS,
+        },
+    }
+)
 
 
 @dataclass
@@ -1249,6 +1752,9 @@ class NewsItem:
     abstract: str = ""
     doi: str = ""
     authors: list[str] = field(default_factory=list)
+    source_kind: str = "academic"
+    source_id: str = ""
+    source_layer: str = "academic_research"
     field_name: str = "综合化学"
     item_id: str = ""
     attractive_title: str = ""
@@ -1269,11 +1775,60 @@ class SourceStatus:
     success: bool
     item_count: int = 0
     error: str = ""
+    source_id: str = ""
+    source_layer: str = "academic_research"
+    credibility: int = 0
+    matched_count: int = 0
+    deduplicated_count: int = 0
+    selected_count: int = 0
 
     def summary(self) -> str:
         if self.success:
             return f"成功，获取 {self.item_count} 条"
         return f"失败：{summarize_source_error(self.error)}"
+
+
+_LEGACY_STATUS_SOURCE_IDS = {
+    "arxiv": "arxiv",
+    "pubmed": "pubmed",
+    "crossref": "crossref",
+    "openalex": "openalex",
+    "europe pmc": "europe_pmc",
+    "biorxiv": "biorxiv",
+    "medrxiv": "medrxiv",
+    "clinicaltrials.gov": "clinical_trials",
+    "clinical trials": "clinical_trials",
+    "official rss": "official_rss",
+    "hacker news": "hackernews",
+    "github releases": "github_releases",
+    "rss": "rss",
+}
+
+
+def source_id_for_status(status: SourceStatus) -> str:
+    """Return a stable source ID for both new and legacy status constructors."""
+
+    source_id = clean_text(status.source_id)
+    if source_id:
+        return source_id
+    name = clean_text(status.name).casefold()
+    for prefix, candidate in _LEGACY_STATUS_SOURCE_IDS.items():
+        if name == prefix or name.startswith(f"{prefix}:"):
+            return candidate
+    return re.sub(r"[^a-z0-9]+", "_", name).strip("_") or "unknown"
+
+
+def hydrate_source_status_provenance(status: SourceStatus) -> SourceStatus:
+    """Fill additive provenance for older callers that only provide a source name."""
+
+    source_id = source_id_for_status(status)
+    source_layer, credibility = source_provenance(source_id)
+    status.source_id = source_id
+    if not status.source_layer or status.source_layer == "academic_research":
+        status.source_layer = source_layer
+    if status.credibility <= 0:
+        status.credibility = credibility
+    return status
 
 
 @dataclass
@@ -1500,6 +2055,21 @@ def infer_profile_key(item: NewsItem, profile: dict[str, Any] | None = None) -> 
     if profile and profile.get("key"):
         return str(profile["key"])
     field_name = item.field_name
+    if any(
+        token in field_name
+        for token in (
+            "工商管理",
+            "战略",
+            "组织行为",
+            "人力资源",
+            "市场营销",
+            "创新与创业",
+            "供应链",
+            "信息系统",
+            "公司治理",
+        )
+    ):
+        return "business_management"
     if any(token in field_name for token in ("统计", "贝叶斯", "因果", "高维", "生统")):
         return "statistics"
     if any(token in field_name for token in ("生物", "分子", "细胞", "免疫", "神经", "基因")):
@@ -1515,6 +2085,7 @@ def field_short_name(field_name: str) -> str:
         "综合化学": "化学问题",
         "综合生物学": "生命机制",
         "综合统计学": "统计问题",
+        "综合工商管理": "工商管理问题",
         "化学生物学": "化学生物",
         "材料化学": "材料体系",
         "物理化学": "物化机制",
@@ -1564,8 +2135,32 @@ def extract_cn_terms(item: NewsItem, profile: dict[str, Any] | None = None, limi
         "Nature",
         "Chemistry",
     }
+    business_function_words = {
+        "how",
+        "what",
+        "why",
+        "when",
+        "where",
+        "who",
+        "which",
+        "does",
+        "do",
+        "did",
+        "can",
+        "could",
+        "would",
+        "should",
+        "is",
+        "are",
+        "was",
+        "were",
+    }
     for token in title_tokens:
         if token in token_blacklist or len(token) > 12:
+            continue
+        if profile_key == "business_management" and (
+            token.lower() in business_function_words or len(token) <= 3
+        ):
             continue
         if profile_key == "biology" and not (token.isupper() or re.search(r"\d", token)):
             continue
@@ -1662,6 +2257,33 @@ def biology_title_has_unsupported_terms(title: str, item: NewsItem) -> bool:
         if cn_term in body and not any(evidence in haystack for evidence in evidence_terms):
             return True
     return False
+
+
+def business_title_has_unsupported_terms(title: str, item: NewsItem) -> bool:
+    body = title_body(title)
+    haystack = f"{item.title} {item.abstract}".lower()
+    evidence_by_term = {
+        "材料": ("material",),
+        "体系": ("system",),
+        "机制": (
+            "mechanism",
+            "mechanisms",
+            "mediation",
+            "mediating",
+            "moderation",
+            "moderating",
+            "process",
+            "processes",
+        ),
+    }
+    return any(
+        cn_term in body
+        and not any(
+            contains_english_term(haystack, evidence)
+            for evidence in evidence_terms
+        )
+        for cn_term, evidence_terms in evidence_by_term.items()
+    )
 
 
 def extract_terms_from_pairs(text: str, pairs: list[tuple[str, str]], limit: int) -> list[str]:
@@ -1766,6 +2388,43 @@ def resolve_profile(profile_key: str) -> dict[str, Any]:
     return profile
 
 
+def available_source_ids(profile_key: str | dict[str, Any]) -> tuple[str, ...]:
+    """Return currently executable IDs while retaining legacy profile support."""
+
+    profile = resolve_profile(profile_key) if isinstance(profile_key, str) else profile_key
+    configured = {
+        "arxiv": bool(profile.get("arxiv_query_terms")),
+        "pubmed": bool(profile.get("pubmed_query_terms")),
+        "crossref": bool(profile.get("crossref_journals")),
+        "rss": bool(profile.get("rss_feeds")),
+        "openalex": bool(profile.get("openalex_query_terms")),
+        "ccf_conferences": bool(profile.get("ccf_conference_tiers")),
+        "official_rss": bool(profile.get("official_rss_feeds")),
+        "hackernews": bool(profile.get("community_query_terms")),
+        "github_releases": bool(profile.get("github_repositories")),
+    }
+    legacy_ids = tuple(
+        source_id
+        for source_id in (*ACADEMIC_SOURCE_IDS, *PUBLIC_SOURCE_IDS)
+        if source_id in SHARED_USER_SOURCE_IDS or configured[source_id]
+    )
+    profile_key = profile.get("key")
+    # A catalogue entry becomes selectable only after this orchestrator owns a
+    # concrete public collector for it.  Scope alone must never create a new
+    catalogue_ids: tuple[str, ...] = ()
+    if isinstance(profile_key, str):
+        sources_in_scope = source_definitions_for_profile(profile_key)
+        catalogue_ids = tuple(
+            source.id
+            for source in sources_in_scope
+            if source.collectable
+            and (
+                source.id in PUBLIC_API_SOURCE_IDS
+                or source.id in CATALOGUE_RSS_SOURCE_IDS
+            )
+        )
+
+    return tuple(dict.fromkeys((*legacy_ids, *catalogue_ids)))
 def classify_field(title: str, abstract: str, profile: dict[str, Any]) -> str:
     haystack = f"{title} {abstract}".lower()
     scores: dict[str, int] = {}
@@ -1781,9 +2440,91 @@ def classify_field(title: str, abstract: str, profile: dict[str, Any]) -> str:
     return max(scores.items(), key=lambda item: item[1])[0]
 
 
-def is_profile_relevant(item: NewsItem, profile: dict[str, Any]) -> bool:
+BUSINESS_MANAGEMENT_TERM_VARIANTS: dict[str, tuple[str, ...]] = {
+    "firm": ("firm", "firms"),
+    "company": ("company", "companies"),
+    "business": ("business", "businesses"),
+    "organization": ("organization", "organizations"),
+    "organisation": ("organisation", "organisations"),
+    "employee": ("employee", "employees"),
+    "workplace": ("workplace", "workplaces"),
+    "team": ("team", "teams"),
+    "manager": ("manager", "managers"),
+    "consumer": ("consumer", "consumers"),
+    "customer": ("customer", "customers"),
+    "operation": ("operation", "operations"),
+    "market": ("market", "markets"),
+    "stakeholder": ("stakeholder", "stakeholders"),
+    "entrepreneur": ("entrepreneur", "entrepreneurs"),
+    "startup": ("startup", "startups"),
+    "material": ("material", "materials"),
+    "system": ("system", "systems"),
+}
+
+
+def contains_english_term(haystack: str, term: str) -> bool:
+    variants = BUSINESS_MANAGEMENT_TERM_VARIANTS.get(term.lower(), (term.lower(),))
+    alternatives = "|".join(
+        re.escape(variant) for variant in sorted(variants, key=len, reverse=True)
+    )
+    pattern = rf"(?<![A-Za-z0-9])(?:{alternatives})(?![A-Za-z0-9])"
+    return re.search(pattern, haystack.lower()) is not None
+
+
+def is_profile_excluded(item: NewsItem, profile: dict[str, Any]) -> bool:
     haystack = f"{item.title} {item.abstract}".lower()
-    return any(term in haystack for term in profile["relevance_terms"])
+    hard_excluded = any(
+        contains_english_term(haystack, term)
+        for term in profile.get("hard_exclude_terms", [])
+    )
+    if hard_excluded:
+        return True
+    excluded = any(
+        contains_english_term(haystack, term)
+        for term in profile.get("exclude_terms", [])
+    )
+    if not excluded:
+        return False
+    context_terms = profile.get("management_context_terms", [])
+    strong_context = any(
+        contains_english_term(haystack, term)
+        for term in context_terms
+        if term != "operations"
+    ) or any(
+        contains_english_term(haystack, term)
+        for term in profile.get("strong_operations_context_terms", [])
+    )
+    return not strong_context
+
+
+def is_profile_relevant(item: NewsItem, profile: dict[str, Any]) -> bool:
+    if is_profile_excluded(item, profile):
+        return False
+    haystack = f"{item.title} {item.abstract}".lower()
+    if profile.get("key") != "business_management":
+        return any(term in haystack for term in profile["relevance_terms"])
+    return any(
+        contains_english_term(haystack, term)
+        for term in profile["relevance_terms"]
+    )
+
+
+def should_collect_profile_candidate(item: NewsItem, profile: dict[str, Any]) -> bool:
+    """Keep user-selected trusted sources broad; apply the final profile filter later."""
+
+    if is_profile_excluded(item, profile):
+        return False
+    return bool(profile.get("source_selection_explicit")) or is_profile_relevant(item, profile)
+
+
+def should_include_crossref_item(
+    item: NewsItem, journal: dict[str, Any], profile: dict[str, Any]
+) -> bool:
+    if is_profile_excluded(item, profile):
+        return False
+    if not journal.get("broad") and not profile.get("filter_crossref_items", False):
+        return True
+    return is_profile_relevant(item, profile)
 
 
 def text_from_xml(element: ET.Element | None) -> str:
@@ -1811,40 +2552,47 @@ def fetch_arxiv(
     search_terms = []
     for term in profile["arxiv_query_terms"]:
         search_terms.append(arxiv_query_fragment(term))
-    params = {
-        "search_query": " OR ".join(search_terms),
-        "start": 0,
-        "max_results": min(max(max_items, 10), 100),
-        "sortBy": "submittedDate",
-        "sortOrder": "descending",
-    }
-    response = session.get("https://export.arxiv.org/api/query", params=params, timeout=30)
-    response.raise_for_status()
-    feed = feedparser.parse(response.text)
     items: list[NewsItem] = []
-    for entry in feed.entries:
-        published = parse_datetime(getattr(entry, "published", None)) or parse_datetime(
-            getattr(entry, "updated", None)
-        )
-        if published and not (since <= published <= until):
-            continue
-        title = clean_text(getattr(entry, "title", ""))
-        abstract = clean_text(getattr(entry, "summary", ""))
-        link = clean_text(getattr(entry, "link", ""))
-        authors = [clean_text(author.get("name", "")) for author in getattr(entry, "authors", [])]
-        if not title or not link:
-            continue
-        item = NewsItem(
-            title=title,
-            source="arXiv",
-            published=published,
-            link=link,
-            abstract=abstract,
-            authors=[author for author in authors if author],
-        )
-        item.field_name = classify_field(item.title, item.abstract, profile)
-        if is_profile_relevant(item, profile):
-            items.append(item)
+    page_size = 100
+    for start in range(0, max_items, page_size):
+        params = {
+            "search_query": " OR ".join(search_terms),
+            "start": start,
+            "max_results": min(page_size, max_items - start),
+            "sortBy": "submittedDate",
+            "sortOrder": "descending",
+        }
+        response = session.get("https://export.arxiv.org/api/query", params=params, timeout=30)
+        response.raise_for_status()
+        feed = feedparser.parse(response.text)
+        entries = list(feed.entries)
+        for entry in entries:
+            published = parse_datetime(getattr(entry, "published", None)) or parse_datetime(
+                getattr(entry, "updated", None)
+            )
+            if published and not (since <= published <= until):
+                continue
+            title = clean_text(getattr(entry, "title", ""))
+            abstract = clean_text(getattr(entry, "summary", ""))
+            link = clean_text(getattr(entry, "link", ""))
+            authors = [clean_text(author.get("name", "")) for author in getattr(entry, "authors", [])]
+            if not title or not link:
+                continue
+            item = NewsItem(
+                title=title,
+                source="arXiv",
+                published=published,
+                link=link,
+                abstract=abstract,
+                authors=[author for author in authors if author],
+                source_id="arxiv",
+                source_layer="academic_research",
+            )
+            item.field_name = classify_field(item.title, item.abstract, profile)
+            if should_collect_profile_candidate(item, profile):
+                items.append(item)
+        if len(entries) < page_size:
+            break
     return items
 
 
@@ -1899,7 +2647,7 @@ def fetch_pubmed(
                 "db": "pubmed",
                 "term": query,
                 "retmode": "json",
-                "retmax": min(max(max_items, 10), 100),
+                "retmax": min(max(max_items, 10), 1000),
                 "sort": "pub date",
             }
         ),
@@ -1910,54 +2658,317 @@ def fetch_pubmed(
     if not id_list:
         return []
 
-    fetch_response = session.get(
-        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
-        params=pubmed_params({"db": "pubmed", "id": ",".join(id_list), "retmode": "xml"}),
-        timeout=45,
-    )
-    fetch_response.raise_for_status()
-    root = ET.fromstring(fetch_response.content)
     items: list[NewsItem] = []
-    for article in root.findall(".//PubmedArticle"):
-        pmid = text_from_xml(article.find(".//PMID"))
-        title = text_from_xml(article.find(".//ArticleTitle"))
-        journal = text_from_xml(article.find(".//Journal/Title")) or "PubMed"
-        published = parse_pubmed_date(article)
-        if published and not (since <= published <= until):
-            continue
-        abstract_parts = []
-        for abstract_element in article.findall(".//Abstract/AbstractText"):
-            label = clean_text(abstract_element.attrib.get("Label", ""))
-            text = text_from_xml(abstract_element)
-            if not text:
+    for offset in range(0, len(id_list), 200):
+        fetch_response = session.get(
+            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+            params=pubmed_params(
+                {"db": "pubmed", "id": ",".join(id_list[offset : offset + 200]), "retmode": "xml"}
+            ),
+            timeout=45,
+        )
+        fetch_response.raise_for_status()
+        root = ET.fromstring(fetch_response.content)
+        for article in root.findall(".//PubmedArticle"):
+            pmid = text_from_xml(article.find(".//PMID"))
+            title = text_from_xml(article.find(".//ArticleTitle"))
+            journal = text_from_xml(article.find(".//Journal/Title")) or "PubMed"
+            published = parse_pubmed_date(article)
+            if published and not (since <= published <= until):
                 continue
-            abstract_parts.append(f"{label}: {text}" if label else text)
-        authors = []
-        for author in article.findall(".//Author"):
-            last_name = text_from_xml(author.find("LastName"))
-            initials = text_from_xml(author.find("Initials"))
-            full = " ".join(part for part in [last_name, initials] if part)
-            if full:
-                authors.append(full)
-        doi = ""
-        for article_id in article.findall(".//ArticleId"):
-            if article_id.attrib.get("IdType") == "doi":
-                doi = text_from_xml(article_id)
+            abstract_parts = []
+            for abstract_element in article.findall(".//Abstract/AbstractText"):
+                label = clean_text(abstract_element.attrib.get("Label", ""))
+                text = text_from_xml(abstract_element)
+                if not text:
+                    continue
+                abstract_parts.append(f"{label}: {text}" if label else text)
+            authors = []
+            for author in article.findall(".//Author"):
+                last_name = text_from_xml(author.find("LastName"))
+                initials = text_from_xml(author.find("Initials"))
+                full = " ".join(part for part in [last_name, initials] if part)
+                if full:
+                    authors.append(full)
+            doi = ""
+            for article_id in article.findall(".//ArticleId"):
+                if article_id.attrib.get("IdType") == "doi":
+                    doi = text_from_xml(article_id)
+                    break
+            if not title or not pmid:
+                continue
+            item = NewsItem(
+                title=title,
+                source=f"PubMed: {journal}",
+                published=published,
+                link=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+                abstract=" ".join(abstract_parts),
+                doi=doi,
+                authors=authors,
+                source_id="pubmed",
+                source_layer="academic_research",
+            )
+            item.field_name = classify_field(item.title, item.abstract, profile)
+            if should_collect_profile_candidate(item, profile):
+                items.append(item)
+    return items
+
+
+def fetch_europe_pmc(
+    session: requests.Session,
+    since: datetime,
+    until: datetime,
+    max_items: int,
+    profile: dict[str, Any],
+) -> list[NewsItem]:
+    """Map the public Europe PMC search response to recent scholarly items."""
+
+    terms = list(dict.fromkeys(profile.get("pubmed_query_terms") or profile.get("relevance_terms", ())))[:5]
+    term_query = " OR ".join(terms)
+    date_filter = f"FIRST_PDATE:[{since.date().isoformat()} TO {until.date().isoformat()}]"
+    query = f"({term_query}) AND {date_filter}" if term_query else date_filter
+    response = session.get(
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
+        params={
+            "query": query,
+            "format": "json",
+            "pageSize": min(max(max_items, 10), 100),
+            "sort": "FIRST_PDATE_D",
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    result_list = payload.get("resultList", {}) if isinstance(payload, dict) else {}
+    results = result_list.get("result", []) if isinstance(result_list, dict) else []
+    items: list[NewsItem] = []
+    for result in results if isinstance(results, list) else []:
+        if not isinstance(result, dict):
+            continue
+        published = parse_datetime(
+            result.get("firstPublicationDate") or result.get("firstIndexDate") or result.get("pubYear")
+        )
+        if published and not since <= published <= until:
+            continue
+        title = clean_text(result.get("title", ""))
+        article_id = clean_text(result.get("id", ""))
+        source_code = clean_text(result.get("source", "")) or "PMC"
+        if not title or not article_id:
+            continue
+        author_text = clean_text(result.get("authorString", ""))
+        item = NewsItem(
+            title=title,
+            source=f"Europe PMC: {clean_text(result.get('journalTitle', '')) or 'Europe PMC'}",
+            published=published,
+            link=f"https://europepmc.org/article/{source_code}/{article_id}",
+            abstract=clean_text(result.get("abstractText", "")) or "Europe PMC 元数据未提供摘要；请通过链接查看原文。",
+            doi=clean_text(result.get("doi", "")),
+            authors=[author.strip() for author in author_text.split(";") if author.strip()],
+            source_kind="academic",
+            source_id="europe_pmc",
+            source_layer="academic_research",
+        )
+        item.field_name = classify_field(item.title, item.abstract, profile)
+        if should_collect_profile_candidate(item, profile):
+            items.append(item)
+    return items
+
+
+def fetch_preprint_server(
+    session: requests.Session,
+    since: datetime,
+    until: datetime,
+    max_items: int,
+    profile: dict[str, Any],
+    server: str,
+) -> list[NewsItem]:
+    """Fetch one public bioRxiv-family server without conflating the two sources."""
+
+    response = session.get(
+        f"https://api.biorxiv.org/details/{server}/{since.date().isoformat()}/{until.date().isoformat()}/0",
+        timeout=30,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    records = payload.get("collection", []) if isinstance(payload, dict) else []
+    source_id = server
+    display_name = "bioRxiv" if server == "biorxiv" else "medRxiv"
+    items: list[NewsItem] = []
+    for record in records if isinstance(records, list) else []:
+        if not isinstance(record, dict):
+            continue
+        published = parse_datetime(record.get("date"))
+        if published and not since <= published <= until:
+            continue
+        title = clean_text(record.get("title", ""))
+        doi = clean_text(record.get("doi", ""))
+        if not title or not doi:
+            continue
+        version = clean_text(record.get("version", "")) or "1"
+        authors = clean_text(record.get("authors", ""))
+        item = NewsItem(
+            title=title,
+            source=display_name,
+            published=published,
+            link=f"https://www.{server}.org/content/{doi}v{version}",
+            abstract=clean_text(record.get("abstract", "")) or f"{display_name} 预印本未提供摘要；请通过链接查看原文。",
+            doi=doi,
+            authors=[author.strip() for author in authors.split(";") if author.strip()],
+            source_kind="academic",
+            source_id=source_id,
+            source_layer="academic_research",
+        )
+        item.field_name = classify_field(item.title, item.abstract, profile)
+        if should_collect_profile_candidate(item, profile):
+            items.append(item)
+            if len(items) >= max_items:
                 break
-        if not title or not pmid:
+    return items
+
+
+def fetch_biorxiv(
+    session: requests.Session,
+    since: datetime,
+    until: datetime,
+    max_items: int,
+    profile: dict[str, Any],
+) -> list[NewsItem]:
+    """Fetch public bioRxiv preprints."""
+
+    return fetch_preprint_server(session, since, until, max_items, profile, "biorxiv")
+
+
+def fetch_medrxiv(
+    session: requests.Session,
+    since: datetime,
+    until: datetime,
+    max_items: int,
+    profile: dict[str, Any],
+) -> list[NewsItem]:
+    """Fetch public medRxiv preprints."""
+
+    return fetch_preprint_server(session, since, until, max_items, profile, "medrxiv")
+
+
+def fetch_clinical_trials(
+    session: requests.Session,
+    since: datetime,
+    until: datetime,
+    max_items: int,
+    profile: dict[str, Any],
+) -> list[NewsItem]:
+    """Map ClinicalTrials.gov's public v2 study records to official-data items."""
+
+    terms = list(dict.fromkeys(profile.get("pubmed_query_terms") or profile.get("relevance_terms", ())))[:5]
+    response = session.get(
+        "https://clinicaltrials.gov/api/v2/studies",
+        params={
+            "query.term": " OR ".join(terms),
+            "filter.advanced": (
+                "AREA[LastUpdatePostDate]RANGE["
+                f"{since.date().isoformat()},{until.date().isoformat()}]"
+            ),
+            "sort": "LastUpdatePostDate:desc",
+            "pageSize": min(max(max_items, 10), 100),
+            "format": "json",
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    studies = payload.get("studies", []) if isinstance(payload, dict) else []
+    items: list[NewsItem] = []
+    for study in studies if isinstance(studies, list) else []:
+        if not isinstance(study, dict):
+            continue
+        protocol = study.get("protocolSection")
+        if not isinstance(protocol, dict):
+            continue
+        identification = protocol.get("identificationModule")
+        status = protocol.get("statusModule")
+        if not isinstance(identification, dict) or not isinstance(status, dict):
+            continue
+        nct_id = clean_text(identification.get("nctId", ""))
+        title = clean_text(identification.get("briefTitle", "") or identification.get("officialTitle", ""))
+        update_posted = status.get("lastUpdatePostDateStruct")
+        post_date = update_posted.get("date") if isinstance(update_posted, dict) else ""
+        published = parse_datetime(post_date)
+        if published and not since <= published <= until:
+            continue
+        if not nct_id or not title:
+            continue
+        description = protocol.get("descriptionModule")
+        conditions = protocol.get("conditionsModule")
+        sponsor_module = protocol.get("sponsorCollaboratorsModule")
+        summary = clean_text(description.get("briefSummary", "")) if isinstance(description, dict) else ""
+        condition_names = conditions.get("conditions", []) if isinstance(conditions, dict) else []
+        condition_text = "; ".join(clean_text(name) for name in condition_names if clean_text(name))
+        sponsor = ""
+        if isinstance(sponsor_module, dict):
+            lead_sponsor = sponsor_module.get("leadSponsor")
+            if isinstance(lead_sponsor, dict):
+                sponsor = clean_text(lead_sponsor.get("name", ""))
+        item = NewsItem(
+            title=title,
+            source="ClinicalTrials.gov",
+            published=published,
+            link=f"https://clinicaltrials.gov/study/{nct_id}",
+            abstract=" ".join(part for part in [summary, f"适应症：{condition_text}" if condition_text else ""] if part)
+            or "ClinicalTrials.gov 公开登记未提供简要说明；请通过链接核验试验状态与结果。",
+            authors=[sponsor] if sponsor else [],
+            source_kind="official",
+            source_id="clinical_trials",
+            source_layer="official_data_policy",
+        )
+        item.field_name = classify_field(item.title, item.abstract, profile)
+        if should_collect_profile_candidate(item, profile):
+            items.append(item)
+    return items
+
+
+def fetch_who_news(
+    session: requests.Session,
+    since: datetime,
+    until: datetime,
+    max_items: int,
+    profile: dict[str, Any],
+) -> list[NewsItem]:
+    """Map WHO's public news API to official, date-bounded news items."""
+
+    response = session.get("https://www.who.int/api/hubs/newsitems", timeout=30)
+    response.raise_for_status()
+    payload = response.json()
+    records = payload.get("value", []) if isinstance(payload, dict) else []
+    items: list[NewsItem] = []
+    for record in records if isinstance(records, list) else []:
+        if not isinstance(record, dict):
+            continue
+        published = parse_datetime(
+            record.get("PublicationDate") or record.get("PublicationDateAndTime") or record.get("LastModified")
+        )
+        if published and not since <= published <= until:
+            continue
+        title = clean_text(record.get("Title", ""))
+        link = clean_text(record.get("ItemDefaultUrl") or record.get("Url") or "")
+        if link.startswith("/"):
+            link = f"https://www.who.int{link}"
+        if not title or not link:
             continue
         item = NewsItem(
             title=title,
-            source=f"PubMed: {journal}",
+            source="WHO News",
             published=published,
-            link=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
-            abstract=" ".join(abstract_parts),
-            doi=doi,
-            authors=authors,
+            link=link,
+            abstract=clean_text(record.get("Content") or record.get("Summary") or "")
+            or "WHO 官方公开资讯未提供摘要；请通过链接核验原文。",
+            source_kind="official",
+            source_id="who",
+            source_layer="official_data_policy",
         )
         item.field_name = classify_field(item.title, item.abstract, profile)
-        if is_profile_relevant(item, profile):
-            items.append(item)
+        items.append(item)
+        if len(items) >= max_items:
+            break
     return items
 
 
@@ -2030,9 +3041,11 @@ def fetch_crossref_journal(
                 abstract=abstract or "出版商元数据未提供摘要；请通过链接查看原文摘要。",
                 doi=doi,
                 authors=author_names,
+                source_id="crossref",
+                source_layer="academic_research",
             )
             item.field_name = classify_field(item.title, item.abstract, profile)
-            if not journal.get("broad") or is_profile_relevant(item, profile):
+            if should_include_crossref_item(item, journal, profile):
                 items.append(item)
                 if doi:
                     seen.add(doi.lower())
@@ -2053,22 +3066,412 @@ def fetch_crossref(
             LOGGER.info("%s via Crossref: %d items", journal["source"], len(journal_items))
             items.extend(journal_items)
             statuses.append(
-                SourceStatus(
+                source_status(
                     name=f"Crossref: {journal['source']}",
                     success=True,
+                    source_id="crossref",
                     item_count=len(journal_items),
                 )
             )
         except Exception as exc:  # noqa: BLE001 - one journal must not stop the report.
             LOGGER.warning("Crossref source failed for %s: %s", journal["source"], exc)
             statuses.append(
-                SourceStatus(
+                source_status(
                     name=f"Crossref: {journal['source']}",
                     success=False,
+                    source_id="crossref",
                     error=f"{type(exc).__name__}: {exc}",
                 )
             )
     return items, statuses
+
+
+def openalex_abstract(value: Any) -> str:
+    """Reconstruct OpenAlex's inverted-index abstract representation."""
+
+    if not isinstance(value, dict):
+        return ""
+    positioned_terms: list[tuple[int, str]] = []
+    for term, positions in value.items():
+        if not isinstance(term, str) or not isinstance(positions, list):
+            continue
+        for position in positions:
+            if isinstance(position, int):
+                positioned_terms.append((position, term))
+    return clean_text(" ".join(term for _, term in sorted(positioned_terms)))
+
+
+def fetch_openalex(
+    session: requests.Session,
+    since: datetime,
+    until: datetime,
+    max_items: int,
+    profile: dict[str, Any],
+) -> list[NewsItem]:
+    """Fetch a bounded set of recent scholarly works for broad disciplines."""
+
+    terms = list(dict.fromkeys(profile.get("openalex_query_terms", ())))[:3]
+    if not terms:
+        return []
+    per_query = max(5, (max_items + len(terms) - 1) // len(terms))
+    items: list[NewsItem] = []
+    seen: set[str] = set()
+    for term in terms:
+        for offset in range(0, per_query, 200):
+            requested_page_size = min(200, per_query - offset)
+            params: dict[str, Any] = {
+                "search": term,
+                "filter": (
+                    f"from_publication_date:{since.date().isoformat()},"
+                    f"to_publication_date:{until.date().isoformat()},type:article"
+                ),
+                "sort": "publication_date:desc",
+                "per_page": requested_page_size,
+                "page": offset // 200 + 1,
+            }
+            api_key = os.getenv("OPENALEX_API_KEY", "").strip()
+            if api_key:
+                params["api_key"] = api_key
+            response = session.get("https://api.openalex.org/works", params=params, timeout=30)
+            response.raise_for_status()
+            works = response.json().get("results", [])
+            if not isinstance(works, list):
+                break
+            for work in works:
+                if not isinstance(work, dict) or work.get("type") != "article":
+                    continue
+                published = parse_datetime(work.get("publication_date"))
+                if published and not (since <= published <= until):
+                    continue
+                title = clean_text(work.get("display_name", "") or work.get("title", ""))
+                doi = clean_text(work.get("doi", "")).removeprefix("https://doi.org/")
+                work_id = clean_text(work.get("id", ""))
+                identity = doi.lower() or work_id.lower() or title.lower()
+                if not title or not identity or identity in seen:
+                    continue
+                primary_location = work.get("primary_location")
+                location = primary_location if isinstance(primary_location, dict) else {}
+                source_info = location.get("source")
+                source_record = source_info if isinstance(source_info, dict) else {}
+                venue = clean_text(source_record.get("display_name", "")) or "Scholarly index"
+                link = clean_text(location.get("landing_page_url", "")) or (
+                    f"https://doi.org/{doi}" if doi else work_id
+                )
+                authors = []
+                for authorship in work.get("authorships", [])[:8]:
+                    if not isinstance(authorship, dict):
+                        continue
+                    author = authorship.get("author")
+                    if isinstance(author, dict):
+                        name = clean_text(author.get("display_name", ""))
+                        if name:
+                            authors.append(name)
+                item = NewsItem(
+                    title=title,
+                    source=f"OpenAlex: {venue}",
+                    published=published,
+                    link=link,
+                    abstract=openalex_abstract(work.get("abstract_inverted_index"))
+                    or "OpenAlex 元数据未提供摘要；请通过链接查看原文。",
+                    doi=doi,
+                    authors=authors,
+                    source_kind="academic",
+                    source_id="openalex",
+                    source_layer="academic_research",
+                )
+                item.field_name = classify_field(item.title, item.abstract, profile)
+                if should_collect_profile_candidate(item, profile):
+                    items.append(item)
+                    seen.add(identity)
+            if len(works) < requested_page_size:
+                break
+    return items
+
+
+DBLP_UPDATE_FEED_URL = "https://dblp.org/feed/new.rss"
+_DBLP_NON_MAIN_PROCEEDING_PATTERN = re.compile(
+    r"\b(workshops?|companion|demo|short\s+papers?|doctoral\s+consortium|posters?)\b",
+    flags=re.IGNORECASE,
+)
+_DBLP_NON_PAPER_TITLE_PATTERN = re.compile(
+    r"\b(front\s+matter|table\s+of\s+contents|preface|conference\s+organization)\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _dblp_feed_timestamp(entry: Any) -> datetime | None:
+    """Read DBLP's feed update time without treating it as publisher metadata."""
+
+    parsed = getattr(entry, "published_parsed", None) or getattr(entry, "updated_parsed", None)
+    if parsed is not None:
+        try:
+            return datetime(*parsed[:6], tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            pass
+    return parse_datetime(getattr(entry, "published", None) or getattr(entry, "updated", None))
+
+
+def _conference_for_dblp_feed_entry(
+    link: str, title: str, tiers: tuple[str, ...]
+) -> CcfConference | None:
+    path = urlparse(link).path
+    venue_path = path.rstrip("/") + "/"
+    candidates = [
+        conference
+        for conference in conferences_for_tiers(tiers)
+        if venue_path.startswith(conference.dblp_path)
+    ]
+    if not candidates:
+        return None
+
+    record_stem = path.rsplit("/", 1)[-1].removesuffix(".html").casefold()
+    normalized_title = clean_text(title).casefold()
+    for conference in sorted(candidates, key=lambda item: len(item.abbreviation), reverse=True):
+        venue_slug = conference.dblp_path.rstrip("/").rsplit("/", 1)[-1].casefold()
+        abbreviation_key = re.sub(r"[^a-z0-9]", "", conference.abbreviation.casefold())
+        if record_stem.startswith(venue_slug) or (
+            abbreviation_key and record_stem.startswith(abbreviation_key)
+        ):
+            return conference
+
+        abbreviation = conference.abbreviation.casefold()
+        if re.search(
+            rf"^{re.escape(abbreviation)}\s*(?:\(\d+\)\s*)?\d{{4}}\b", normalized_title
+        ):
+            return conference
+
+    # DBLP groups independent tracks below a shared conference directory. When
+    # the record key and title cannot establish a main-proceedings match, skip
+    # it instead of labelling a satellite track as a CCF main conference.
+    return None
+
+
+def _dblp_page_items(
+    html_text: str,
+    proceeding_link: str,
+    indexed_at: datetime,
+    conference: CcfConference,
+    profile: dict[str, Any],
+) -> list[NewsItem]:
+    if BeautifulSoup is None:
+        raise RuntimeError("beautifulsoup4 is required for DBLP conference pages")
+    soup = BeautifulSoup(html_text, "html.parser")
+    items: list[NewsItem] = []
+    for entry in soup.select("li.entry.inproceedings"):
+        title_node = entry.select_one(".title[itemprop='name'], span.title")
+        title = clean_text(title_node.get_text(" ", strip=True) if title_node else "")
+        if not title or _DBLP_NON_PAPER_TITLE_PATTERN.search(title):
+            continue
+        link_node = entry.select_one("a[itemprop='url'][href]") or entry.select_one("a[href]")
+        link = clean_text(link_node.get("href", "") if link_node else "") or proceeding_link
+        authors = [
+            clean_text(author.get_text(" ", strip=True))
+            for author in entry.select("[itemprop='author'] [itemprop='name']")
+        ]
+        source = f"CCF {conference.tier} conference · {conference.abbreviation}"
+        item = NewsItem(
+            title=title,
+            source=source,
+            published=indexed_at,
+            link=link,
+            abstract=(
+                "DBLP 新收录的 CCF 推荐会议论文；日期为 DBLP 收录时间，"
+                "不是出版社的正式发表日期。请通过链接核对原文摘要和版本。"
+            ),
+            doi=extract_doi(link),
+            authors=list(dict.fromkeys(author for author in authors if author)),
+            source_kind="academic",
+            source_id="ccf_conferences",
+            source_layer="academic_research",
+        )
+        item.field_name = classify_field(item.title, item.abstract, profile)
+        if should_collect_profile_candidate(item, profile):
+            items.append(item)
+    return items
+
+
+def fetch_ccf_conferences(
+    session: requests.Session,
+    since: datetime,
+    until: datetime,
+    max_items: int,
+    profile: dict[str, Any],
+) -> list[NewsItem]:
+    """Collect bounded, newly indexed CCF conference papers from DBLP.
+
+    DBLP's update feed reports indexing time. It is deliberately used as the
+    time-window boundary because many proceedings only expose a publication
+    year, not a reliable paper-level publication timestamp.
+    """
+
+    if feedparser is None:
+        raise RuntimeError("feedparser is required for DBLP conference updates")
+    tiers = tuple(profile.get("ccf_conference_tiers", ("A", "B")))
+    response = session.get(DBLP_UPDATE_FEED_URL, timeout=30)
+    response.raise_for_status()
+    feed = feedparser.parse(response.content)
+    proceedings: list[tuple[str, datetime, CcfConference]] = []
+    seen_proceedings: set[str] = set()
+    page_limit = max(1, min(max_items, 8))
+    for entry in getattr(feed, "entries", []):
+        title = clean_text(getattr(entry, "title", ""))
+        link = clean_text(getattr(entry, "link", ""))
+        indexed_at = _dblp_feed_timestamp(entry)
+        if not title or not link or indexed_at is None or not since <= indexed_at <= until:
+            continue
+        if _DBLP_NON_MAIN_PROCEEDING_PATTERN.search(title):
+            continue
+        conference = _conference_for_dblp_feed_entry(link, title, tiers)
+        if conference is None or link in seen_proceedings:
+            continue
+        proceedings.append((link, indexed_at, conference))
+        seen_proceedings.add(link)
+        if len(proceedings) >= page_limit:
+            break
+
+    items: list[NewsItem] = []
+    seen_items: set[str] = set()
+    for proceeding_link, indexed_at, conference in proceedings:
+        try:
+            page_response = session.get(proceeding_link, timeout=30)
+            page_response.raise_for_status()
+            page_items = _dblp_page_items(
+                page_response.text, proceeding_link, indexed_at, conference, profile
+            )
+        except requests.RequestException as exc:
+            LOGGER.warning(
+                "CCF proceedings page failed and was skipped (%s): %s",
+                conference.abbreviation,
+                type(exc).__name__,
+            )
+            continue
+        for item in page_items:
+            identity = normalize_doi(item.doi) or canonical_url_key(item.link) or title_fingerprint(item.title)
+            if not identity or identity in seen_items:
+                continue
+            items.append(item)
+            seen_items.add(identity)
+            if len(items) >= max_items:
+                return items
+    return items
+
+
+def fetch_hackernews(
+    session: requests.Session,
+    since: datetime,
+    until: datetime,
+    max_items: int,
+    profile: dict[str, Any],
+) -> list[NewsItem]:
+    """Fetch recent public Hacker News stories as explicitly non-academic signals."""
+
+    terms = list(dict.fromkeys(profile.get("community_query_terms", ())))[:3]
+    if not terms:
+        return []
+    per_query = max(5, min(30, max_items // len(terms) + 3))
+    items: list[NewsItem] = []
+    seen: set[str] = set()
+    for term in terms:
+        response = session.get(
+            "https://hn.algolia.com/api/v1/search_by_date",
+            params={"query": term, "tags": "story", "hitsPerPage": per_query},
+            timeout=30,
+        )
+        response.raise_for_status()
+        hits = response.json().get("hits", [])
+        if not isinstance(hits, list):
+            continue
+        for hit in hits:
+            if not isinstance(hit, dict):
+                continue
+            created_at = parse_datetime(hit.get("created_at"))
+            if created_at and not (since <= created_at <= until):
+                continue
+            title = clean_text(hit.get("title", "") or hit.get("story_title", ""))
+            story_id = clean_text(hit.get("objectID", ""))
+            if not title or not story_id or story_id in seen:
+                continue
+            link = clean_text(hit.get("url", "") or hit.get("story_url", ""))
+            if not link:
+                link = f"https://news.ycombinator.com/item?id={story_id}"
+            author = clean_text(hit.get("author", ""))
+            item = NewsItem(
+                title=title,
+                source="Hacker News",
+                published=created_at,
+                link=link,
+                abstract="公开社区讨论信号；请以链接中的原始资料为准。",
+                authors=[author] if author else [],
+                source_kind="community",
+                source_id="hackernews",
+                source_layer="community_signal",
+            )
+            item.field_name = classify_field(item.title, item.abstract, profile)
+            if should_collect_profile_candidate(item, profile):
+                items.append(item)
+                seen.add(story_id)
+    return items
+
+
+def fetch_github_releases(
+    session: requests.Session,
+    since: datetime,
+    until: datetime,
+    max_items: int,
+    profile: dict[str, Any],
+) -> list[NewsItem]:
+    """Fetch releases from a small profile-owned repository allowlist."""
+
+    repositories = list(dict.fromkeys(profile.get("github_repositories", ())))[:5]
+    if not repositories:
+        return []
+    per_repository = max(3, min(15, max_items // len(repositories) + 2))
+    items: list[NewsItem] = []
+    for repository in repositories:
+        request_kwargs: dict[str, Any] = {
+            "params": {"per_page": per_repository},
+            "timeout": 30,
+        }
+        token = os.getenv("GITHUB_SOURCE_TOKEN", "").strip()
+        if token:
+            request_kwargs["headers"] = {
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {token}",
+            }
+        response = session.get(
+            f"https://api.github.com/repos/{repository}/releases", **request_kwargs
+        )
+        response.raise_for_status()
+        releases = response.json()
+        if not isinstance(releases, list):
+            continue
+        for release in releases:
+            if not isinstance(release, dict) or release.get("draft") or release.get("prerelease"):
+                continue
+            published = parse_datetime(release.get("published_at"))
+            if published and not (since <= published <= until):
+                continue
+            title = clean_text(release.get("name", "") or release.get("tag_name", ""))
+            link = clean_text(release.get("html_url", ""))
+            if not title or not link:
+                continue
+            author_info = release.get("author")
+            author = clean_text(author_info.get("login", "")) if isinstance(author_info, dict) else ""
+            item = NewsItem(
+                title=title,
+                source=f"GitHub Release: {repository}",
+                published=published,
+                link=link,
+                abstract=clean_text(release.get("body", "")) or "项目公开发布说明未提供详情。",
+                authors=[author] if author else [],
+                source_kind="community",
+                source_id="github_releases",
+                source_layer="industry_engineering",
+            )
+            item.field_name = classify_field(item.title, item.abstract, profile)
+            if should_collect_profile_candidate(item, profile):
+                items.append(item)
+    return items
 
 
 def fetch_rss(
@@ -2080,6 +3483,8 @@ def fetch_rss(
     per_feed = max(10, min(40, max_items // max(len(feeds), 1) + 5))
     for feed_config in feeds:
         try:
+            source_id = clean_text(feed_config.get("source_id", "")) or "rss"
+            source_layer, credibility = source_provenance(source_id)
             response = session.get(feed_config["url"], timeout=30)
             response.raise_for_status()
             parsed = feedparser.parse(response.content)
@@ -2103,9 +3508,16 @@ def fetch_rss(
                     published=published,
                     link=link,
                     abstract=abstract or "RSS 未提供摘要；请通过链接查看详情。",
+                    source_kind=feed_config.get("source_kind", "official"),
+                    source_id=source_id,
+                    source_layer=source_layer,
                 )
                 item.field_name = classify_field(item.title, item.abstract, profile)
-                if not feed_config.get("broad") or is_profile_relevant(item, profile):
+                if (
+                    not feed_config.get("broad")
+                    or profile.get("source_selection_explicit")
+                    or is_profile_relevant(item, profile)
+                ):
                     items.append(item)
                     count += 1
             LOGGER.info("%s RSS: %d items", feed_config["source"], count)
@@ -2114,6 +3526,9 @@ def fetch_rss(
                     name=f"RSS: {feed_config['source']}",
                     success=True,
                     item_count=count,
+                    source_id=source_id,
+                    source_layer=source_layer,
+                    credibility=credibility,
                 )
             )
         except Exception as exc:  # noqa: BLE001 - RSS endpoints are best-effort.
@@ -2123,6 +3538,9 @@ def fetch_rss(
                     name=f"RSS: {feed_config['source']}",
                     success=False,
                     error=f"{type(exc).__name__}: {exc}",
+                    source_id=clean_text(feed_config.get("source_id", "")) or "rss",
+                    source_layer=source_provenance(clean_text(feed_config.get("source_id", "")) or "rss")[0],
+                    credibility=source_provenance(clean_text(feed_config.get("source_id", "")) or "rss")[1],
                 )
             )
     return items, statuses
@@ -2158,6 +3576,56 @@ def dedupe_items(items: list[NewsItem]) -> list[NewsItem]:
             continue
         unique_items.append(max(cluster, key=duplicate_quality_score))
     return unique_items
+
+
+def _status_for_item(item: NewsItem, statuses: list[SourceStatus]) -> SourceStatus | None:
+    """Resolve one status row for an item without spreading a duplicate across sources."""
+
+    item_source_id = clean_text(item.source_id)
+    candidates = [
+        status for status in statuses if source_id_for_status(status) == item_source_id
+    ]
+    if not candidates and not item_source_id and len(statuses) == 1:
+        return statuses[0]
+    if not candidates:
+        return None
+
+    item_source = clean_text(item.source).casefold()
+    matching_names = [
+        status
+        for status in candidates
+        if item_source
+        and (
+            clean_text(status.name).casefold() == item_source
+            or clean_text(status.name).casefold().endswith(f": {item_source}")
+        )
+    ]
+    return sorted(matching_names or candidates, key=lambda status: status.name.casefold())[0]
+
+
+def populate_source_funnel_metrics(
+    statuses: list[SourceStatus],
+    matched_items: list[NewsItem],
+    deduplicated_items: list[NewsItem],
+    selected_items: list[NewsItem],
+) -> None:
+    """Populate task-local source counts for the effective filtering and selection path."""
+
+    for status in statuses:
+        hydrate_source_status_provenance(status)
+        status.matched_count = 0
+        status.deduplicated_count = 0
+        status.selected_count = 0
+
+    for items, counter_name in (
+        (matched_items, "matched_count"),
+        (deduplicated_items, "deduplicated_count"),
+        (selected_items, "selected_count"),
+    ):
+        for item in items:
+            status = _status_for_item(item, statuses)
+            if status is not None:
+                setattr(status, counter_name, getattr(status, counter_name) + 1)
 
 
 def history_file_path(history_dir: Path, profile: dict[str, Any]) -> Path:
@@ -2310,9 +3778,14 @@ def rank_item(item: NewsItem, now: datetime, profile: dict[str, Any]) -> float:
     haystack = f"{item.title} {item.abstract}".lower()
     keyword_hits = sum(1 for term in profile["relevance_terms"] if term in haystack)
     learning_bonus = sum(weight for term, weight in LEARNING_VALUE_TERMS.items() if term in haystack)
+    preference_bonus = min(
+        8,
+        sum(2 for term in profile.get("custom_preference_terms", ()) if term in haystack),
+    )
     abstract_bonus = min(len(item.abstract) / 450, 6)
     title_bonus = 4 if any(term in item.title.lower() for term in LEARNING_VALUE_TERMS) else 0
     metadata_penalty = 5 if "未提供摘要" in item.abstract or not item.abstract else 0
+    source_kind_penalty = {"official": 6, "community": 18}.get(item.source_kind, 0)
     recency_bonus = 0.0
     if item.published:
         age_hours = max((now - item.published).total_seconds() / 3600, 0)
@@ -2321,10 +3794,12 @@ def rank_item(item: NewsItem, now: datetime, profile: dict[str, Any]) -> float:
         source_weight
         + keyword_hits * 1.4
         + learning_bonus
+        + preference_bonus
         + title_bonus
         + abstract_bonus
         + recency_bonus
         - metadata_penalty
+        - source_kind_penalty
     )
 
 
@@ -2449,6 +3924,14 @@ def source_title_prefix(source: str, profile: dict[str, Any] | None = None) -> s
         return "科研快讯"
     pubmed_match = re.match(r"^PubMed\s*[:：]\s*(.+)$", normalized, flags=re.IGNORECASE)
     pubmed_journal = clean_text(pubmed_match.group(1)) if pubmed_match else ""
+    if profile and profile.get("key") == "business_management":
+        business_source = re.sub(
+            r"\s+via\s+.*$", "", pubmed_journal or normalized, flags=re.IGNORECASE
+        ).strip()
+        for journal in profile.get("crossref_journals", []):
+            journal_name = clean_text(journal.get("source", ""))
+            if journal_name and journal_name.lower() == business_source.lower():
+                return journal_name
     if profile and profile.get("key") == "biology":
         lowered = (pubmed_journal or normalized).lower()
         if lowered == "nature":
@@ -2531,6 +4014,13 @@ def rule_based_chinese_title(item: NewsItem, profile: dict[str, Any], variant_of
                 "{a}方向的新近论文",
                 "{a}分析的推断框架",
             ]
+        elif profile_key == "business_management":
+            templates_one_term = [
+                "{a}方向的管理研究",
+                "{a}研究中的组织与管理线索",
+                "{a}方向的新近论文",
+                "{a}问题的证据边界",
+            ]
         else:
             templates_one_term = [
                 "{a}相关体系的近期进展",
@@ -2561,6 +4051,16 @@ def rule_based_chinese_title(item: NewsItem, profile: dict[str, Any], variant_of
             "{a}算法的{b}评估",
             "{a}数据中的{b}分析",
         ]
+    elif profile_key == "business_management":
+        templates = [
+            "{a}与{b}的管理研究",
+            "{a}情境下的{b}关系研究",
+            "{a}方向的组织与管理线索",
+            "{a}与{b}的实证研究",
+            "{a}问题中的{b}证据",
+            "{a}方向的{b}管理研究",
+            "{a}与{b}的研究边界",
+        ]
     else:
         templates = [
             "{a}相关{b}机制研究",
@@ -2583,6 +4083,10 @@ def fallback_chinese_title(item: NewsItem, profile: dict[str, Any]) -> str:
         and not is_generic_title(existing_title)
         and not is_marketing_title(existing_title)
         and not (profile.get("key") == "biology" and biology_title_has_unsupported_terms(existing_title, item))
+        and not (
+            profile.get("key") == "business_management"
+            and business_title_has_unsupported_terms(existing_title, item)
+        )
         and chinese_char_count(existing_title) <= 46
     ):
         return existing_title
@@ -2635,6 +4139,11 @@ def normalize_attractive_title(title: str, item: NewsItem, profile: dict[str, An
     if is_marketing_title(normalized):
         return rule_based_chinese_title(item, profile)
     if profile.get("key") == "biology" and biology_title_has_unsupported_terms(normalized, item):
+        return rule_based_chinese_title(item, profile)
+    if (
+        profile.get("key") == "business_management"
+        and business_title_has_unsupported_terms(normalized, item)
+    ):
         return rule_based_chinese_title(item, profile)
     if chinese_char_count(normalized) > 46:
         return fallback
@@ -2778,11 +4287,13 @@ def parse_json_object(raw: str) -> dict[str, Any]:
         return normalize_parsed_json(json.loads(match.group(0)))
 
 
-def resolve_llm_config(model_override: str = "") -> LLMConfig | None:
-    provider = os.getenv("LLM_PROVIDER", "openai").strip().lower() or "openai"
+def resolve_llm_config(
+    model_override: str = "", provider_override: str = ""
+) -> LLMConfig | None:
+    provider = provider_override.strip().lower() or os.getenv("LLM_PROVIDER", "openai").strip().lower() or "openai"
     if provider not in SUPPORTED_LLM_PROVIDERS:
         LOGGER.warning(
-            "Unsupported LLM_PROVIDER=%s; supported values are openai or deepseek. "
+            "Unsupported LLM_PROVIDER=%s; supported values are openai, deepseek, or openrouter. "
             "Using fallback summaries.",
             provider,
         )
@@ -2797,6 +4308,15 @@ def resolve_llm_config(model_override: str = "") -> LLMConfig | None:
             base_url="https://api.deepseek.com",
         )
 
+    if provider == "openrouter":
+        return LLMConfig(
+            provider="openrouter",
+            model=model_override or os.getenv("OPENROUTER_MODEL") or "deepseek/deepseek-chat",
+            api_key=os.getenv("OPENROUTER_API_KEY", ""),
+            api_key_env="OPENROUTER_API_KEY",
+            base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+        )
+
     return LLMConfig(
         provider="openai",
         model=model_override or os.getenv("OPENAI_MODEL") or DEFAULT_OPENAI_MODEL,
@@ -2805,48 +4325,51 @@ def resolve_llm_config(model_override: str = "") -> LLMConfig | None:
     )
 
 
-def generate_ai_summaries(
-    items: list[NewsItem],
-    model: str,
-    max_ai_items: int,
+def ai_title_guidance(
     profile: dict[str, Any],
-) -> dict[str, Any]:
-    if not items:
-        return {"top_ids": [], "field_summaries": [], "ai_generated": False}
-    if OpenAI is None:
-        LOGGER.warning("openai package is not installed; using fallback summaries.")
-        apply_fallback_summaries(items, profile)
-        return fallback_report_payload(items, profile)
-
-    llm_config = resolve_llm_config(model)
-    if llm_config is None:
-        apply_fallback_summaries(items, profile)
-        return fallback_report_payload(items, profile)
-    if not llm_config.api_key:
-        LOGGER.warning("%s is not set; using fallback summaries.", llm_config.api_key_env)
-        apply_fallback_summaries(items, profile)
-        return fallback_report_payload(items, profile)
-
-    payload = [
-        {
-            "id": item.item_id,
-            "field": item.field_name,
-            "source": item.source,
-            "published": format_date(item.published),
-            "title": item.title,
-            "source_alias": source_title_prefix(item.source, profile),
-            "abstract": truncate(item.abstract, 900),
-            "link": item.link,
-        }
-        for item in items[:max_ai_items]
-    ]
-    instructions = (
-        f"你是{profile['ai_role']}。请基于输入论文/资讯元数据生成中文日报素材。"
-        "要求准确、克制，不夸大结论；如果摘要不足，要说明信息有限。"
-        f"标题风格要求：{profile.get('title_style', DEFAULT_TITLE_STYLE_GUIDE)}"
-        "只输出 JSON，不要输出 Markdown。"
-    )
+) -> tuple[str, str, str, list[str]]:
     discipline_name = profile["title"].replace("科研资讯日报", "")
+    if profile.get("key") == "business_management":
+        title_schema_text = (
+            "严谨的工商管理学术亮点中文标题，18-36个中文字符左右，必须以来源/期刊名开头；"
+            "标题主体只突出公开题名或摘要可确认的研究问题、理论、数据、方法、核心结果、管理启示或证据边界；"
+            "缺少证据时使用研究对象与管理问题的保守表述"
+        )
+        attractive_title_prompt_text = (
+            f"请根据论文信息生成一个严谨的{discipline_name}学术亮点标题。要求：1. 必须以期刊/来源名开头。"
+            "2. 只使用题名或摘要明确支持的研究问题、理论、数据、方法、核心结果、管理启示或限制。"
+            "3. 不把相关性写成因果，不补写样本量、显著性、作者、DOI或未出现的理论。"
+            "4. 不使用反问、悬念、夸张、拟人化比喻和营销号句式。"
+        )
+        single_item_prompt_template = (
+            f"请根据以下论文信息生成一个严谨的{discipline_name}学术亮点标题。\n"
+            "要求：\n"
+            "1. 必须保留期刊/来源名作为标题开头。\n"
+            "2. 只突出公开信息可确认的研究问题、理论、数据、方法、核心结果、管理启示或限制。\n"
+            "3. 信息不足时采用研究对象与管理问题的保守表述，不推测机制或因果。\n"
+            "4. 不加入输入中没有的样本量、显著性、作者、DOI或理论。\n\n"
+            "论文信息：\n"
+            "来源：{source}\n"
+            "英文标题：{title}\n"
+            "摘要：{abstract}\n"
+            "领域：{field}\n\n"
+            "输出只给一个标题。"
+        )
+        title_style_rules = [
+            profile.get("title_style", DEFAULT_TITLE_STYLE_GUIDE),
+            "每个 attractive_title 必须是严谨的工商管理学术亮点标题，不要写成公众号导读标题。",
+            "优先把 source_alias 放在标题开头，并突出可核对的研究问题、理论、数据、方法、结果、管理启示或限制。",
+            "机制、因果、理论或实证结论只有在英文题名或摘要明确支持时才能写入。",
+            "禁止使用反问、悬念、夸张、拟人化比喻和营销号句式。",
+            "不能编造输入中没有的样本量、显著性、作者、DOI、理论或因果结论。",
+        ]
+        return (
+            title_schema_text,
+            attractive_title_prompt_text,
+            single_item_prompt_template,
+            title_style_rules,
+        )
+
     title_schema_text = (
         "严谨的学术亮点中文标题，18-36个中文字符左右，必须以来源/期刊名开头；"
         "标题主体应突出可核对的研究对象、方法、机制、模型、数据类型、材料/体系或证据边界；"
@@ -2883,12 +4406,74 @@ def generate_ai_summaries(
         "不能编造输入中没有的团队、学校、通讯作者、性能数值、临床结论或应用承诺。",
         "不要把相关性写成因果；不能夸大临床、产业或应用价值。",
     ]
+    return (
+        title_schema_text,
+        attractive_title_prompt_text,
+        single_item_prompt_template,
+        title_style_rules,
+    )
+
+
+def generate_ai_summaries(
+    items: list[NewsItem],
+    model: str,
+    max_ai_items: int,
+    profile: dict[str, Any],
+    provider_override: str = "",
+) -> dict[str, Any]:
+    if not items:
+        return {
+            "top_ids": [],
+            "field_summaries": [],
+            "report_title": clean_text(profile["title"]),
+            "ai_generated": False,
+        }
+    if OpenAI is None:
+        LOGGER.warning("openai package is not installed; using fallback summaries.")
+        apply_fallback_summaries(items, profile)
+        return fallback_report_payload(items, profile)
+
+    llm_config = resolve_llm_config(model, provider_override)
+    if llm_config is None:
+        apply_fallback_summaries(items, profile)
+        return fallback_report_payload(items, profile)
+    if not llm_config.api_key:
+        LOGGER.warning("%s is not set; using fallback summaries.", llm_config.api_key_env)
+        apply_fallback_summaries(items, profile)
+        return fallback_report_payload(items, profile)
+
+    payload = [
+        {
+            "id": item.item_id,
+            "field": item.field_name,
+            "source": item.source,
+            "published": format_date(item.published),
+            "title": item.title,
+            "source_alias": source_title_prefix(item.source, profile),
+            "abstract": truncate(item.abstract, 900),
+            "link": item.link,
+        }
+        for item in items[:max_ai_items]
+    ]
+    instructions = (
+        f"你是{profile['ai_role']}。请基于输入论文/资讯元数据生成中文日报素材。"
+        "要求准确、克制，不夸大结论；如果摘要不足，要说明信息有限。"
+        f"标题风格要求：{profile.get('title_style', DEFAULT_TITLE_STYLE_GUIDE)}"
+        "只输出 JSON，不要输出 Markdown。Return a valid JSON object."
+    )
+    (
+        title_schema_text,
+        attractive_title_prompt_text,
+        single_item_prompt_template,
+        title_style_rules,
+    ) = ai_title_guidance(profile)
     comment_rules = [
         "comment 必须使用中文表达；可以保留必要英文缩写、化学式和物种名。",
         "不要输出以 ABSTRACT、SUMMARY 开头的英文原文片段。",
         "同批 comment 不要反复使用同一个句式；必须根据每篇题名和摘要写出不同的研究对象或证据边界。",
         "摘要不足时直接说明信息有限，并提示查看原文。",
     ]
+    comment_rules.extend(profile.get("summary_rules", []))
     if profile.get("key") == "biology":
         comment_rules.extend(
             [
@@ -2901,6 +4486,7 @@ def generate_ai_summaries(
     prompt = {
         "task": profile["ai_task"],
         "schema": {
+            "report_title": "12-28字中文日报主标题；只概括本期实际条目，不复述用户偏好、信息源或操作指令",
             "top_ids": ["N001"],
             "field_summaries": [
                 {"field": next(iter(profile["field_keywords"])), "summary": "80字以内中文概述"}
@@ -2917,6 +4503,11 @@ def generate_ai_summaries(
         "single_item_prompt_template": single_item_prompt_template,
         "comment_rules": comment_rules,
         "title_style_rules": title_style_rules,
+        "report_title_rules": [
+            "report_title 是整份日报的主标题，需概括本期入选条目的共同主题，使用简洁中文。",
+            "report_title 只能依据本次 items，不能复述用户画像、偏好、信息来源、推荐优先级或任何提示词内容。",
+            "report_title 不要包含“偏好”“信息来源”“每日推荐优先级”等配置性表述，不使用冒号和换行。",
+        ],
         "selection_rules": [
             "top_ids 选 5 条最值得关注的条目，兼顾来源权威性、新近性和领域覆盖。",
             "items 必须覆盖输入中的每一个 id。",
@@ -2960,8 +4551,11 @@ def generate_ai_summaries(
                 except Exception as exc:  # noqa: BLE001 - some compatible providers reject response_format.
                     local_last_error = exc
                     request_kwargs.pop("response_format", None)
+                    request_kwargs["max_tokens"] = int(request_kwargs.get("max_tokens", 3000) * 2.5)
                     response = client.chat.completions.create(**request_kwargs)
                 raw_response = chat_response_text(response)
+                if not raw_response.strip():
+                    raise RuntimeError("empty response content")
                 return parse_json_object(raw_response)
             except Exception as exc:  # noqa: BLE001 - AI failure should not block the document.
                 local_last_error = exc
@@ -3009,6 +4603,7 @@ def generate_ai_summaries(
         combined_items: list[dict[str, Any]] = []
         combined_top_ids: list[str] = []
         field_summary_by_name: dict[str, str] = {}
+        report_title = ""
         for chunk_index, start in enumerate(range(0, len(payload), chunk_size), start=1):
             chunk_payload = payload[start : start + chunk_size]
             chunk_prompt = {
@@ -3021,6 +4616,8 @@ def generate_ai_summaries(
                 ],
             }
             chunk_parsed = request_ai_json(chunk_prompt, 4500, f"chunk {chunk_index}")
+            if not report_title:
+                report_title = clean_text(chunk_parsed.get("report_title", ""))
             parsed_items = chunk_parsed.get("items", [])
             if isinstance(parsed_items, list):
                 combined_items.extend(entry for entry in parsed_items if isinstance(entry, dict))
@@ -3042,6 +4639,7 @@ def generate_ai_summaries(
                 {"field": field_name, "summary": summary}
                 for field_name, summary in field_summary_by_name.items()
             ],
+            "report_title": report_title,
             "items": combined_items,
         }
 
@@ -3119,7 +4717,10 @@ def generate_ai_summaries(
     if parsed is None:
         LOGGER.warning("%s summary generation failed; using fallback summaries: %s", llm_config.provider, last_error)
         apply_fallback_summaries(items, profile)
-        return fallback_report_payload(items, profile)
+        return {
+            **fallback_report_payload(items, profile),
+            "ai_error": f"{llm_config.provider}: {clean_text(str(last_error)) or 'unknown AI response error'}",
+        }
 
     parsed = repair_missing_ai_items(parsed)
 
@@ -3162,10 +4763,24 @@ def generate_ai_summaries(
     return {
         "top_ids": top_ids[:5],
         "field_summaries": field_summaries,
+        "report_title": normalize_report_title(parsed.get("report_title", ""), profile),
         "ai_generated": complete_ai_items,
         "ai_provider": llm_config.provider,
         "ai_model": llm_config.model,
     }
+
+
+def normalize_report_title(value: Any, profile: dict[str, Any]) -> str:
+    """Keep a concise AI title without letting configuration text reach the masthead."""
+
+    fallback = clean_text(profile["title"])
+    title = clean_text(value)
+    if not title or len(title) > 48:
+        return fallback
+    disallowed = ("偏好", "信息来源", "每日推荐优先级", "提示词")
+    if any(marker in title for marker in disallowed):
+        return fallback
+    return title
 
 
 def fallback_report_payload(items: list[NewsItem], profile: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -3182,7 +4797,12 @@ def fallback_report_payload(items: list[NewsItem], profile: dict[str, Any] | Non
         }
         for field_name, group_items in grouped.items()
     ]
-    return {"top_ids": top_ids, "field_summaries": field_summaries, "ai_generated": False}
+    return {
+        "top_ids": top_ids,
+        "field_summaries": field_summaries,
+        "report_title": clean_text(active_profile["title"]),
+        "ai_generated": False,
+    }
 
 
 SUPERSCRIPT_TO_ASCII = str.maketrans(
@@ -3337,13 +4957,14 @@ def apply_ai_scientific_notation(
     model: str,
     profile: dict[str, Any],
     enabled: bool = True,
+    provider_override: str = "",
 ) -> bool:
     initialize_rule_notation(items, report_payload)
     if not enabled:
         return False
     if not items or OpenAI is None:
         return False
-    llm_config = resolve_llm_config(model)
+    llm_config = resolve_llm_config(model, provider_override)
     if llm_config is None or not llm_config.api_key:
         LOGGER.info("Scientific notation AI pass skipped; model provider or API key is unavailable.")
         return False
@@ -3529,7 +5150,7 @@ def add_hyperlink(paragraph: Any, text: str, url: str) -> None:
 def set_run_font(
     run: Any,
     name: str = "Arial",
-    east_asia: str = "Microsoft YaHei",
+    east_asia: str = CJK_FONT_NAME,
     size: float | None = None,
     color: RGBColor | None = None,
     bold: bool | None = None,
@@ -3730,7 +5351,7 @@ def add_rich_text(
     bold: bool | None = None,
     italic: bool | None = None,
     name: str = "Arial",
-    east_asia: str = "Microsoft YaHei",
+    east_asia: str = CJK_FONT_NAME,
 ) -> list[Any]:
     runs: list[Any] = []
     for value, script in rich_text_segments(clean_text(text)):
@@ -3790,7 +5411,7 @@ def set_document_fonts(document: Document) -> None:
         style.font.name = "Arial"
         style._element.rPr.rFonts.set(qn("w:ascii"), "Arial")  # noqa: SLF001
         style._element.rPr.rFonts.set(qn("w:hAnsi"), "Arial")  # noqa: SLF001
-        style._element.rPr.rFonts.set(qn("w:eastAsia"), "Microsoft YaHei")  # noqa: SLF001
+        style._element.rPr.rFonts.set(qn("w:eastAsia"), CJK_FONT_NAME)  # noqa: SLF001
     normal = styles["Normal"]
     normal.font.size = Pt(9.6)
     normal.font.color.rgb = RGBColor(31, 41, 55)
@@ -3831,7 +5452,13 @@ def add_label_value(document: Document, label: str, value: str, link: str = "") 
         add_rich_text(paragraph, value)
 
 
-def add_masthead(document: Document, report_date: date, item_count: int, profile: dict[str, Any]) -> None:
+def add_masthead(
+    document: Document,
+    report_date: date,
+    item_count: int,
+    profile: dict[str, Any],
+    report_title: str,
+) -> None:
     section = document.sections[0]
     header = section.header.paragraphs[0]
     header.text = ""
@@ -3856,7 +5483,7 @@ def add_masthead(document: Document, report_date: date, item_count: int, profile
     title.style = document.styles["Title"]
     title.paragraph_format.space_before = Pt(0)
     title.paragraph_format.space_after = Pt(7)
-    run = title.add_run(profile["title"])
+    run = title.add_run(report_title)
     set_run_font(run, size=22, color=RGBColor(17, 24, 39), bold=True)
 
     meta = document.add_paragraph()
@@ -3889,7 +5516,10 @@ def add_top_item_block(document: Document, item: NewsItem, index: int) -> None:
     meta = document.add_paragraph()
     meta.paragraph_format.space_before = Pt(0)
     meta.paragraph_format.space_after = Pt(1)
-    run = meta.add_run(f"{item.field_name}  |  {item.source}  |  {format_date(item.published)}")
+    source_kind = SOURCE_LAYER_LABELS[item_source_layer(item)]
+    run = meta.add_run(
+        f"{source_kind}（可信度 {item_credibility(item)}/5）  |  {item.field_name}  |  {item.source}  |  {format_date(item.published)}"
+    )
     set_run_font(run, size=8.5, color=RGBColor(107, 114, 128))
 
     comment = document.add_paragraph()
@@ -3914,7 +5544,10 @@ def add_item_block(document: Document, item: NewsItem) -> None:
     meta = document.add_paragraph()
     meta.paragraph_format.space_before = Pt(0)
     meta.paragraph_format.space_after = Pt(2)
-    run = meta.add_run(f"{item.source}  |  {format_date(item.published)}  |  {item.field_name}")
+    source_kind = SOURCE_LAYER_LABELS[item_source_layer(item)]
+    run = meta.add_run(
+        f"{source_kind}（可信度 {item_credibility(item)}/5）  |  {item.source}  |  {format_date(item.published)}  |  {item.field_name}"
+    )
     set_run_font(run, size=8.5, color=RGBColor(107, 114, 128))
 
     english = document.add_paragraph()
@@ -4012,16 +5645,44 @@ def create_document(
     document = Document()
     set_document_fonts(document)
 
-    add_masthead(document, report_date, len(items), profile)
+    add_masthead(
+        document,
+        report_date,
+        len(items),
+        profile,
+        normalize_report_title(report_payload.get("report_title", ""), profile),
+    )
     add_source_note(document, len(items))
 
     by_id = {item.item_id: item for item in items}
-    top_items = [by_id[item_id] for item_id in report_payload.get("top_ids", []) if item_id in by_id]
+    # Community discussion is intentionally never elevated to a report's
+    # evidence-like highlights.  It remains visible in its own final section.
+    evidence_items = [item for item in items if item_source_layer(item) != "community_signal"]
+    highlight_candidates = evidence_items
+    highlight_candidate_ids = {item.item_id for item in highlight_candidates}
+    top_items: list[NewsItem] = []
+    selected_top_ids: set[str] = set()
+    for item_id in report_payload.get("top_ids", []):
+        if (
+            item_id not in by_id
+            or item_id not in highlight_candidate_ids
+            or item_id in selected_top_ids
+        ):
+            continue
+        top_items.append(by_id[item_id])
+        selected_top_ids.add(item_id)
+        if len(top_items) == 5:
+            break
     if len(top_items) < 5:
-        existing = {item.item_id for item in top_items}
-        top_items.extend([item for item in items if item.item_id not in existing][: 5 - len(top_items)])
+        for item in highlight_candidates:
+            if item.item_id in selected_top_ids:
+                continue
+            top_items.append(item)
+            selected_top_ids.add(item.item_id)
+            if len(top_items) == 5:
+                break
 
-    document.add_heading("今日重点 5 条", level=1)
+    document.add_heading(f"今日重点 {len(top_items[:5])} 条", level=1)
     for index, item in enumerate(top_items[:5], start=1):
         add_top_item_block(document, item, index)
 
@@ -4031,26 +5692,43 @@ def create_document(
         if isinstance(entry, dict) and entry.get("field") and entry.get("summary"):
             field_summary_map[clean_text(entry["field"])] = clean_text(entry["summary"])
 
-    grouped: dict[str, list[NewsItem]] = {}
-    for item in items:
-        grouped.setdefault(item.field_name, []).append(item)
-
     ordered_fields = list(profile["field_keywords"].keys()) + [profile["default_field"]]
-    for field_name in ordered_fields:
-        group_items = grouped.get(field_name, [])
-        if not group_items:
+    for source_layer in (
+        "official_data_policy",
+        "academic_research",
+        "institutional_research",
+        "industry_engineering",
+        "community_signal",
+    ):
+        document.add_heading(SOURCE_LAYER_LABELS[source_layer], level=2)
+        layer_items = [item for item in items if item_source_layer(item) == source_layer]
+        if not layer_items:
+            document.add_paragraph("本期无符合条件的内容。")
             continue
-        document.add_heading(field_name, level=2)
-        summary = field_summary_map.get(
-            field_name,
-            f"本领域收录 {len(group_items)} 条，主要覆盖近期论文、期刊上线内容和科研资讯。",
-        )
-        summary_paragraph = document.add_paragraph()
-        summary_paragraph.paragraph_format.space_after = Pt(6)
-        summary_paragraph.paragraph_format.line_spacing = 1.25
-        add_rich_text(summary_paragraph, summary, size=9.2, color=RGBColor(55, 65, 81))
-        for item in group_items:
-            add_item_block(document, item)
+        grouped: dict[str, list[NewsItem]] = {}
+        for item in layer_items:
+            grouped.setdefault(item.field_name, []).append(item)
+        for field_name in ordered_fields:
+            group_items = grouped.pop(field_name, [])
+            if not group_items:
+                continue
+            document.add_heading(field_name, level=3)
+            summary = field_summary_map.get(
+                field_name,
+                f"本领域收录 {len(group_items)} 条，主要覆盖近期论文、期刊上线内容和科研资讯。",
+            )
+            summary_paragraph = document.add_paragraph()
+            summary_paragraph.paragraph_format.space_after = Pt(6)
+            summary_paragraph.paragraph_format.line_spacing = 1.25
+            add_rich_text(summary_paragraph, summary, size=9.2, color=RGBColor(55, 65, 81))
+            for item in group_items:
+                add_item_block(document, item)
+        # Custom/legacy field values not present in the static profile remain
+        # observable instead of disappearing from a report section.
+        for field_name, group_items in grouped.items():
+            document.add_heading(field_name, level=3)
+            for item in group_items:
+                add_item_block(document, item)
 
     add_run_diagnostics_section(document, diagnostics, source_statuses)
 
@@ -4285,12 +5963,18 @@ def convert_docx_to_pdf(docx_path: Path) -> Path | None:
     return pdf_path
 
 
+class EmailTransportUncertainError(RuntimeError):
+    """SMTP transport ended without a reliable delivery outcome."""
+
+
 def send_report_email(
     attachment_path: Path,
     report_date: date,
     profile: dict[str, Any],
     is_failure: bool = False,
     ai_generated: bool = False,
+    recipient_override: list[str] | None = None,
+    raise_on_transport_error: bool = False,
 ) -> bool:
     if not env_flag("EMAIL_ENABLED", True):
         LOGGER.info("Email sending is disabled by EMAIL_ENABLED.")
@@ -4303,18 +5987,27 @@ def send_report_email(
     smtp_security = os.getenv("SMTP_SECURITY", "").strip().lower() or "ssl"
     smtp_port_raw = os.getenv("SMTP_PORT", "").strip()
     smtp_port = int(smtp_port_raw) if smtp_port_raw else (587 if smtp_security in {"starttls", "tls"} else 465)
-    profile_recipient_value = os.getenv(profile["email_env"], "").strip()
-    default_recipient_value = os.getenv("REPORT_EMAIL_TO", "").strip()
     recipient_options: list[tuple[str, list[str]]] = []
-    for label, value in (
-        (profile["email_env"], profile_recipient_value),
-        ("REPORT_EMAIL_TO", default_recipient_value),
-        ("profile default", profile["default_email_to"]),
-    ):
-        recipients = parse_email_recipients(value)
-        if recipients and all(recipients != existing for _, existing in recipient_options):
-            recipient_options.append((label, recipients))
+    if recipient_override is not None:
+        recipients = [recipient.strip() for recipient in recipient_override if recipient.strip()]
+        if recipients:
+            recipient_options.append(("recipient override", recipients))
+        recipient_config_label = "recipient override"
+    else:
+        profile_recipient_value = os.getenv(profile["email_env"], "").strip()
+        default_recipient_value = os.getenv("REPORT_EMAIL_TO", "").strip()
+        recipient_candidates = [(profile["email_env"], profile_recipient_value)]
+        if profile.get("allow_default_email_fallback", True):
+            recipient_candidates.append(("REPORT_EMAIL_TO", default_recipient_value))
+        recipient_candidates.append(("profile default", profile["default_email_to"]))
+        for label, value in recipient_candidates:
+            recipients = parse_email_recipients(value)
+            if recipients and all(recipients != existing for _, existing in recipient_options):
+                recipient_options.append((label, recipients))
 
+        recipient_config_label = profile["email_env"]
+        if profile.get("allow_default_email_fallback", True):
+            recipient_config_label = f"{profile['email_env']} or REPORT_EMAIL_TO"
     missing = [
         name
         for name, value in {
@@ -4322,7 +6015,7 @@ def send_report_email(
             "SMTP_USERNAME": smtp_username,
             "SMTP_PASSWORD": smtp_password,
             "SMTP_FROM or SMTP_USERNAME": smtp_from,
-            f"{profile['email_env']} or REPORT_EMAIL_TO": recipient_options,
+            recipient_config_label: recipient_options,
         }.items()
         if not value
     ]
@@ -4383,17 +6076,29 @@ def send_report_email(
     last_error: Exception | None = None
     for option_index, (recipient_label, recipients) in enumerate(recipient_options, start=1):
         message = build_message(recipients)
+        smtp: Any | None = None
         try:
             if smtp_security == "ssl":
-                with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=30) as smtp:
-                    smtp.login(smtp_username, smtp_password)
-                    refused = smtp.send_message(message)
+                smtp = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=30)
             else:
-                with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as smtp:
-                    if smtp_security in {"starttls", "tls"}:
-                        smtp.starttls()
-                    smtp.login(smtp_username, smtp_password)
-                    refused = smtp.send_message(message)
+                smtp = smtplib.SMTP(smtp_host, smtp_port, timeout=30)
+                if smtp_security in {"starttls", "tls"}:
+                    smtp.starttls()
+            smtp.login(smtp_username, smtp_password)
+        except Exception as exc:  # noqa: BLE001 - this occurs before SMTP DATA is attempted.
+            last_error = exc
+            LOGGER.warning("Email connection or authentication failed via %s: %s", recipient_label, type(exc).__name__)
+            if smtp is not None:
+                try:
+                    smtp.close()
+                except Exception:  # noqa: BLE001 - best-effort cleanup only.
+                    pass
+            if option_index < len(recipient_options):
+                LOGGER.warning("Trying fallback recipients from %s.", recipient_options[option_index][0])
+                continue
+            return False
+        try:
+            refused = smtp.send_message(message)
         except smtplib.SMTPRecipientsRefused as exc:
             last_error = exc
             LOGGER.warning("Email recipients from %s were refused: %s", recipient_label, refused_summary(exc.recipients))
@@ -4401,25 +6106,46 @@ def send_report_email(
                 LOGGER.warning("Trying fallback recipients from %s.", recipient_options[option_index][0])
                 continue
             return False
+        except (smtplib.SMTPSenderRefused, smtplib.SMTPDataError, smtplib.SMTPHeloError) as exc:
+            last_error = exc
+            LOGGER.warning("SMTP rejected email via %s: %s", recipient_label, type(exc).__name__)
+            return False
         except Exception as exc:  # noqa: BLE001 - email failure should not invalidate the report.
             last_error = exc
-            LOGGER.warning("Email sending failed via %s: %s", recipient_label, exc)
-            if option_index < len(recipient_options):
-                LOGGER.warning("Trying fallback recipients from %s.", recipient_options[option_index][0])
-                continue
+            LOGGER.warning("Email sending failed via %s: %s", recipient_label, type(exc).__name__)
+            if raise_on_transport_error:
+                raise EmailTransportUncertainError(type(exc).__name__) from exc
             return False
+        finally:
+            if smtp is not None:
+                try:
+                    smtp.quit()
+                except Exception:  # noqa: BLE001 - the SMTP result above is already authoritative.
+                    try:
+                        smtp.close()
+                    except Exception:  # noqa: BLE001 - best-effort cleanup only.
+                        pass
 
         if refused:
             LOGGER.warning("Email sent with refused recipients via %s: %s", recipient_label, refused_summary(refused))
+            if raise_on_transport_error and len(refused) < len(recipients):
+                raise EmailTransportUncertainError("SMTPPartialRecipientRefusal")
             if option_index < len(recipient_options):
                 LOGGER.warning("Trying fallback recipients from %s.", recipient_options[option_index][0])
                 continue
             return False
 
-        LOGGER.info("Sent report email to %s with PDF attachment %s", ", ".join(recipients), email_attachment_path)
+        LOGGER.info(
+            "Sent report email to %d recipient(s) with PDF attachment %s",
+            len(recipients),
+            email_attachment_path.name,
+        )
         return True
 
-    LOGGER.warning("Email sending failed: %s", last_error or "no recipient options")
+    LOGGER.warning(
+        "Email sending failed: %s",
+        type(last_error).__name__ if last_error is not None else "no recipient options",
+    )
     return False
 
 
@@ -4430,58 +6156,164 @@ def collect_items(
     profile: dict[str, Any],
 ) -> tuple[list[NewsItem], list[SourceStatus]]:
     session = build_session()
-    fetchers: list[tuple[str, Callable[[], list[NewsItem]]]] = [
-        ("arXiv", lambda: fetch_arxiv(session, since, until, args.source_limit, profile)),
-        ("PubMed", lambda: fetch_pubmed(session, since, until, args.source_limit, profile)),
-    ]
+    enabled_source_ids = set(profile.get("enabled_source_ids", ()))
+    collect_all_sources = not profile.get("source_selection_explicit", False) and not enabled_source_ids
+    fetchers: list[tuple[str, str, Callable[[], list[NewsItem]]]] = []
+    if collect_all_sources or "arxiv" in enabled_source_ids:
+        fetchers.append(("arXiv", "arxiv", lambda: fetch_arxiv(session, since, until, args.source_limit, profile)))
+    if collect_all_sources or "pubmed" in enabled_source_ids:
+        fetchers.append(("PubMed", "pubmed", lambda: fetch_pubmed(session, since, until, args.source_limit, profile)))
 
     all_items: list[NewsItem] = []
     statuses: list[SourceStatus] = []
-    for source_name, fetcher in fetchers:
+    for source_name, source_id, fetcher in fetchers:
         try:
-            items = fetcher()
+            items = apply_source_provenance(fetcher(), source_id)
             LOGGER.info("%s returned %d items", source_name, len(items))
             all_items.extend(items)
-            statuses.append(SourceStatus(name=source_name, success=True, item_count=len(items)))
+            statuses.append(source_status(source_name, True, source_id, item_count=len(items)))
         except Exception as exc:  # noqa: BLE001 - source isolation is required.
             LOGGER.exception("%s failed and was skipped: %s", source_name, exc)
             statuses.append(
-                SourceStatus(
-                    name=source_name,
-                    success=False,
-                    error=f"{type(exc).__name__}: {exc}",
-                )
+                source_status(source_name, False, source_id, error=f"{type(exc).__name__}: {exc}")
             )
 
-    try:
-        crossref_items, crossref_statuses = fetch_crossref(session, since, until, args.source_limit, profile)
-        LOGGER.info("Crossref returned %d items", len(crossref_items))
-        all_items.extend(crossref_items)
-        statuses.extend(crossref_statuses)
-    except Exception as exc:  # noqa: BLE001 - defensive guard around the grouped source.
-        LOGGER.exception("Crossref failed and was skipped: %s", exc)
-        statuses.append(
-            SourceStatus(
-                name="Crossref",
-                success=False,
-                error=f"{type(exc).__name__}: {exc}",
+    if collect_all_sources or "crossref" in enabled_source_ids:
+        try:
+            crossref_items, crossref_statuses = fetch_crossref(session, since, until, args.source_limit, profile)
+            LOGGER.info("Crossref returned %d items", len(crossref_items))
+            all_items.extend(apply_source_provenance(crossref_items, "crossref"))
+            statuses.extend(crossref_statuses)
+        except Exception as exc:  # noqa: BLE001 - defensive guard around the grouped source.
+            LOGGER.exception("Crossref failed and was skipped: %s", exc)
+            statuses.append(
+                source_status("Crossref", False, "crossref", error=f"{type(exc).__name__}: {exc}")
             )
+
+    if collect_all_sources or "rss" in enabled_source_ids:
+        try:
+            rss_items, rss_statuses = fetch_rss(session, since, until, args.source_limit, profile)
+            LOGGER.info("RSS returned %d items", len(rss_items))
+            all_items.extend(apply_source_provenance(rss_items, "rss"))
+            statuses.extend(rss_statuses)
+        except Exception as exc:  # noqa: BLE001 - defensive guard around the grouped source.
+            LOGGER.exception("RSS failed and was skipped: %s", exc)
+            statuses.append(
+                source_status("RSS", False, "rss", error=f"{type(exc).__name__}: {exc}")
+            )
+
+    # Catalogue RSS feeds are another input to the existing RSS collector.
+    # Do not assume an ad-hoc or legacy profile dictionary carries a catalogue
+    # key; those profiles must keep their established collection behaviour.
+    profile_key = profile.get("key")
+    _collectable_profile_ids = (
+        {
+            source.id
+            for source in source_definitions_for_profile(profile_key)
+            if source.collectable and source.id in CATALOGUE_RSS_SOURCE_IDS
+        }
+        if isinstance(profile_key, str)
+        else set()
+    )
+    # Fixed five-subject reports retain their historical source set.  New
+    # catalogue RSS entries run only after a user explicitly selects them.
+    _catalog_rss_ids = (
+        _collectable_profile_ids & enabled_source_ids
+        if profile.get("source_selection_explicit", False)
+        else set()
+    )
+    # bioRxiv and medRxiv already have dedicated public collectors.  Their
+    # RSS mirrors must not create a second status row or duplicate raw items.
+    for source_id in sorted(_catalog_rss_ids - set(PUBLIC_API_SOURCE_IDS)):
+        catalog_feeds = rss_feeds_for_source(source_id)
+        if not catalog_feeds:
+            continue
+        feed_profile = {
+            **profile,
+            "rss_feeds": catalog_feeds,
+        }
+        try:
+            cat_items, cat_statuses = fetch_rss(session, since, until, args.source_limit, feed_profile)
+            LOGGER.info("Catalog RSS (%s) returned %d items", source_id, len(cat_items))
+            all_items.extend(apply_source_provenance(cat_items, source_id))
+            statuses.extend(cat_statuses)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.exception("Catalog RSS source %s failed and was skipped: %s", source_id, exc)
+            statuses.append(
+                source_status(f"RSS: {source_id}", False, source_id, error=f"{type(exc).__name__}: {exc}")
+            )
+    supplementary_fetchers: list[tuple[str, str, Callable[[], list[NewsItem]]]] = []
+    if profile.get("openalex_query_terms") and (
+        collect_all_sources or "openalex" in enabled_source_ids
+    ):
+        supplementary_fetchers.append(
+            ("OpenAlex", "openalex", lambda: fetch_openalex(session, since, until, args.source_limit, profile))
+        )
+    if profile.get("ccf_conference_tiers") and "ccf_conferences" in enabled_source_ids:
+        supplementary_fetchers.append(
+            (
+                "CCF conferences (DBLP)",
+                "ccf_conferences",
+                lambda: fetch_ccf_conferences(session, since, until, args.source_limit, profile),
+            )
+        )
+    if profile.get("official_rss_feeds") and (
+        collect_all_sources or "official_rss" in enabled_source_ids
+    ):
+        official_profile = {
+            **profile,
+            "rss_feeds": [
+                {**feed_config, "source_id": "official_rss", "source_kind": "official"}
+                for feed_config in profile["official_rss_feeds"]
+            ],
+        }
+        supplementary_fetchers.append(
+            ("Official RSS", "official_rss", lambda: fetch_rss(session, since, until, args.source_limit, official_profile)[0])
+        )
+    if profile.get("community_query_terms") and (
+        collect_all_sources or "hackernews" in enabled_source_ids
+    ):
+        supplementary_fetchers.append(
+            ("Hacker News", "hackernews", lambda: fetch_hackernews(session, since, until, args.source_limit, profile))
+        )
+    if profile.get("github_repositories") and (
+        collect_all_sources or "github_releases" in enabled_source_ids
+    ):
+        supplementary_fetchers.append(
+            ("GitHub Releases", "github_releases", lambda: fetch_github_releases(session, since, until, args.source_limit, profile))
+        )
+    if "europe_pmc" in enabled_source_ids:
+        supplementary_fetchers.append(
+            ("Europe PMC", "europe_pmc", lambda: fetch_europe_pmc(session, since, until, args.source_limit, profile))
+        )
+    if "biorxiv" in enabled_source_ids:
+        supplementary_fetchers.append(
+            ("bioRxiv", "biorxiv", lambda: fetch_biorxiv(session, since, until, args.source_limit, profile))
+        )
+    if "medrxiv" in enabled_source_ids:
+        supplementary_fetchers.append(
+            ("medRxiv", "medrxiv", lambda: fetch_medrxiv(session, since, until, args.source_limit, profile))
+        )
+    if "clinical_trials" in enabled_source_ids:
+        supplementary_fetchers.append(
+            ("ClinicalTrials.gov", "clinical_trials", lambda: fetch_clinical_trials(session, since, until, args.source_limit, profile))
+        )
+    if "who" in enabled_source_ids:
+        supplementary_fetchers.append(
+            ("WHO News", "who", lambda: fetch_who_news(session, since, until, args.source_limit, profile))
         )
 
-    try:
-        rss_items, rss_statuses = fetch_rss(session, since, until, args.source_limit, profile)
-        LOGGER.info("RSS returned %d items", len(rss_items))
-        all_items.extend(rss_items)
-        statuses.extend(rss_statuses)
-    except Exception as exc:  # noqa: BLE001 - defensive guard around the grouped source.
-        LOGGER.exception("RSS failed and was skipped: %s", exc)
-        statuses.append(
-            SourceStatus(
-                name="RSS",
-                success=False,
-                error=f"{type(exc).__name__}: {exc}",
+    for source_name, source_id, fetcher in supplementary_fetchers:
+        try:
+            items = apply_source_provenance(fetcher(), source_id)
+            LOGGER.info("%s returned %d items", source_name, len(items))
+            all_items.extend(items)
+            statuses.append(source_status(source_name, True, source_id, item_count=len(items)))
+        except Exception as exc:  # noqa: BLE001 - optional sources must not block a daily.
+            LOGGER.exception("%s failed and was skipped: %s", source_name, exc)
+            statuses.append(
+                source_status(source_name, False, source_id, error=f"{type(exc).__name__}: {exc}")
             )
-        )
     return all_items, statuses
 
 
@@ -4491,7 +6323,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--profile",
         choices=sorted(REPORT_PROFILES),
         default=os.getenv("REPORT_PROFILE", "chemistry"),
-        help="Report profile to run: chemistry, organic_chemistry, biology, or statistics. Default: chemistry.",
+        help=(
+            "Report profile to run. Choices: "
+            f"{', '.join(sorted(REPORT_PROFILES))}. Default: chemistry."
+        ),
     )
     parser.add_argument(
         "--days",
@@ -4626,6 +6461,248 @@ def ensure_item_ids(items: list[NewsItem]) -> None:
         else:
             item.item_id = f"N{stable_hash(item.title)}"
         used.add(item.item_id)
+
+
+@dataclass(frozen=True)
+class ReportGenerationOptions:
+    days: int
+    max_items: int
+    min_items: int
+    source_limit: int
+    max_ai_items: int
+    llm_provider: str
+    model: str
+    report_date: date
+    output_dir: Path
+    require_ai: bool
+    no_openai: bool = False
+
+
+@dataclass
+class ReportGenerationResult:
+    output_path: Path | None
+    selected_items: list[NewsItem]
+    source_statuses: list[SourceStatus]
+    report_payload: dict[str, Any]
+    collected_count: int
+    selected_count: int
+    ai_generated: bool
+    failure_exit_code: int | None
+    failure_stage: str | None = None
+    failure_reason: str = ""
+    matched_count: int = 0
+    deduplicated_count: int = 0
+    history_excluded_count: int = 0
+    profile_filter_fallback: bool = False
+
+
+def generate_report(
+    options: ReportGenerationOptions,
+    profile: dict[str, Any],
+    history: dict[str, set[str]] | None = None,
+    item_filter: Callable[[NewsItem], bool] | None = None,
+    supplement_filter: Callable[[NewsItem], bool] | None = None,
+) -> ReportGenerationResult:
+    """Generate one report without sending email or persisting local history."""
+
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=options.days)
+    from network_check import run_network_checks
+
+    diagnostics = run_network_checks(logger=LOGGER)
+    if not diagnostics.network_ok:
+        LOGGER.warning("Network is unavailable or degraded: %s", " | ".join(diagnostics.summary_lines()))
+    LOGGER.info("Collecting %s items from %s to %s", profile["key"], since.isoformat(), now.isoformat())
+    args = argparse.Namespace(source_limit=options.source_limit)
+    collected, source_statuses = collect_items(args, since, now, profile)
+    filtered = [item for item in collected if item_filter is None or item_filter(item)]
+    matched_count = len(filtered)
+    profile_filter_fallback = False
+    minimum_strict_matches = min(3, options.max_items)
+    fallback_target = min(5, options.max_items)
+    if (
+        item_filter is not None
+        and supplement_filter is not None
+        and len(filtered) < minimum_strict_matches
+    ):
+        selected_ids = {id(item) for item in filtered}
+        supplements = [
+            item
+            for item in collected
+            if id(item) not in selected_ids and supplement_filter(item)
+        ]
+        needed = max(0, fallback_target - len(filtered))
+        if supplements and needed:
+            LOGGER.warning(
+                "Only %d item(s) matched custom keywords; supplementing with up to %d base-relevant item(s).",
+                len(filtered),
+                needed,
+            )
+            filtered.extend(supplements[:needed])
+            profile_filter_fallback = True
+    elif item_filter is not None and not filtered and collected:
+        # Source collectors already enforce the base discipline profile.  A
+        # strict user-keyword pass can otherwise turn a useful low-volume
+        # daily into an empty report, so retain those base-relevant items.
+        LOGGER.warning("No items matched the custom keyword filter; using base-profile results as a fallback.")
+        filtered = collected
+        profile_filter_fallback = True
+    unique_items = dedupe_items(filtered)
+    deduplicated_count = len(unique_items)
+    prepared = prepare_items(
+        filtered,
+        options.max_items,
+        now,
+        profile,
+        history=history,
+        min_items=options.min_items,
+    )
+    ensure_item_ids(prepared)
+    selected_item_ids = {id(item) for item in prepared}
+    history_excluded_count = sum(
+        1
+        for item in unique_items
+        if item.history_repetition == "exact" and id(item) not in selected_item_ids
+    )
+    # ``filtered`` is intentionally the effective list after a documented
+    # base-profile fallback.  That keeps each source's funnel interpretable
+    # even when strict user keywords matched nothing.
+    populate_source_funnel_metrics(source_statuses, filtered, unique_items, prepared)
+    LOGGER.info("Prepared %d history-aware deduplicated items", len(prepared))
+
+    if not prepared:
+        reason = "抓取和过滤后没有可写入日报的资讯。"
+        failure_exit_code = 2 if all_sources_failed(source_statuses) else 1
+        if failure_exit_code == 2:
+            reason = "全部来源抓取失败，未获得任何资讯。"
+        output_path = create_failure_report(
+            report_date=options.report_date,
+            output_dir=options.output_dir,
+            profile=profile,
+            diagnostics=diagnostics,
+            source_statuses=source_statuses,
+            reason=reason,
+            collected_count=len(collected),
+            prepared_count=0,
+        )
+        return ReportGenerationResult(
+            output_path=output_path,
+            selected_items=[],
+            source_statuses=source_statuses,
+            report_payload={},
+            collected_count=len(collected),
+            matched_count=matched_count,
+            deduplicated_count=deduplicated_count,
+            history_excluded_count=history_excluded_count,
+            selected_count=0,
+            ai_generated=False,
+            failure_exit_code=4 if options.require_ai else failure_exit_code,
+            failure_stage="fetch",
+            profile_filter_fallback=profile_filter_fallback,
+        )
+
+    if options.no_openai:
+        apply_fallback_summaries(prepared, profile)
+        report_payload = fallback_report_payload(prepared, profile)
+    else:
+        if options.require_ai and options.max_ai_items < len(prepared):
+            LOGGER.error(
+                "AI summary is required for every item, but max_ai_items=%d is less than prepared item count=%d.",
+                options.max_ai_items,
+                len(prepared),
+            )
+            return ReportGenerationResult(
+                output_path=None,
+                selected_items=prepared,
+                source_statuses=source_statuses,
+                report_payload={},
+                collected_count=len(collected),
+                matched_count=matched_count,
+                deduplicated_count=deduplicated_count,
+                history_excluded_count=history_excluded_count,
+                selected_count=len(prepared),
+                ai_generated=False,
+                failure_exit_code=4,
+                failure_stage="ai",
+                profile_filter_fallback=profile_filter_fallback,
+            )
+        report_payload = generate_ai_summaries(
+            prepared,
+            options.model,
+            options.max_ai_items,
+            profile,
+            provider_override=options.llm_provider,
+        )
+
+    if options.require_ai and not report_payload.get("ai_generated"):
+        failure_reason = clean_text(str(report_payload.get("ai_error", ""))) or "AI summary is required, but model generation was incomplete."
+        LOGGER.error("AI summary is required, but model generation was incomplete: %s", failure_reason)
+        return ReportGenerationResult(
+            output_path=None,
+            selected_items=prepared,
+            source_statuses=source_statuses,
+            report_payload=report_payload,
+            collected_count=len(collected),
+            matched_count=matched_count,
+            deduplicated_count=deduplicated_count,
+            history_excluded_count=history_excluded_count,
+            selected_count=len(prepared),
+            ai_generated=False,
+            failure_exit_code=4,
+            failure_stage="ai",
+            failure_reason=failure_reason,
+            profile_filter_fallback=profile_filter_fallback,
+        )
+
+    report_payload["notation_ai_generated"] = apply_ai_scientific_notation(
+        prepared,
+        report_payload,
+        options.model,
+        profile,
+        enabled=not options.no_openai,
+        provider_override=options.llm_provider,
+    )
+    try:
+        output_path = create_document(
+            prepared,
+            report_payload,
+            options.report_date,
+            options.output_dir,
+            profile,
+            diagnostics=diagnostics,
+            source_statuses=source_statuses,
+        )
+    except Exception as exc:  # noqa: BLE001 - keep the scheduler retryable after document failure.
+        LOGGER.error("Word document generation failed: %s", type(exc).__name__)
+        return ReportGenerationResult(
+            output_path=None,
+            selected_items=prepared,
+            source_statuses=source_statuses,
+            report_payload=report_payload,
+            collected_count=len(collected),
+            matched_count=matched_count,
+            deduplicated_count=deduplicated_count,
+            history_excluded_count=history_excluded_count,
+            selected_count=len(prepared),
+            ai_generated=bool(report_payload.get("ai_generated")),
+            failure_exit_code=5,
+            failure_stage="word",
+            profile_filter_fallback=profile_filter_fallback,
+        )
+    return ReportGenerationResult(
+        output_path=output_path,
+        selected_items=prepared,
+        source_statuses=source_statuses,
+        report_payload=report_payload,
+        collected_count=len(collected),
+        matched_count=matched_count,
+        deduplicated_count=deduplicated_count,
+        history_excluded_count=history_excluded_count,
+        selected_count=len(prepared),
+        ai_generated=bool(report_payload.get("ai_generated")),
+        failure_exit_code=None,
+        profile_filter_fallback=profile_filter_fallback,
+    )
 
 
 def main() -> int:

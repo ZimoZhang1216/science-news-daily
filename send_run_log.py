@@ -15,6 +15,7 @@ PROFILE_LABELS = {
     "organic_chemistry": "有机化学日报",
     "biology": "生物日报",
     "statistics": "统计学日报",
+    "business_management": "工商管理日报",
 }
 
 EXIT_CODE_MEANINGS = {

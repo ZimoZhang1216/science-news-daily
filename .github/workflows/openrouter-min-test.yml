@@ -1,0 +1,83 @@
+name: OpenRouter Minimal Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  test-openrouter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install openai
+      - name: Minimal OpenRouter request
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_MODEL: ${{ secrets.OPENROUTER_MODEL }}
+          OPENROUTER_BASE_URL: ${{ secrets.OPENROUTER_BASE_URL }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from openai import OpenAI
+
+          api_key = os.environ.get("OPENROUTER_API_KEY", "")
+          model = os.environ.get("OPENROUTER_MODEL", "")
+          base_url = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+
+          if not api_key:
+              print("API key: missing")
+              raise SystemExit(1)
+
+          client = OpenAI(api_key=api_key, base_url=base_url)
+          try:
+              resp = client.chat.completions.create(
+                  model=model,
+                  messages=[
+                      {"role": "system", "content": "You are a test endpoint. Reply with exactly the JSON object {\"status\":\"ok\"} and nothing else."},
+                      {"role": "user", "content": "Return {\"status\":\"ok\"}."},
+                  ],
+                  max_tokens=50,
+                  timeout=60,
+              )
+              content = (resp.choices[0].message.content or "").strip()
+              print(f"HTTP status: 200")
+              print(f"Response non-empty: {'yes' if content else 'no'}")
+              if not content:
+                  print("FINAL RESULT: FAIL - empty response")
+                  raise SystemExit(1)
+              # Try to extract JSON
+              parsed = None
+              try:
+                  parsed = json.loads(content)
+              except json.JSONDecodeError:
+                  import re
+                  match = re.search(r"\{.*\}", content, flags=re.DOTALL)
+                  if match:
+                      parsed = json.loads(match.group(0))
+              if parsed is None:
+                  print(f"JSON parse: no")
+                  print(f"Raw content (truncated): {content[:200]}")
+                  print("FINAL RESULT: FAIL - JSON parse error")
+                  raise SystemExit(1)
+              print(f"JSON parse: yes")
+              status = parsed.get("status")
+              print(f"status field: {status}")
+              if status == "ok":
+                  print("FINAL RESULT: PASS")
+              else:
+                  print("FINAL RESULT: FAIL - status != ok")
+                  raise SystemExit(1)
+          except Exception as exc:
+              print(f"Exception type: {type(exc).__name__}")
+              err = str(exc)
+              print(f"Error (sanitized): {err[:300]}")
+              print("FINAL RESULT: FAIL")
+              raise SystemExit(1)
+          PY

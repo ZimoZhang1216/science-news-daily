@@ -1,4 +1,4 @@
-name: Statistics News - Personal Email
+name: Business Management News - Personal Email
 
 on:
   workflow_dispatch:
@@ -12,12 +12,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: statistics-personal-email-${{ github.ref }}
+  group: business-management-personal-email-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   generate:
-    name: Generate statistics news for personal email
+    name: Generate business management news for personal email
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -31,7 +31,7 @@ jobs:
       OPENROUTER_MODEL: ${{ secrets.OPENROUTER_MODEL }}
       OPENROUTER_BASE_URL: ${{ secrets.OPENROUTER_BASE_URL }}
       PERSONAL_REPORT_EMAIL_TO: ${{ secrets.PERSONAL_REPORT_EMAIL_TO }}
-      STAT_REPORT_EMAIL_TO: ${{ secrets.PERSONAL_REPORT_EMAIL_TO }}
+      BUSINESS_REPORT_EMAIL_TO: ${{ secrets.PERSONAL_REPORT_EMAIL_TO }}
       SMTP_HOST: ${{ secrets.SMTP_HOST }}
       SMTP_PORT: ${{ secrets.SMTP_PORT }}
       SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
@@ -62,7 +62,7 @@ jobs:
             missing+=("SMTP_FROM_or_SMTP_USERNAME")
           fi
           if [ "${#missing[@]}" -gt 0 ]; then
-            echo "::error::Missing statistics personal email configuration: ${missing[*]}"
+            echo "::error::Missing business management personal email configuration: ${missing[*]}"
             exit 1
           fi
 
@@ -106,13 +106,13 @@ jobs:
           restore-keys: |
             report-history-
 
-      - name: Generate and email statistics report
+      - name: Generate and email business management report
         id: generate_report
         shell: bash
         run: |
           mkdir -p ./output
           set +e
-          python main.py --profile statistics --report-date "${{ steps.report_date.outputs.today }}" --output-dir ./output --require-email --require-ai
+          python main.py --profile business_management --report-date "${{ steps.report_date.outputs.today }}" --output-dir ./output --require-email --require-ai
           status=$?
           echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
           exit 0
@@ -124,18 +124,18 @@ jobs:
           path: .report-history
           key: report-history-${{ steps.report_date.outputs.today }}-${{ github.run_id }}
 
-      - name: Upload statistics artifacts
+      - name: Upload business management artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: statistics-personal-output
+          name: business-management-personal-output
           path: |
-            ./output/stat_news_*.docx
-            ./output/stat_news_*.pdf
+            ./output/business_news_*.docx
+            ./output/business_news_*.pdf
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Fail workflow when statistics report failed
+      - name: Fail workflow when business management report failed
         if: always() && steps.generate_report.outputs.exit_code != '0'
         run: |
           code="${{ steps.generate_report.outputs.exit_code }}"

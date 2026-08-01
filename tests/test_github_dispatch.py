@@ -1,0 +1,166 @@
+import unittest
+from pathlib import Path
+
+import custom_user_daily
+from personalization.github import DispatchSettings, build_dispatch_request
+
+
+class GitHubDispatchTests(unittest.TestCase):
+    def test_cronjob_workflow_is_the_only_automatic_user_scheduler(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        cronjob = (root / ".github/workflows/cronjob-daily.yml").read_text(encoding="utf-8")
+        custom = (root / ".github/workflows/custom-user-daily.yml").read_text(encoding="utf-8")
+
+        self.assertIn("science-news-daily", cronjob)
+        self.assertIn("python custom_user_daily.py scan", cronjob)
+        self.assertIn("TURSO_DATABASE_URL", cronjob)
+        self.assertIn("database credentials not configured", cronjob)
+        self.assertIn("MAX_JOBS_PER_RUN", cronjob)
+        self.assertNotIn("\n  schedule:", custom)
+        self.assertNotIn("  workflow_dispatch:", custom)
+        self.assertNotIn("automatic-scan:", custom)
+
+    def test_user_scheduler_is_not_guarded_by_fixed_report_marker(self) -> None:
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/cronjob-daily.yml").read_text(
+            encoding="utf-8"
+        )
+
+        scheduler_section = workflow.split("user-scheduler:", maxsplit=1)[1]
+        self.assertNotIn("steps.cronjob_marker.outputs.cache-hit", scheduler_section)
+        self.assertIn("scheduler_summary", scheduler_section)
+
+    def test_manual_preview_deliver_and_retry_jobs_install_pdf_export_dependencies(self) -> None:
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/custom-user-daily.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertEqual(
+            workflow.count("sudo apt-get install -y libreoffice-writer fonts-noto-cjk"),
+            3,
+        )
+
+    def test_manual_send_job_runs_the_opaque_delivery_command(self) -> None:
+        workflow = (
+            Path(__file__).resolve().parents[1]
+            / ".github/workflows/custom-user-daily.yml"
+        ).read_text(encoding="utf-8")
+
+        deliver_job = workflow.split("\n  deliver:\n", maxsplit=1)[1].split(
+            "\n  retry:\n", maxsplit=1
+        )[0]
+        self.assertIn(
+            "github.event.client_payload.command == 'deliver'", deliver_job
+        )
+        self.assertIn(
+            'python custom_user_daily.py deliver --delivery-id "$DELIVERY_ID"',
+            deliver_job,
+        )
+
+    def test_dispatch_payload_delivery_id_is_never_interpolated_into_shell(self) -> None:
+        workflow = (
+            Path(__file__).resolve().parents[1]
+            / ".github/workflows/custom-user-daily.yml"
+        ).read_text(encoding="utf-8")
+        lines = workflow.splitlines()
+        run_commands: list[str] = []
+        for index, line in enumerate(lines):
+            stripped = line.lstrip()
+            if not stripped.startswith("run:"):
+                continue
+            indentation = len(line) - len(stripped)
+            run_commands.append(stripped.removeprefix("run:"))
+            for continuation in lines[index + 1 :]:
+                continuation_stripped = continuation.lstrip()
+                if (
+                    continuation_stripped
+                    and len(continuation) - len(continuation_stripped)
+                    <= indentation
+                ):
+                    break
+                run_commands.append(continuation)
+
+        self.assertNotIn(
+            "github.event.client_payload.delivery_id",
+            "\n".join(run_commands),
+        )
+        payload_references = [
+            line.strip()
+            for line in lines
+            if "github.event.client_payload.delivery_id" in line
+        ]
+        self.assertTrue(payload_references)
+        self.assertEqual(
+            set(payload_references),
+            {"DELIVERY_ID: ${{ github.event.client_payload.delivery_id }}"},
+        )
+
+    def test_retry_job_executes_the_command_selected_by_the_delivery_type(self) -> None:
+        workflow = (
+            Path(__file__).resolve().parents[1]
+            / ".github/workflows/custom-user-daily.yml"
+        ).read_text(encoding="utf-8")
+        retry_job = workflow.split("\n  retry:\n", maxsplit=1)[1]
+
+        self.assertIn(
+            "if: steps.retry.outputs.next_command == 'deliver'", retry_job
+        )
+        self.assertIn(
+            'python custom_user_daily.py deliver --delivery-id "${{ steps.retry.outputs.delivery_id }}"',
+            retry_job,
+        )
+        self.assertEqual(
+            retry_job.count("if: steps.retry.outputs.next_command == 'preview'"),
+            3,
+        )
+
+    def test_command_parser_rejects_unknown_dispatch_command(self) -> None:
+        with self.assertRaises(SystemExit):
+            custom_user_daily.build_parser().parse_args(["not-a-command"])
+
+    def test_command_parser_accepts_deliver(self) -> None:
+        args = custom_user_daily.build_parser().parse_args(["deliver", "--delivery-id", "dlv_123"])
+
+        self.assertEqual(args.command, "deliver")
+        self.assertEqual(args.delivery_id, "dlv_123")
+
+    def test_delivery_id_validation_rejects_shell_metacharacters(self) -> None:
+        parser = custom_user_daily.build_parser()
+
+        with self.assertRaises(SystemExit):
+            custom_user_daily._require_delivery_id(
+                parser, "dlv_123; touch injected"
+            )
+
+    def test_dispatch_request_has_only_the_expected_command_and_delivery_id(self) -> None:
+        request = build_dispatch_request(
+            DispatchSettings("owner/repo", "token"), "preview", "dlv_123"
+        )
+
+        self.assertEqual(request.url, "https://api.github.com/repos/owner/repo/dispatches")
+        self.assertEqual(
+            request.json,
+            {
+                "event_type": "personal-news-command",
+                "client_payload": {"command": "preview", "delivery_id": "dlv_123"},
+            },
+        )
+        self.assertEqual(request.headers["Accept"], "application/vnd.github+json")
+        self.assertEqual(request.headers["Authorization"], "Bearer token")
+
+    def test_dashboard_dispatch_contract_accepts_deliver_with_only_an_opaque_id(self) -> None:
+        request = build_dispatch_request(
+            DispatchSettings("owner/repo", "token"),
+            "deliver",
+            "dlv_manual_123",
+        )
+
+        self.assertEqual(
+            request.json,
+            {
+                "event_type": "personal-news-command",
+                "client_payload": {
+                    "command": "deliver",
+                    "delivery_id": "dlv_manual_123",
+                },
+            },
+        )

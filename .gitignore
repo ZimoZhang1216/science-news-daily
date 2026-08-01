@@ -6,4 +6,5 @@ __pycache__/
 *.py[cod]
 output/
 .report-history/
+.personal-admin/
 .DS_Store
